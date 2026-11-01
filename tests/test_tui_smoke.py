@@ -456,7 +456,7 @@ async def _run_guard_flow() -> None:
         await asyncio.sleep(0.3)
         await pilot.pause()
         assert app.sub_title == title, "详情屏上 r 不应顶掉详情标题"
-        assert "详情屏" in _last_notification(app), "F5 被挡下要有反馈（不静默）"
+        assert "非列表屏" in _last_notification(app), "F5 被挡下要有反馈（不静默）"
 
         await pilot.press("escape")
         assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
@@ -910,3 +910,26 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
 
 def test_ime_safe_keys(stub_registry, opened) -> None:
     asyncio.run(_run_ime_safe_flow(opened))
+
+
+async def _run_focus_free_flow() -> None:
+    """切流 / Ctrl+N 在 App 级：焦点不在列表上也必须生效（曾为 FeedListView
+    控件级绑定，焦点落位竞态时整个失灵）。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+
+        app.set_focus(None)  # 模拟焦点丢失/未落位
+        assert app.focused is None
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: app.feed_idx == 1 and len(app.items) == 3), (
+            "焦点不在列表上 → 仍能切流"
+        )
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(app.items) == 5), "焦点不在列表上 → Ctrl+N 仍生效"
+        await pilot.press("left")
+        assert await _settle(pilot, lambda: app.feed_idx == 0 and len(app.items) == 3)
+
+
+def test_keys_focus_free(stub_registry) -> None:
+    asyncio.run(_run_focus_free_flow())

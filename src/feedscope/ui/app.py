@@ -124,17 +124,12 @@ class FeedNavItem(Static):
 
 
 class FeedListView(ListView):
-    """列表视图：Tab/Shift+Tab 切网站、←/→ 切信息流、Ctrl+N 加载更多（widget 层绑定压过 Screen 焦点切换）。"""
+    """列表视图：Tab/Shift+Tab 切网站（widget 层绑定压过 Screen 焦点切换）。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 切站/直达键不进页脚：顶部 tab 条已标注「名称(键)」，页脚再列就重复了
         Binding("tab", "app.next_source", "切站", show=False),
         Binding("shift+tab", "app.prev_source", "切站", show=False),
-        Binding("ctrl+n", "app.more", "加载更多"),
-        # ←/→ 切流（与详情屏 [/] 换篇同构：横向换内容、纵向移动选中）。widget 层
-        # 绑定压过 VerticalScroll 继承的 left/right 横滚（列表本就无横向滚动）
-        Binding("left", "app.prev_feed", "切流"),
-        Binding("right", "app.next_feed", "切流"),
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -202,11 +197,17 @@ class FeedScopeApp(App[None]):
         # 一个键，不给字母留别名（唯一例外：站点直达键 z/x，见 _bind_source_keys，
         # 仍走字母因为 Tab 循环已可达、直达键是加速位）。Ctrl+C 连按退出是
         # Textual 自带兜底，不占页脚。
+        # ←/→ / Ctrl+N 放 App 级（非 FeedListView）：焦点不在列表上也必须生效
+        # （切流是高频主操作，不能依赖焦点落位）；详情/评论屏的 ←/→ 换篇在
+        # 各屏绑定，屏级先于 App 级命中，互不干扰。
         Binding("ctrl+q", "quit", "退出", priority=True),
         Binding("f5", "refresh", "刷新"),
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("f2", "manage_sources", "源管理"),
         Binding("ctrl+u", "account", "账号", show=False),
+        Binding("ctrl+n", "more", "加载更多"),
+        Binding("left", "prev_feed", "切流"),
+        Binding("right", "next_feed", "切流"),
     ]
 
     CSS = """
@@ -487,7 +488,7 @@ class FeedScopeApp(App[None]):
         """主屏专属动作的守卫：被挡下要给反馈，绝不静默（与空态下按 Ctrl+N 同一原则）。"""
         if self._on_main_screen():
             return True
-        feedback.info(self, "详情屏中，Esc 返回列表")
+        feedback.info(self, "非列表屏，Esc 返回后再操作")
         return False
 
     async def _refresh(self) -> None:
@@ -702,7 +703,14 @@ class FeedScopeApp(App[None]):
         await self._step_feed(1)
 
     async def _step_feed(self, delta: int) -> None:
-        """←/→ 切流（与详情屏 [/] 换篇同一条相对移动语义）：到边界给反馈，不静默。"""
+        """←/→ 切流（与详情屏 [/] 换篇同一条相对移动语义）：到边界给反馈，不静默。
+
+        绑定在 App 级（焦点无关），弹层里按下静默返回——方向键是随手按的
+        导航键，弹层里逐键弹 toast 只有噪音（详情屏不会到这：屏级 ←/→ 换篇
+        绑定先命中）。
+        """
+        if not self._on_main_screen():
+            return
         if not self.sources:
             return
         target = self.feed_idx + delta
@@ -719,6 +727,8 @@ class FeedScopeApp(App[None]):
         webbrowser.open(item.url)
 
     def action_more(self) -> None:
+        if not self._require_main_screen():
+            return  # Ctrl+N 已提升到 App 级（焦点无关），弹层/详情屏上要有反馈
         if self.feed_loader is None:
             feedback.info(self, "当前列表没有可加载的内容")  # 失败/空态下按 Ctrl+N 也绝不无声
             return
