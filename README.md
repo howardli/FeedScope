@@ -31,8 +31,6 @@
 
 ![X 推文详情](docs/screenshot-detail.png)
 
-> 截图由 `scripts/screenshot.py` 离线生成（stub 源驱动真实 UI），改界面后重跑即刷新。
-
 ## 安装
 
 ### 环境要求
@@ -138,51 +136,13 @@ hide = ["follow"]    # 隐藏不想看的内置流
 
 规则：`enabled` 缺省 = 全部启用（老配置文件只有 `hide` 的不受影响）；管理界面保存会保留各源 `hide` 段、丢弃无法识别的键；停用源的直达键按下会提示「未启用」。`feedscope doctor` 可查配置状态。
 
-## 架构
-
-四层单向依赖：`core`（契约与共享件）→ `sources`（一网站一包：fetch 取数 / parse 解析 / 编排）→ `ui`（Textual TUI）→ `cli`（入口）。新增源 = 一个包 + 一行 import，UI 与 core 零改动；用户侧选源 / 隐藏流走 `sources.toml`（`core/config.py`），不改代码。
-
-### 新增源
-
-一个源 = `sources/<id>/` 一个包，三层各司其职（知乎/X 即模板）：
-
-- `fetch.py` 取数：httpx 直调（X）或常驻通道页签的页面 fetch（知乎），游标翻页 Loader 实现 `core/source` 的 `FeedLoader`/`DetailLoader` 契约（`items`/`doc`/`done`/`load_more`/`close`，`doc` 始终等于已加载全部）；有评论层的源再实现 `CommentLoader`（`open_comments` 的返回契约）
-- `parse.py` 解析：原始 JSON/DOM → 统一模型，纯函数可测；拿不到 id/作者的残卡返回 `None` 丢弃
-- `__init__.py` 编排：`Source` 子类声明能力词汇表（`feeds`/`kind_labels`/`detail_kinds`/`detail_unit_label`/`login_*`），`open_feed` 出口统一调 `require_feed_items`（0 条 = 改版告警）
-
-### 展示词汇约定
-
-各源数据形态不同，但上屏必须同形——用户在源之间的体验是同一个软件。词汇的唯一出处与既定形态：
-
-- **署名**：`core/display.signature`，「名字 @handle」双要素（账号体系源）；无账号惯例的源只传名
-- **赞/计数**：`core/display.votes_text`/`fmt_count`，「赞 4.5 万」、0 赞空文本；过万折「万」保留一位小数
-- **时间**：`core/timefmt`，统一北京时间裸文本 `YYYY-MM-DD HH:MM`，不带「发布于」类前缀
-- **结构行**：详情 meta「作者 · 计数… · 时间」；楼层头「序号 作者 赞 计数 时间」；引用块 `> **标签** · 署名：内容`（X 的「原推/被引推文」即此形，论坛源的引用楼层沿用）
-- **媒体**：列表/引用片段用计数记号 `[图 N]`/`[视频]`（扫描面不附地址，两源同）；详情正文与楼层用 `[图] 地址`/`[视频] 地址` 附直接地址（X 取 pbs 原图/最高码率 mp4，知乎取原图/播放地址——TUI 显示不了媒体，地址留给用户贴浏览器）
-- **译文**：`sources/x/parse._grok_translation`，`> **译文**（英语）：内容`（语种括注，查无退原码），接在原文后（详情正文/楼层/引用块内）；数据随 TweetDetail 响应内嵌（Grok 翻译，服务端按账号显示语言决定给不给），列表与标题保持原文（扫描面不翻译）
-- 单位词（回答/回复/评论）归源的 `detail_unit_label`，UI 统一消费——统一形不统一义
-
-## 开发
-
-```bash
-uv run ruff check src/ tests/ scripts/   # lint（CI 同款）
-uv run pytest tests/                    # 测试基线（全离线：解析器 fixture / TUI 冒烟 / 登录流程）
-```
-
-### 改版防护
-
-站点改版导致解析器失灵是这类工具的主要维护成本，两条机制兜底：
-
-- **首屏 0 条守卫**：信息流取数成功但解析出 0 条时，TUI 里报「站点可能已改版（feedscope probe 可复查）」而不是静默空列表（`core/source.require_feed_items`，各源 `open_feed` 出口统一调用；翻页拉空是正常语义，不误报）。
-- **`feedscope probe` 巡检**：全部源的每个流拉一次首批 + 一条详情，`[OK] / [SKIP] 未登录 / [FAIL]` 一屏定位；退出码 0/1/2（2 = 未知源 id）可挂定时任务（巡检需要真实登录态与 Chrome，CI 上挂 self-hosted runner；代码测试基线全离线，hosted runner 直接可跑）。巡检时把原始响应存到 `~/.cache/feedscope/samples/`（`FEEDSCOPE_SAMPLE_DIR` 可改）——修 `parse.py` 时对着真实样本改并补 fixture，或把样本交给 AI 重新生成解析器。
-
 ## 免责声明
 
 本项目通过本机浏览器会话访问知乎与 X（Twitter）的网页接口，仅供个人学习与研究使用：
 
 - 使用前请确保遵守所在地区法律法规及两站用户协议；账号因风控受限的风险由使用者自行承担。
 - 本项目不带任何内置凭据，登录态只保存在你自己机器的浏览器 profile 里，不与任何第三方共享。
-- 站点改版导致功能失效属正常损耗（改版防护见上节）；请勿用于批量抓取或商业用途。
+- 站点改版导致功能失效属正常损耗（`feedscope probe` 可巡检定位）；请勿用于批量抓取或商业用途。
 
 ## 许可证
 
