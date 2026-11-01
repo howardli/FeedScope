@@ -1,0 +1,55 @@
+[project]
+name = "feedscope"
+version = "0.1.0"
+description = "观流（FeedScope）：终端信息流聚合阅读器——知乎 / X（Twitter）一个终端全看"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "howardli" }]
+keywords = ["tui", "textual", "cli", "reader", "zhihu", "twitter", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Terminals",
+]
+dependencies = [
+    "textual>=1.0",
+    "rich>=13",
+    "playwright>=1.45",
+    "platformdirs>=4.0",
+    "html2text>=2024.2.26",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/howardli/FeedScope"
+Issues = "https://github.com/howardli/FeedScope/issues"
+
+[project.scripts]
+feedscope = "feedscope.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/feedscope"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+ignore = [
+  # 抓取/清理路径大量「尽力而为」的宽捕获（关弹窗、关页签、吞渲染抖动），是有意为之
+  "BLE001",
+  "S110",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.6", "pytest>=8"]

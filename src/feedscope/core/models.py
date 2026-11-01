@@ -1,0 +1,72 @@
+"""核心数据模型：FeedItem 是「源 -> UI」的唯一契约。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class FeedItem:
+    """列表级条目：所有源都产出它，UI 只消费它。
+
+    extra 的键约定（列表传给详情抓取的上下文，属源内私有约定，UI 不读取）：
+    - x：conversation_id（转发详情跳原推会话）
+    - zhihu：不使用
+    """
+
+    source: str                        # 源 id，如 "zhihu"
+    id: str                            # 源内稳定 id（url token、hn id 等）
+    title: str
+    url: str
+    kind: str = ""                     # 内容类型；语义由源定义，见 Source.kind_labels / detail_kinds
+    meta: str = ""                     # 列表元信息列语义文本（热度/作者/节点名…），UI 统一截断对齐
+    extra: dict[str, Any] = field(default_factory=dict)  # 传给 detail 抓取的补充字段
+
+
+@dataclass
+class Comment:
+    """一条评论（回答下的讨论，知乎）。与 Answer 同形，另挂一层 replies。
+
+    知乎评论区就两层：顶层评论 + 子回复串（互相回复平铺在顶层下）。
+    数据来自 comment_v5 API：time 是绝对时间（unix 秒转的展示文本）、
+    votes 是赞数；replies 是热门子回复（前几条），没带全的部分记在
+    more_replies（UI 以「另有 N 条回复」提示），raw_id 供翻页去重。
+    """
+
+    author: str
+    votes: str                         # 展示文本，如 "赞 3"；无赞为空
+    content_md: str
+    time: str = ""
+    replies: list[Comment] = field(default_factory=list)
+    more_replies: int = 0              # 未随首批带出的子回复条数
+    raw_id: str = ""
+
+
+@dataclass
+class Answer:
+    """一条回答（知乎）或一条回复（X）。content_md 已转成 markdown。
+
+    author 为展示名：知乎是昵称；X 是署名「名字 @handle」（名字与账号同显，
+    见 sources/x/parse.py 的 _who）。
+    评论是更深一层，不随楼层首批抓取（按需经 DetailLoader.open_comments
+    进评论层），这里只带 comment_count 引导（如 "158 条评论"，缺省空）。
+    """
+
+    author: str
+    votes: str                         # 展示文本，如 "赞同 148"
+    content_md: str
+    time: str = ""                     # 发布时间展示文本，如 "2026-10-19 14:32"（源尽力而为，缺省空）
+    url: str = ""                      # 楼层直达链接（知乎回答页）；空 = 用父条目 url
+    comment_count: str = ""            # 展示文本，如 "158 条评论"（缺省空）
+
+
+@dataclass
+class DetailDoc:
+    """详情级文档：open_detail() 的首批内容，更多靠 loader.load_more() 增量拿。"""
+
+    title: str
+    meta: str = ""                     # 一行元信息（如 "30 回答 · 12 万浏览"）
+    time: str = ""                     # 正文发布时间展示文本（源尽力而为，缺省空）
+    description_md: str = ""           # 问题描述（markdown）
+    answers: list[Answer] = field(default_factory=list)

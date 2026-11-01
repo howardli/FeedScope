@@ -1,0 +1,715 @@
+"""TUI 主应用：顶部站点 tab 条 + 左侧信息流边栏 + 单栏列表 + 全屏详情屏。"""
+
+from __future__ import annotations
+
+import webbrowser
+from typing import Any, ClassVar
+
+from rich.markup import escape
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.events import Resize
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.timer import Timer
+from textual.widget import Widget
+from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Static
+
+import feedscope.sources  # noqa: F401  import 即注册
+from feedscope import login
+from feedscope.core.browser import close_session, get_session
+from feedscope.core.models import FeedItem
+from feedscope.core.registry import all_sources
+from feedscope.core.source import FeedLoader, LoginRequired, Source
+from feedscope.ui import feedback
+from feedscope.ui.layout import META_COL_MAX, META_COL_SPARE, RESIZE_DEBOUNCE, list_title_width
+from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.theme import FEEDSCOPE_THEME
+from feedscope.ui.wrap import display_width, wrap_display
+
+# 数字键直达信息流（1-9）；两轴导航：Tab/Shift+Tab 切站、数字切流
+PREWARM = True  # 启动即后台预热浏览器；测试环境置 False（见 tests/conftest.py）
+
+_FEED_KEYS = [Binding(str(i + 1), f"app.select_feed({i})", show=False) for i in range(9)]
+
+# 源的一键直达键（source_key，单个小写字母）不得占用这些 UI 自有字母键：
+# q 退出 · r 刷新 · o 浏览器 · n 加载更多 · j/k 移动 · u 账号（登录/登出）
+# （其余键位非字母，天然被「单个小写字母」约束排除）。冲突声明跳过并警告，
+# 见 FeedScopeApp._bind_source_keys。
+_SOURCE_KEY_RESERVED = frozenset({"q", "r", "o", "n", "j", "k", "u"})
+
+
+def meta_col_text(source: Source, it: FeedItem) -> str:
+    """元信息列文本：所有源、所有流同一条规则——「[类型标签] 作者/热度/回复数」。
+
+    标签预告 Enter 的行为（非详情类型跳浏览器，词汇表归源，见 Source.kind_labels）；
+    有标签时与元信息并列显示，不再顶掉作者。任何情况下不截断——列宽随批内
+    最长内容自适应（见 score_col_width），超上限的长署名在列内折行（换行可以，
+    缩略不行），名字与账号必须完整可见。
+    """
+    tag = source.kind_labels.get(it.kind, "")
+    return f"[{tag}] {it.meta}".strip() if tag else it.meta
+
+
+def score_col_width(source: Source, items: list[FeedItem]) -> int:
+    """元信息列宽：批内最长文本的显示宽 + 2 余量（META_COL_MAX 封顶）。
+
+    自适应让知乎热榜「2606 万热度」这类短元信息只占实际所需；超过 MAX 的
+    长署名不加宽列（标题列优先），在列内折行——名字一行、@账号一行，完整
+    可见。空列表给 1（空态不显示列表）。
+    """
+    longest = max((display_width(meta_col_text(source, it)) for it in items), default=1)
+    return min(longest, META_COL_MAX) + META_COL_SPARE
+
+
+class SourceTabPressed(Message):
+    """顶部站点 tab 被点击：与键盘直达键共用同一条切源路径。"""
+
+    def __init__(self, idx: int) -> None:
+        self.idx = idx
+        super().__init__()
+
+
+class FeedNavPressed(Message):
+    """左侧信息流项被点击：与数字键共用同一条切流路径。"""
+
+    def __init__(self, idx: int) -> None:
+        self.idx = idx
+        super().__init__()
+
+
+class SourceTab(Static):
+    """顶部站点 tab：显示「名称(直达键)」，点击直达该源；高亮由 CSS class 决定。
+
+    不可聚焦（can_focus=False 默认）：点击不抢列表焦点，Tab 键语义完全不变。
+    """
+
+    def __init__(self, idx: int, label: str, key: str | None, active: bool) -> None:
+        text = f"{label}({key})" if key else label
+        super().__init__(
+            text,
+            id=f"source-tab-{idx}",
+            classes="source-tab" + (" source-tab-active" if active else ""),
+        )
+        self.idx = idx
+
+    def on_click(self) -> None:
+        self.post_message(SourceTabPressed(self.idx))
+
+
+class FeedNavItem(Static):
+    """左侧信息流项：数字键序号 + 流名，点击切流；高亮由 CSS class 决定。"""
+
+    def __init__(self, idx: int, label: str, active: bool) -> None:
+        super().__init__(
+            label,
+            id=f"feed-nav-{idx}",
+            classes="feed-nav-item" + (" feed-nav-active" if active else ""),
+        )
+        self.idx = idx
+
+    def on_click(self) -> None:
+        self.post_message(FeedNavPressed(self.idx))
+
+
+
+class FeedListView(ListView):
+    """列表视图：Tab/Shift+Tab 切网站、数字键切信息流、n 加载更多（widget 层绑定压过 Screen 焦点切换）。"""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("tab", "app.next_source", "切站"),
+        Binding("shift+tab", "app.prev_source", "切站", show=False),
+        Binding("n", "app.more", "加载更多"),
+        Binding("j", "cursor_down", show=False),  # 与详情屏键位保持一致
+        Binding("k", "cursor_up", show=False),
+        *_FEED_KEYS,
+    ]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_width = 0
+        self._resize_timer: Timer | None = None
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == self._last_width:
+            return
+        first_layout = self._last_width == 0  # 首次布局不算
+        self._last_width = event.size.width
+        if first_layout:
+            return
+        # 与详情屏一致：拖拽改宽连发 Resize，稳定后再整屏重排
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, self.app.rebuild_items)
+
+    def on_unmount(self) -> None:
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+            self._resize_timer = None
+
+
+class AccountScreen(ModalScreen[bool]):
+    """账号操作弹框：登录 / 登出一个源。返回 True=确认、False=取消。
+
+    只在「选择」阶段可见；确认后即 dismiss，真正的有头登录 / 清 cookie 由
+    后台 worker 执行（期间 profile 锁冲突由 _login_in_progress 挡刷新兜底）。
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
+
+    def __init__(self, label: str, action: str) -> None:
+        super().__init__()
+        self._label = label
+        self._action = action  # "登录" / "登出"
+
+    def compose(self) -> ComposeResult:
+        prompt = f"{self._label}需要登录" if self._action == "登录" else f"登出 {self._label}？"
+        with Vertical(id="account-dialog"):
+            yield Label(prompt, id="account-prompt")
+            with Horizontal(id="account-actions"):
+                yield Button(self._action, id="account-go", variant="primary")
+                yield Button("取消", id="account-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "account-go")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class FeedScopeApp(App[None]):
+    TITLE = "FeedScope（观流）"
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        # q 全局生效（详情屏也直接退出）：一键退出必须是全局的
+        Binding("q", "quit", "退出"),
+        Binding("r", "refresh", "刷新"),
+        Binding("o", "open_browser", "浏览器打开"),
+        Binding("u", "account", "账号", show=False),
+    ]
+
+    CSS = """
+    ListItem { padding: 0 1; height: auto; }
+
+    .item-row { height: auto; }
+    /* 宽度不写死：逐行 inline 设为批内最长元信息（见 score_col_width）；
+       右对齐列，超上限的长署名折行而非缩略（名字与账号必须完整可见） */
+    .item-score { text-align: right; text-wrap: wrap; }
+    .item-title { width: 1fr; text-wrap: wrap; padding-left: 1; }
+
+    /* 顶部站点 tab 条：active 仿编辑器打开中的文件 tab（加粗下划线），其余降灰 */
+    #source-tabs { height: 1; background: $surface; padding: 0 1; }
+    .source-tab { width: auto; padding: 0 1; color: $text-muted; }
+    .source-tab-active { color: $text; text-style: bold underline; }
+
+    /* 左侧信息流边栏：active 用编辑器蓝的暗化底（与 ListView 选中色同源） */
+    #main { height: 1fr; }
+    #feed-nav { width: 16; height: 1fr; background: $surface; padding: 0 1; }
+    .feed-nav-item { height: 1; }
+    .feed-nav-active { background: $primary-darken-2; color: $text; text-style: bold; }
+
+    #empty-hint { display: none; padding: 1 2; }
+
+    /* 账号弹框：居中卡片，按钮行并排 */
+    #account-dialog { width: auto; max-width: 60; background: $surface; border: ascii $primary; padding: 1 2; }
+    #account-prompt { padding-bottom: 1; }
+    #account-actions { height: auto; }
+    #account-actions Button { margin-right: 1; }
+
+    #detail-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
+    #detail-meta { padding: 0 2; }
+    #detail-desc { padding: 0 2; }
+    .answers-header { padding: 0 2; text-style: bold; }
+    .answer-divider { width: 1fr; height: 1; }
+    .answer-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 窄终端长楼层头折行不裁剪 */
+    .answer-body { padding: 0 2; }
+
+    /* 回答详情屏（评论层）：正文区与问题详情同款，评论楼层为主楼层不缩进 */
+    #answer-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
+    #answer-meta { padding: 0 2; }
+    #answer-content { padding: 0 2; }
+    .comments-header { padding: 1 2; text-style: bold; }
+    .comment-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 与 .answer-head 同：折行不裁剪 */
+    .comment-body { padding: 0 2; }
+    .comment-head.comment-sub { margin-left: 3; }
+    .comment-body.comment-sub { margin-left: 3; }
+    #cm-loading, #cm-more-loading { padding: 1 2; }
+    #cm-empty, #cm-no-more, .cm-hint { padding: 1; }
+    #more-hint, #more-loading, #no-more { padding: 1; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.register_theme(FEEDSCOPE_THEME)  # 克制的编辑器风配色（见 ui/theme.py），产品需求而非保守
+        self.theme = FEEDSCOPE_THEME.name
+        self.sources = all_sources()
+        self.source_idx = 0
+        self.feed_idx = 0
+        self._feed_memory: dict[str, int] = {}  # source_id -> 上次选的信息流（切站回到上次看的板块）
+        self.items: list[FeedItem] = []
+        self.feed_loader: FeedLoader | None = None  # 持有活页签，切流/退出前要 close
+        # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
+        self._score_width = 1 + META_COL_SPARE
+        self._login_in_progress = False  # 有头登录进行中：挡下刷新/切源误触发 profile 锁冲突
+        # 用户已拒绝登录询问的源（本次运行内有效）：撞墙不再自动弹框，只留
+        # 常驻「u 键登录」提示。u 键手动登录照常可用；登录成功/登出后清除，
+        # 后续撞墙（登录过期、换账号）恢复自动询问。
+        self._login_refused: set[str] = set()
+        self._source_key_skipped: list[str] = []  # 键位冲突被跳过的声明（on_mount 汇总警告）
+        self._bind_source_keys()
+
+    def _bind_source_keys(self) -> None:
+        """按注册表给声明了 source_key 的源生成一键直达绑定（z 直切知乎、x 直切 X……）。
+
+        动态绑定必须随实例走（类级 BINDINGS 在 import 时就被 Textual 固化，测试换
+        注册表时对不上）；冲突声明跳过并警告，该源仍可 Tab 循环到达。
+        """
+        claimed: set[str] = set()
+        for idx, source in enumerate(self.sources):
+            key = source.source_key
+            if key is None:
+                continue
+            if len(key) != 1 or not key.islower() or key in claimed or key in _SOURCE_KEY_RESERVED:
+                self._source_key_skipped.append(f"{source.label}({key})")
+                continue
+            claimed.add(key)
+            self.bind(key, f"app.select_source({idx})", description=f"切到{source.label}")
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Horizontal(id="source-tabs")  # 顶部站点 tab 条（子项由 _render_source_tabs 挂载）
+        with Horizontal(id="main"):
+            yield Vertical(id="feed-nav")  # 左侧信息流边栏（子项由 _render_feed_sidebar 挂载）
+            yield FeedListView(id="feed")
+        yield Label("", id="empty-hint")  # 空态/失败态常驻提示
+        yield Footer()
+
+    def on_mount(self) -> None:
+        if not self.sources:
+            self.exit(message="没有注册任何源")
+            return
+        self.query_one("#feed", ListView).focus()
+        if self._source_key_skipped:
+            feedback.warn(
+                self,
+                "、".join(self._source_key_skipped) + " 的直达键与现有键位冲突，已跳过（仍可 Tab 切换）",
+                title="键位冲突",
+            )
+        self.run_worker(self._bootstrap())
+        if PREWARM:
+            self.run_worker(self._prewarm(), group="prewarm")  # 后台预热，见 _prewarm
+
+    async def _prewarm(self) -> None:
+        """后台预热浏览器会话：首条列表不用再付冷启动（Chrome 拉起几秒；
+        UA 探针另有 7 天落盘缓存，多数启动只付 Chrome 拉起）。
+
+        知乎（通道页签）与 X（profile 读 cookie）都要浏览器，预热几乎总会
+        用上；失败静默——首次真正取数时自然再试并给正式报错。
+        """
+        try:
+            await get_session().start()
+        except Exception:
+            pass
+
+    async def _bootstrap(self) -> None:
+        """初始渲染：tab 条/边栏重建是异步的（等旧子项摘除），随后才开始抓取。"""
+        await self._render_source_tabs()
+        await self._render_feed_sidebar()
+        self.action_refresh()
+
+    # ---- 顶部 tab 条 / 左侧信息流边栏（点击与键盘共用同一条动作路径）----
+
+    async def _render_source_tabs(self) -> None:
+        """按注册表重建顶部站点 tab 条，高亮当前源。
+
+        重建必须先等旧子项摘除（remove_children 的删除是异步落地的），否则
+        新子项带着重复 id 挂载会触发 DuplicateIds。
+        """
+        tabs = self.query_one("#source-tabs", Horizontal)
+        await tabs.remove_children()
+        for idx, source in enumerate(self.sources):
+            await tabs.mount(
+                SourceTab(idx, source.label, source.source_key, active=(idx == self.source_idx))
+            )
+
+    async def _render_feed_sidebar(self) -> None:
+        """按当前源重建左侧信息流边栏，高亮当前流（数字序号与 1-9 键一致）。"""
+        nav = self.query_one("#feed-nav", Vertical)
+        await nav.remove_children()
+        source = self.current_source
+        items: list[Widget] = [
+            FeedNavItem(
+                idx,
+                f"{idx + 1} {source.feed_labels.get(name, name)}",
+                active=(idx == self.feed_idx),
+            )
+            for idx, name in enumerate(source.feeds)
+        ]
+        if not items:
+            items.append(Static("[dim]（无信息流）[/dim]"))
+        await nav.mount(*items)
+
+    async def on_source_tab_pressed(self, event: SourceTabPressed) -> None:
+        await self._goto_source(event.idx)
+
+    async def on_feed_nav_pressed(self, event: FeedNavPressed) -> None:
+        await self.action_select_feed(event.idx)
+
+    # ---- 数据加载 ----
+
+    @property
+    def current_source(self) -> Source:
+        return self.sources[self.source_idx]
+
+    @property
+    def current_feed(self) -> str:
+        feeds = self.current_source.feeds
+        return feeds[self.feed_idx] if feeds else ""
+
+    def action_refresh(self) -> None:
+        if self._login_in_progress:
+            feedback.info(self, "登录进行中，稍候刷新")  # 有头登录独占 profile，此时别碰浏览器
+            return
+        if not self._require_main_screen():
+            return  # 详情屏在前台时 r 不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
+        # 先停在途的增量加载：旧 loader 的迟到写入会把条目混进新列表（索引错位）
+        self.workers.cancel_group(self, "more")
+        self.run_worker(self._refresh(), exclusive=True)
+
+    def _on_main_screen(self) -> bool:
+        """是否在列表主屏（无推入屏）。App 级绑定全局生效，动作只对主屏状态合法。"""
+        return len(self.screen_stack) == 1
+
+    def _require_main_screen(self) -> bool:
+        """主屏专属动作的守卫：被挡下要给反馈，绝不静默（与空态下按 n 同一原则）。"""
+        if self._on_main_screen():
+            return True
+        feedback.info(self, "详情屏中，Esc 返回列表")
+        return False
+
+    async def _refresh(self) -> None:
+        source = self.current_source
+        if self.feed_loader is not None:  # 切流前关掉旧页签
+            await self.feed_loader.close()
+            self.feed_loader = None
+
+        open_coro = source.open_feed(self.current_feed)
+
+        self.sub_title = self._crumb("加载中…")
+        view = self.query_one("#feed", ListView)
+        view.clear()
+        self.items = []
+        try:
+            loader = await open_coro
+        except LoginRequired as exc:
+            self.sub_title = self._crumb("未登录")
+            hint = f"{exc} · u 键登录"
+            if source.source_id in self._login_refused:
+                # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
+                self._show_empty(hint)
+                return
+            self._show_empty(str(exc))
+            # 撞墙即给入口：弹登录框（等用户选「登录」才开浏览器，不擅自弹窗）。
+            # 每个源一次；取消即记住（本运行内不再自动问），切页/刷新不被反复
+            # 打断。_refresh 本就在 worker 里，wait_for_dismiss 合法。
+            proceed = await self.push_screen(
+                AccountScreen(source.label, "登录"), wait_for_dismiss=True
+            )
+            if proceed:
+                self.run_worker(self._do_login(source), group="login", exclusive=True)
+            else:
+                self._login_refused.add(source.source_id)
+                self._show_empty(hint)
+                feedback.info(self, "已取消，本次运行不再自动询问；u 键可登录")
+            return
+        except Exception as exc:
+            self.sub_title = self._crumb("加载失败")
+            feedback.fail(self, source, exc)
+            self._show_empty(f"加载失败：{feedback.failure_text(source, exc)}")
+            return
+
+        self.feed_loader = loader
+        self.items = loader.items
+        self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
+        width = self._wrap_width()
+        await view.extend([self._build_item(it, width) for it in self.items])  # 单次挂载 = 单次布局
+        if self.items:
+            view.index = 0  # 自动选中第一条，Enter 可直接进详情
+            self._hide_empty()
+        else:
+            self._show_empty("没有内容 · r 刷新 · Tab 或点击顶部 tab 切换站点")
+        self.sub_title = self._crumb(f"{len(self.items)} 条")
+
+    def _show_empty(self, text: str) -> None:
+        """空态/失败态：列表区无内容时的常驻屏内提示（notify 是瞬时反馈，这是常驻状态）。"""
+        hint = self.query_one("#empty-hint", Label)
+        hint.update(f"[dim]{escape(text)}[/dim]")
+        hint.display = True
+
+    def _hide_empty(self) -> None:
+        self.query_one("#empty-hint", Label).display = False
+
+    def _crumb(self, state: str) -> str:
+        """Header 副标题 = 状态行；站点/信息流位置已由顶部 tab 条与左侧边栏承担。
+
+        纯文本不依赖 markup（Header 的 Content 解析行为不确定）。
+        """
+        return state
+
+    async def _load_more_feed(self) -> None:
+        loader = self.feed_loader
+        if loader is None:
+            return
+        # 列表屏的加载更多没有独立加载行：进行中/结果全部落进常驻状态行
+        # （Cloudflare 顶跳最长能到数十秒，没有进行中提示会像按键失灵）
+        self.sub_title = self._crumb(f"{len(self.items)} 条 · 加载更多…")
+        try:
+            new = await loader.load_more()
+        except Exception as exc:
+            self.sub_title = self._crumb(f"{len(self.items)} 条 · 加载更多失败")
+            feedback.fail(self, self.current_source, exc, action="加载更多失败")
+            return
+        if not new:
+            if loader.done:
+                self.sub_title = self._crumb(f"{len(self.items)} 条 · 没有更多了")
+                feedback.info(self, "没有更多了")
+            else:
+                self.sub_title = self._crumb(f"{len(self.items)} 条 · 这轮没拉到新内容")
+                feedback.info(self, "这轮没拉到新内容，稍后再按 n 重试")
+            return
+        self.items = loader.items
+        view = self.query_one("#feed", ListView)
+        new_width = score_col_width(self.current_source, self.items)
+        if new_width > self._score_width:
+            # 新批次带来更长的元信息（更长的署名）：列变宽，旧条目的列宽与
+            # 标题折行全都要重排——全量重建，不只是追加新行
+            self._score_width = new_width
+            await self.rebuild_items()
+        else:
+            width = self._wrap_width()
+            await view.extend([self._build_item(it, width) for it in new])  # 单次挂载 = 单次布局
+        self._hide_empty()
+        self.sub_title = self._crumb(f"{len(self.items)} 条")
+
+    # ---- 列表项构建与折行 ----
+
+    def _wrap_width(self) -> int:
+        """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
+        return list_title_width(self.query_one("#feed", ListView).region.width, self._score_width)
+
+    def _meta_col(self, it: FeedItem) -> str:
+        """元信息列文本（规则见 meta_col_text）。右对齐与超宽折行走 CSS（.item-score）。"""
+        text = meta_col_text(self.current_source, it)
+        return f"[dim]{escape(text)}[/dim]" if text else " "
+
+    def _build_item(self, it: FeedItem, width: int) -> ListItem:
+        # 规范版折行（避头尾 + 词不拆），逐行转义
+        title = "\n".join(escape(line) for line in wrap_display(it.title, width))
+        score = Label(self._meta_col(it), classes="item-score")
+        score.styles.width = self._score_width  # 列宽随批内容自适应（layout.py 常量说明）
+        return ListItem(
+            Horizontal(
+                score,
+                Label(title, classes="item-title"),
+                classes="item-row",
+            )
+        )
+
+    async def rebuild_items(self) -> None:
+        """终端宽度变化后按新宽度重新折行（只重排版，不重新抓取）。"""
+        if not self.items:
+            return
+        view = self.query_one("#feed", ListView)
+        idx = view.index
+        view.clear()
+        width = self._wrap_width()
+        await view.extend([self._build_item(it, width) for it in self.items])
+        view.index = 0 if idx is None else min(idx, len(self.items) - 1)
+
+    # ---- 键位 ----
+
+    # ---- 导航三路合一：顶部 tab 点击 / Tab 循环 / source_key 直达键，侧栏点击 / 数字键切流 ----
+
+    async def _goto_source(self, target: int) -> None:
+        """切到第 target 个源：Tab 循环（±1）、source_key 直达键与 tab 点击共用。
+
+        source_key 直达键在详情屏也要生效：先退回列表再切源（z 直切知乎，不强迫
+        先 Esc）；Tab 循环与 tab 点击本就在主屏触发，不受这条路径影响。只有一个
+        源或已在目标源时不做任何事。
+        """
+        if len(self.sources) < 2:
+            return
+        target %= len(self.sources)
+        while not self._on_main_screen():
+            self.pop_screen()  # 详情屏中按直达键：退回列表再切源（与 Esc 同一条 pop 路径）
+        if target == self.source_idx:
+            return
+        self.source_idx = target
+        feeds = self.current_source.feeds
+        mem = self._feed_memory.get(self.current_source.source_id, 0)
+        self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0  # 回到该站上次的信息流
+        await self._render_source_tabs()  # 高亮跟随（键盘/点击/直达键都走这里）
+        await self._render_feed_sidebar()
+        self.action_refresh()
+
+    async def action_next_source(self) -> None:
+        await self._goto_source(self.source_idx + 1)
+
+    async def action_prev_source(self) -> None:
+        await self._goto_source(self.source_idx - 1)
+
+    async def action_select_source(self, idx: int) -> None:
+        """source_key 绑定的一键直达：直接落到注册表第 idx 个源（绑定由 _bind_source_keys 生成）。"""
+        await self._goto_source(idx)
+
+    async def action_select_feed(self, idx: int) -> None:
+        feeds = self.current_source.feeds
+        if not feeds or not 0 <= idx < len(feeds):
+            return
+        if self.feed_idx == idx:
+            return  # 已在该流，不重复刷新
+        self.feed_idx = idx
+        self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
+        await self._render_feed_sidebar()  # 高亮跟随（数字键/点击都走这里）
+        self.action_refresh()
+
+    def action_open_browser(self) -> None:
+        item = self.current_item()
+        if item is None:
+            feedback.info(self, "当前没有选中的条目")  # 空态/加载中按 o 也绝不无声
+            return
+        webbrowser.open(item.url)
+
+    def action_more(self) -> None:
+        if self.feed_loader is None:
+            feedback.info(self, "当前列表没有可加载的内容")  # 失败/空态下按 n 也绝不无声
+            return
+        self.run_worker(self._load_more_feed(), group="more", exclusive=True)
+
+    # ---- 账号：u 键登录 / 登出 ----
+
+    def action_account(self) -> None:
+        """u 键按当前源状态分派：匿名源提示、已登录弹登出、未登录弹登录。
+
+        只在列表主屏生效（详情屏/已有弹框时不叠加新账号框）；走 worker 因为
+        push_screen 的 wait_for_dismiss 只能在 worker 里用。group 独立于列表
+        加载的 default 组，u 不会打断在途的 _refresh。
+        """
+        if not self._on_main_screen():
+            return
+        self.run_worker(self._account(), group="account", exclusive=True)
+
+    async def _account(self) -> None:
+        source = self.current_source
+        if not source.login_url:
+            feedback.info(self, f"{source.label} 无需登录")
+            return
+        if self._login_in_progress:
+            feedback.info(self, "登录进行中，稍候")
+            return
+        logged_in = await login.is_logged_in(source.source_id)
+        action = "登出" if logged_in else "登录"
+        proceed = await self.push_screen(AccountScreen(source.label, action), wait_for_dismiss=True)
+        if not proceed:
+            if action == "登录":
+                # 手动框里取消同样算拒绝：之后撞墙不再自动弹（登出框取消无此语义）
+                self._login_refused.add(source.source_id)
+            return
+        # 后续动作放独立的 login 组：exclusive 会取消同组在途 worker，若与本
+        # worker（account 组）同组，等于把调用者自己也排进取消名单——现在能
+        # 活着只是因为派发后不再 await；分组错开即消除对这层时序的依赖。
+        if logged_in:
+            self.run_worker(self._do_logout(source), group="login", exclusive=True)
+        else:
+            self.run_worker(self._do_login(source), group="login", exclusive=True)
+
+    async def _do_login(self, source: Source) -> None:
+        """关 headless session 让出 profile 锁 → 有头浏览器登录 → 刷新。
+
+        登录期间置 _login_in_progress，挡下刷新误触发 profile 锁冲突；完成后
+        恢复并刷新（成功则列表出内容，失败/超时仍撞墙）。
+        """
+        self._login_in_progress = True
+        try:
+            if self.feed_loader is not None:  # 释放活页签，别跟有头登录抢 profile
+                await self.feed_loader.close()
+                self.feed_loader = None
+            await close_session()
+            try:
+                ok = await login.login(source.source_id, quiet=True)
+            except Exception:
+                ok = False
+            if ok:
+                self._login_refused.discard(source.source_id)  # 后续撞墙（过期）恢复自动询问
+                feedback.info(self, f"{source.label} 登录成功")
+            else:
+                # 未完成（超时/关窗放弃）：别再自动追问，重试入口在 toast 与常驻提示里
+                self._login_refused.add(source.source_id)
+                feedback.warn(self, f"{source.label} 登录未完成，可再试一次", title="登录")
+        finally:
+            self._login_in_progress = False
+            self.action_refresh()
+
+    async def _do_logout(self, source: Source) -> None:
+        """清掉当前源登录 cookie → 刷新（撞墙弹登录框，即换账号动线）。"""
+        self._login_refused.discard(source.source_id)  # 主动登出 = 想换账号：撞墙要重新弹登录框
+        try:
+            had = await login.logout(source.source_id)
+        except Exception as exc:
+            feedback.fail(self, source, exc, action="登出失败")
+            return
+        feedback.info(self, f"已登出 {source.label}" if had else f"{source.label} 本就没有登录")
+        self.action_refresh()
+
+    def current_item(self) -> FeedItem | None:
+        if not self.items:
+            return None
+        view = self.query_one("#feed", ListView)
+        if view.index is None:
+            return None
+        return self.items[view.index]
+
+    def _opens_detail(self, item: FeedItem) -> bool:
+        """Enter 的分派谓词：进终端详情屏还是跳浏览器，由源的类型词汇表决定
+        （Source.supports_detail + detail_kinds）。Enter 与 [/] 换篇共用。"""
+        source = self.current_source
+        return source.supports_detail and item.kind in source.detail_kinds
+
+    def step_readable_item(self, delta: int) -> FeedItem | None:
+        """列表选中项沿 delta 方向推进到下一篇可进终端详情的条目，并同步列表选中。
+
+        详情屏 [/] 换篇的供给端：跳过 Enter 会跳浏览器的类型（阅读流要留在终端里，
+        阅读中突然弹出浏览器是事故）；沿方向没有可读条目时不动选中、返回 None。
+        """
+        view = self.query_one("#feed", ListView)
+        if not self.items or view.index is None:
+            return None
+        for idx in range(view.index + delta, len(self.items) if delta > 0 else -1, delta):
+            it = self.items[idx]
+            if self._opens_detail(it):
+                view.index = idx
+                return it
+        return None
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "feed":  # 只认主列表：楼层选择弹层等也会发同名事件
+            return
+        item = self.current_item()
+        if item is None:
+            return
+        if self._opens_detail(item):
+            self.push_screen(DetailScreen(item, self.current_source, self.step_readable_item))
+        else:
+            webbrowser.open(item.url)
+
+    # ---- 清理 ----
+
+    async def on_unmount(self) -> None:
+        if self.feed_loader is not None:
+            await self.feed_loader.close()
+            self.feed_loader = None
+        from feedscope.core import http
+
+        await close_session()
+        await http.close()
