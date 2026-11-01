@@ -1,9 +1,9 @@
 """离线 TUI 冒烟：stub 源驱动整条 UI 链路。
 
 覆盖：列表加载 / 元信息列（[类型标签] 与作者/热度并列，统一按显示宽截断）/ 方向键导航 / Ctrl+N 加载更多 /
-详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 n 重试 /
+详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 Ctrl+N 重试 /
 resize 整屏重排（列表 + 详情）/ Enter 行为分派（详情 vs 浏览器）/
-每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / s 键源管理（启停用、
+每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / F2 源管理（启停用、
 直达键动态寻址、零启用空态）/ 非打印键位（←/→ 切流、Ctrl+N/O/F5/F2；字母/数字键已废弃）/
 中文落地指路提示。不碰网络、不开浏览器。
 
@@ -130,7 +130,7 @@ class StubDetailLoader(DetailLoader):
                 for i in range(3)
             ],
         )
-        # 首批已溢出视口（可滚到末尾再按 n）；第二批也高，确保「n 后视口不动」的
+        # 首批已溢出视口（可滚到末尾再按 Ctrl+N）；第二批也高，确保「Ctrl+N 后视口不动」的
         # 断言能把「不滚动」与「scroll_end / 顶对齐」两类跳屏行为区分开
         self._batches = [
             [Answer(f"作者{3 + i}", "", "第二批回答。" + "很长的后续内容，" * 200) for i in range(2)]
@@ -225,7 +225,7 @@ class FailingFeedLoader(StubFeedLoader):
 
 
 class FailingSource(Source):
-    """失败注入源：驱动错误出口（列表首载 / 列表增量 / 详情首载 + n 重试）。
+    """失败注入源：驱动错误出口（列表首载 / 列表增量 / 详情首载 + Ctrl+N 重试）。
     注册由 failing_registry fixture 手动完成（同 StubSource，不泄漏）。"""
 
     source_id = "fail"
@@ -779,7 +779,7 @@ def test_manage_reorder(two_source_registry, monkeypatch, tmp_path) -> None:
 
 
 async def _run_answer_layer_flow(opened: list[str]) -> None:
-    """第三层动线：问题屏 Enter 按可视位置进回答（读到哪进哪）-> 评论按需 -> n 翻页 -> [/] 换回答 -> Esc 返回。"""
+    """第三层动线：问题屏 Enter 按可视位置进回答（读到哪进哪）-> 评论按需 -> Ctrl+N 翻页 -> [/] 换回答 -> Esc 返回。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)

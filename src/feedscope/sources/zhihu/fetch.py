@@ -374,7 +374,7 @@ class ZhihuQuestionLoader(DetailLoader):
     async def open_comments(self, index: int) -> ZhihuCommentsLoader:
         """按需抓第 index 个回答的评论首页（进评论层才调，走通道页签）。"""
         if not 0 <= index < len(self.doc.answers):
-            raise SourceError("知乎 该回答不在已加载范围内，先在问题里按 n 加载更多")
+            raise SourceError("知乎 该回答不在已加载范围内，先在问题里按 Ctrl+N 加载更多")
         m = re.search(r"/answer/(\d+)", self.doc.answers[index].url or "")
         if not m:
             raise SourceError("知乎 拿不到该回答的 id，暂时无法进评论层")
@@ -414,7 +414,7 @@ class ZhihuCommentsLoader(CommentLoader):
         try:
             comments, next_url, is_end = await _comment_page(await _channel(), self._next)
         except SourceError:
-            return []  # 单页失败不判死：可以再按 n 重试
+            return []  # 单页失败不判死：可以再按 Ctrl+N 重试
         new = [c for c in comments if c.raw_id not in self._ids]
         for c in new:
             self._ids.add(c.raw_id)

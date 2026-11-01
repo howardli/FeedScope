@@ -81,7 +81,7 @@ class SourceTabPressed(Message):
 
 
 class FeedNavPressed(Message):
-    """左侧信息流项被点击：与数字键共用同一条切流路径。"""
+    """左侧信息流项被点击：与 ←/→ 共用同一条切流路径。"""
 
     def __init__(self, idx: int) -> None:
         self.idx = idx
@@ -638,7 +638,7 @@ class FeedScopeApp(App[None]):
 
     # ---- 键位 ----
 
-    # ---- 导航三路合一：顶部 tab 点击 / Tab 循环 / source_key 直达键，侧栏点击 / 数字键切流 ----
+    # ---- 导航多路合一：顶部 tab 点击 / Tab 循环 / source_key 直达键，侧栏点击 / ←→ 切流 ----
 
     async def _goto_source(self, target: int) -> None:
         """切到第 target 个源：Tab 循环（±1）、source_key 直达键与 tab 点击共用。
@@ -692,7 +692,7 @@ class FeedScopeApp(App[None]):
             return  # 已在该流，不重复刷新
         self.feed_idx = idx
         self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
-        await self._render_feed_sidebar()  # 高亮跟随（数字键/点击都走这里）
+        await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）
         self.action_refresh()
 
     async def action_prev_feed(self) -> None:
@@ -702,7 +702,7 @@ class FeedScopeApp(App[None]):
         await self._step_feed(1)
 
     async def _step_feed(self, delta: int) -> None:
-        """←/→ 切流（数字键的相对移动版，输入法免疫）：到边界给反馈，不静默。"""
+        """←/→ 切流（与详情屏 [/] 换篇同一条相对移动语义）：到边界给反馈，不静默。"""
         if not self.sources:
             return
         target = self.feed_idx + delta
