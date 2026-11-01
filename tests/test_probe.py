@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 from typing import ClassVar
 
 import pytest
@@ -137,10 +137,10 @@ def test_probe_filter_and_unknown_id(fake_registry, capsys: pytest.CaptureFixtur
 
 
 def test_probe_keeps_env_sample_dir(
-    fake_registry, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    fake_registry, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """FEEDSCOPE_SAMPLE_DIR 已设（conftest 指到 tmp）时 probe 沿用，不强设缓存目录。"""
+    """FEEDSCOPE_SAMPLE_DIR 已设（conftest 指到临时目录）时 probe 沿用，不强设缓存目录。"""
     fake_registry.register(_OkSource)
     code, out = _run(capsys)
     assert code == 0
-    assert str(tmp_path / "samples") in out
+    assert os.environ["FEEDSCOPE_SAMPLE_DIR"] in out

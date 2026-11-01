@@ -13,6 +13,15 @@ def register(cls: type[Source]) -> type[Source]:
     return cls
 
 
+def source_classes() -> list[type[Source]]:
+    """全部已注册的源类（顺序即注册顺序）。
+
+    供键位绑定与源选择界面用——这两处要看「所有可选源」（含被停用的），
+    不必实例化；实例化路径（读配置过滤）走 all_sources。
+    """
+    return list(_REGISTRY.values())
+
+
 def all_sources() -> list[Source]:
     """实例化全部已注册源（顺序即注册顺序）。"""
     return [cls() for cls in _REGISTRY.values()]

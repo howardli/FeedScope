@@ -3,18 +3,21 @@
 覆盖：列表加载 / 元信息列（[类型标签] 与作者/热度并列，统一按显示宽截断）/ jk 导航 / n 加载更多 /
 详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 n 重试 /
 resize 整屏重排（列表 + 详情）/ Enter 行为分派（详情 vs 浏览器）/
-每源信息流记忆 / 主屏守卫键反馈。不碰网络、不开浏览器。
+每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / s 键源管理（启停用、
+直达键动态寻址、零启用空态）。不碰网络、不开浏览器。
 
 改契约（FeedItem / Source / Loader）或 TUI 行为后必须全绿。
 """
 
 import asyncio
+import tomllib
 import webbrowser
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import ListItem, Markdown
+from textual.widgets import ListItem, Markdown, SelectionList
 
 import feedscope.sources  # noqa: F401  先触发真实源注册
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
@@ -24,6 +27,7 @@ from feedscope.ui.app import FeedScopeApp, meta_col_text, score_col_width
 from feedscope.ui.layout import META_COL_MAX
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
 
 
 def test_meta_col_text_unified_rule() -> None:
@@ -547,6 +551,230 @@ async def _run_bad_key_flow() -> None:
 
 def test_source_key_reserved_skipped(bad_key_registry) -> None:
     asyncio.run(_run_bad_key_flow())
+
+
+# ---- 首启源选择引导 + s 键源管理（启停用 / 直达键动态寻址 / 零启用空态） ----
+
+
+async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "fresh" / "sources.toml"  # 不存在 → 首启
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: isinstance(app.screen, OnboardingScreen)), (
+            "配置缺失时先弹首启引导"
+        )
+        sl = app.screen.query_one(SelectionList)
+        assert set(sl.selected) == {"stub", "stub2"}, "引导默认全勾"
+        assert "1 存根" in str(sl.get_option_at_index(0).prompt), "勾选行带序号"
+        assert "2 存根二" in str(sl.get_option_at_index(1).prompt)
+        await pilot.press("down")
+        await pilot.press("space")  # 取消第二项（stub2）
+        assert set(sl.selected) == {"stub"}
+        assert "存根二" in str(sl.get_option_at_index(1).prompt) and "2 存根二" not in str(
+            sl.get_option_at_index(1).prompt
+        ), "取消勾选即去掉序号"
+        await pilot.click("#setup-confirm")
+
+        assert await _settle(pilot, lambda: len(app.items) == 3), "确认后进主界面并加载"
+        assert not isinstance(app.screen, OnboardingScreen)
+        assert len(app.query(".source-tab")) == 1, "只勾一个源：顶部 tab 只剩一个"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], (
+            "勾选落盘"
+        )
+
+
+def test_onboarding_first_run(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_onboarding_flow(monkeypatch, tmp_path))
+
+
+async def _run_onboarding_cancel_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "fresh2" / "sources.toml"
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
+        await pilot.press("escape")  # 引导取消 = 放弃使用，不默认全开
+        assert await _settle(pilot, lambda: not app.is_running), "App 退出"
+        assert app.return_code == 0
+        assert not cfg.exists(), "取消不落盘（下次启动再次引导）"
+
+
+def test_onboarding_cancel_exits(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_onboarding_cancel_flow(monkeypatch, tmp_path))
+
+
+async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "m" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")  # 已配置（无 enabled → 全启用），不触发引导
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+        assert len(app.query(".source-tab")) == 2
+
+        # 停用 stub2：s 打开管理 → 空格取消第二项 → 保存
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        sl = app.screen.query_one(SelectionList)
+        assert set(sl.selected) == {"stub", "stub2"}, "当前启用的源默认勾上"
+        await pilot.press("down")
+        await pilot.press("space")
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: len(app.query(".source-tab")) == 1), "保存后 tab 即时重建"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], "落盘"
+        assert await _settle(
+            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+        ), "停在原源继续可读"
+
+        # 停用源的直达键：反馈不静默、不切站
+        await pilot.press("z")
+        assert await _settle(pilot, lambda: "未启用" in _last_notification(app)), (
+            "停用源直达键要有反馈"
+        )
+        assert app.current_source.source_id == "stub"
+
+        # 再启用：直达键即刻恢复
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("down")
+        await pilot.press("space")  # 勾回 stub2
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: len(app.query(".source-tab")) == 2)
+        await pilot.press("z")
+        assert await _settle(
+            pilot, lambda: app.current_source.source_id == "stub2" and len(app.items) == 1
+        ), "重新启用后直达键恢复"
+
+        # 管理取消：不落盘不动状态
+        before = cfg.read_text(encoding="utf-8")
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 勾掉第一项也无所谓——取消
+        await pilot.click("#setup-cancel")
+        assert await _settle(pilot, lambda: not isinstance(app.screen, ManageSourcesScreen))
+        assert cfg.read_text(encoding="utf-8") == before, "取消不落盘"
+        assert len(app.query(".source-tab")) == 2
+
+
+def test_manage_sources_toggle(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_manage_flow(monkeypatch, tmp_path))
+
+
+async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "z0" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 停用 stub
+        await pilot.press("down")
+        await pilot.press("space")  # 停用 stub2：全不勾也允许保存
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: not app.sources), "全部停用"
+        hint = str(app.query_one("#empty-hint").content)
+        assert "没有启用的源" in hint and "s" in hint, "空态常驻提示指路 s 键"
+        assert app.is_running, "零启用不退出 App（s 随时再开）"
+
+        await pilot.press("u")  # 空态守卫：有反馈不崩溃
+        assert await _settle(pilot, lambda: "没有启用的源" in _last_notification(app))
+
+        # s 再开：从空态恢复
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 勾回 stub
+        await pilot.click("#setup-confirm")
+        assert await _settle(
+            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+        ), "空态可恢复"
+
+
+def test_zero_enabled_empty_state(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_zero_enabled_flow(monkeypatch, tmp_path))
+
+
+# ---- 展示顺序 = 勾选顺序（enabled 落盘同序，重启保持） ----
+
+
+async def _run_check_order_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "ord" / "sources.toml"
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))  # 不存在 → 首启
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
+        # 取消再勾回第一项（stub）：勾上的排末尾 → 顺序 [stub2, stub]
+        await pilot.press("space")
+        await pilot.press("space")
+        assert app.screen.selected_ids == ["stub2", "stub"]
+        sl = app.screen.query_one(SelectionList)
+        assert "1 存根二" in str(sl.get_option_at_index(1).prompt), "序号跟随勾选顺序实时重排"
+        assert "2 存根" in str(sl.get_option_at_index(0).prompt)
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+        assert [s.source_id for s in app.sources] == ["stub2", "stub"], "展示顺序 = 勾选顺序"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"], (
+            "落盘顺序与勾选顺序一致"
+        )
+        first_tab = str(app.query(".source-tab").nodes[0].content)
+        assert "存根二" in first_tab, "顶部 tab 首位是后仍勾选着的存根二"
+
+
+def test_onboarding_check_order(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_check_order_flow(monkeypatch, tmp_path))
+
+
+async def _run_config_order_flow(monkeypatch, tmp_path: Path) -> None:
+    """手改/落盘的 enabled 书写顺序在重启后原样生效。"""
+    cfg = tmp_path / "saved" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('enabled = ["stub2", "stub"]\n', encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 1), "首源是 stub2（1 条）"
+        assert [s.source_id for s in app.sources] == ["stub2", "stub"]
+        assert app.query(".source-tab").nodes[0].has_class("source-tab-active"), "首位源即当前源"
+
+
+def test_config_order_respected_on_restart(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_config_order_flow(monkeypatch, tmp_path))
+
+
+async def _run_manage_reorder_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "re" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+        await pilot.press("s")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        # 取消再勾回第一项（stub）：移到末尾 → [stub2, stub]
+        await pilot.press("space")
+        await pilot.press("space")
+        assert app.screen.selected_ids == ["stub2", "stub"]
+        sl = app.screen.query_one(SelectionList)
+        assert "1 存根二" in str(sl.get_option_at_index(1).prompt), "管理界面同样实时标序号"
+        assert "2 存根" in str(sl.get_option_at_index(0).prompt)
+        await pilot.click("#setup-confirm")
+        assert await _settle(
+            pilot, lambda: [s.source_id for s in app.sources] == ["stub2", "stub"]
+        ), "保存后按新顺序重建站点栏"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"]
+        assert await _settle(
+            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+        ), "顺序变了但停在原源继续可读"
+
+
+def test_manage_reorder(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_manage_reorder_flow(monkeypatch, tmp_path))
 
 
 async def _run_answer_layer_flow(opened: list[str]) -> None:

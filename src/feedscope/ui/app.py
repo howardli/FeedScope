@@ -18,13 +18,15 @@ from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, S
 
 import feedscope.sources  # noqa: F401  import 即注册
 from feedscope import login
+from feedscope.core import config
 from feedscope.core.browser import close_session, get_session
 from feedscope.core.models import FeedItem
-from feedscope.core.registry import all_sources
+from feedscope.core.registry import all_sources, source_classes
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.ui import feedback
 from feedscope.ui.layout import META_COL_MAX, META_COL_SPARE, RESIZE_DEBOUNCE, list_title_width
 from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
 from feedscope.ui.theme import FEEDSCOPE_THEME
 from feedscope.ui.wrap import display_width, wrap_display
 
@@ -34,10 +36,10 @@ PREWARM = True  # 启动即后台预热浏览器；测试环境置 False（见 t
 _FEED_KEYS = [Binding(str(i + 1), f"app.select_feed({i})", show=False) for i in range(9)]
 
 # 源的一键直达键（source_key，单个小写字母）不得占用这些 UI 自有字母键：
-# q 退出 · r 刷新 · o 浏览器 · n 加载更多 · j/k 移动 · u 账号（登录/登出）
+# q 退出 · r 刷新 · o 浏览器 · n 加载更多 · j/k 移动 · u 账号（登录/登出）· s 源管理
 # （其余键位非字母，天然被「单个小写字母」约束排除）。冲突声明跳过并警告，
 # 见 FeedScopeApp._bind_source_keys。
-_SOURCE_KEY_RESERVED = frozenset({"q", "r", "o", "n", "j", "k", "u"})
+_SOURCE_KEY_RESERVED = frozenset({"q", "r", "o", "n", "j", "k", "u", "s"})
 
 
 def meta_col_text(source: Source, it: FeedItem) -> str:
@@ -187,6 +189,7 @@ class FeedScopeApp(App[None]):
         Binding("r", "refresh", "刷新"),
         Binding("o", "open_browser", "浏览器打开"),
         Binding("u", "account", "账号", show=False),
+        Binding("s", "manage_sources", "源管理"),
     ]
 
     CSS = """
@@ -243,7 +246,7 @@ class FeedScopeApp(App[None]):
         super().__init__()
         self.register_theme(FEEDSCOPE_THEME)  # 克制的编辑器风配色（见 ui/theme.py），产品需求而非保守
         self.theme = FEEDSCOPE_THEME.name
-        self.sources = all_sources()
+        self.sources = self._enabled_sources()
         self.source_idx = 0
         self.feed_idx = 0
         self._feed_memory: dict[str, int] = {}  # source_id -> 上次选的信息流（切站回到上次看的板块）
@@ -259,22 +262,38 @@ class FeedScopeApp(App[None]):
         self._source_key_skipped: list[str] = []  # 键位冲突被跳过的声明（on_mount 汇总警告）
         self._bind_source_keys()
 
+    def _enabled_sources(self) -> list[Source]:
+        """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
+
+        enabled 缺省 = 全部启用（注册顺序，老配置文件只有 hide 的不受影响）；
+        不在注册表的 id 静默略过——卸载 / 改名后的残留条目无害，doctor 会报告
+        配置概况。
+        """
+        enabled = config.enabled_ids()
+        if enabled is None:
+            return all_sources()
+        classes = {cls.source_id: cls for cls in source_classes()}
+        return [classes[sid]() for sid in enabled if sid in classes]
+
     def _bind_source_keys(self) -> None:
         """按注册表给声明了 source_key 的源生成一键直达绑定（z 直切知乎、x 直切 X……）。
 
         动态绑定必须随实例走（类级 BINDINGS 在 import 时就被 Textual 固化，测试换
-        注册表时对不上）；冲突声明跳过并警告，该源仍可 Tab 循环到达。
+        注册表时对不上）。绑定覆盖全部注册源（含停用的），动作按 source_id 动态
+        寻址（action_source_hotkey 查当前启用列表）——Textual 没有解绑 API，停用
+        源若不占住键位，重新启用后直达键就回不来了。冲突声明跳过并警告，该源仍
+        可 Tab 循环到达。
         """
         claimed: set[str] = set()
-        for idx, source in enumerate(self.sources):
-            key = source.source_key
+        for cls in source_classes():
+            key = cls.source_key
             if key is None:
                 continue
             if len(key) != 1 or not key.islower() or key in claimed or key in _SOURCE_KEY_RESERVED:
-                self._source_key_skipped.append(f"{source.label}({key})")
+                self._source_key_skipped.append(f"{cls.label}({key})")
                 continue
             claimed.add(key)
-            self.bind(key, f"app.select_source({idx})", description=f"切到{source.label}")
+            self.bind(key, f"app.source_hotkey({cls.source_id!r})", description=f"切到{cls.label}")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -286,7 +305,7 @@ class FeedScopeApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        if not self.sources:
+        if not source_classes():
             self.exit(message="没有注册任何源")
             return
         self.query_one("#feed", ListView).focus()
@@ -296,7 +315,7 @@ class FeedScopeApp(App[None]):
                 "、".join(self._source_key_skipped) + " 的直达键与现有键位冲突，已跳过（仍可 Tab 切换）",
                 title="键位冲突",
             )
-        self.run_worker(self._bootstrap())
+        self.run_worker(self._start())
         if PREWARM:
             self.run_worker(self._prewarm(), group="prewarm")  # 后台预热，见 _prewarm
 
@@ -312,8 +331,71 @@ class FeedScopeApp(App[None]):
         except Exception:
             pass
 
+    async def _start(self) -> None:
+        """启动序列：首启（配置文件不存在）先引导选源，确认落盘后才进正常渲染。
+
+        勾选是使用源的前提：引导取消（None）= 放弃本次使用，不默认全开。
+        _start 本就在 worker 里，push_screen 的 wait_for_dismiss 合法。
+        """
+        if not config.is_configured():
+            chosen = await self.push_screen(
+                OnboardingScreen(self._setup_entries(), [s.source_id for s in self.sources]),
+                wait_for_dismiss=True,
+            )
+            if chosen is None:
+                self.exit(message="未完成初始设置，重新运行 feedscope 再次选择")
+                return
+            config.save_enabled(chosen)
+            # 只重建状态，渲染统一交给 _bootstrap：_start 在 default 组里跑，
+            # 若此处走 _apply_enabled 的 action_refresh（default 组 exclusive），
+            # 会把还在 await 的自己取消在「旧子项已摘、新子项未挂」的中间态
+            self._rebuild_enabled(chosen)
+        await self._bootstrap()
+
     async def _bootstrap(self) -> None:
         """初始渲染：tab 条/边栏重建是异步的（等旧子项摘除），随后才开始抓取。"""
+        await self._render_source_tabs()
+        await self._render_feed_sidebar()
+        self.action_refresh()
+
+    def _setup_entries(self) -> list[tuple[str, str]]:
+        """源选择弹层的行数据：(source_id, 行文案)，注册顺序即列表顺序。
+
+        文案带上各源的信息流名，首启选择时不用进 App 也能知道每个源有什么。
+        """
+        entries: list[tuple[str, str]] = []
+        for cls in source_classes():
+            feeds = "、".join(cls.feed_labels.get(f, f) for f in cls.feeds) or "无信息流"
+            entries.append((cls.source_id, f"{cls.label} [dim]{feeds}[/dim]"))
+        return entries
+
+    def _rebuild_enabled(self, ids: list[str]) -> None:
+        """按启用列表重建源列表与选中位（纯状态，不碰 DOM）。
+
+        展示顺序 = ids 顺序（弹屏按勾选顺序产出，落盘 enabled 同序）；尽量停
+        在原来的源（没被停用的话）；直达键绑定不用动——按 id 动态寻址（见
+        _bind_source_keys）。
+        """
+        chosen = set(ids)
+        classes = {cls.source_id: cls for cls in source_classes()}
+        prev_id = self.sources[self.source_idx].source_id if self.sources else None
+        self.sources = [classes[sid]() for sid in ids if sid in classes]
+        self._feed_memory = {k: v for k, v in self._feed_memory.items() if k in chosen}
+        if prev_id is not None and prev_id in chosen:
+            self.source_idx = next(i for i, s in enumerate(self.sources) if s.source_id == prev_id)
+        else:
+            self.source_idx = 0
+        feeds = self.current_source.feeds if self.sources else []
+        mem = self._feed_memory.get(self.current_source.source_id, 0) if self.sources else 0
+        self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
+
+    async def _apply_enabled(self, ids: list[str]) -> None:
+        """启用集变化的生效路径（s 键管理）：状态重建 + 两侧导航重渲染 + 刷新。
+
+        只在 sources 组的 worker 里调用（该组不被 default 组的 exclusive 刷新
+        取消，见 action_manage_sources）。
+        """
+        self._rebuild_enabled(ids)
         await self._render_source_tabs()
         await self._render_feed_sidebar()
         self.action_refresh()
@@ -337,17 +419,20 @@ class FeedScopeApp(App[None]):
         """按当前源重建左侧信息流边栏，高亮当前流（数字序号与 1-9 键一致）。"""
         nav = self.query_one("#feed-nav", Vertical)
         await nav.remove_children()
-        source = self.current_source
-        items: list[Widget] = [
-            FeedNavItem(
-                idx,
-                f"{idx + 1} {source.feed_labels.get(name, name)}",
-                active=(idx == self.feed_idx),
-            )
-            for idx, name in enumerate(source.feeds)
-        ]
+        items: list[Widget] = []
+        if self.sources:
+            source = self.current_source
+            items = [
+                FeedNavItem(
+                    idx,
+                    f"{idx + 1} {source.feed_labels.get(name, name)}",
+                    active=(idx == self.feed_idx),
+                )
+                for idx, name in enumerate(source.feeds)
+            ]
         if not items:
-            items.append(Static("[dim]（无信息流）[/dim]"))
+            hint = "（未启用任何源，s 键管理）" if not self.sources else "（无信息流）"
+            items.append(Static(f"[dim]{hint}[/dim]"))
         await nav.mount(*items)
 
     async def on_source_tab_pressed(self, event: SourceTabPressed) -> None:
@@ -389,10 +474,17 @@ class FeedScopeApp(App[None]):
         return False
 
     async def _refresh(self) -> None:
-        source = self.current_source
         if self.feed_loader is not None:  # 切流前关掉旧页签
             await self.feed_loader.close()
             self.feed_loader = None
+        if not self.sources:  # 全部停用：常驻空态指路（s 再开），不退出
+            view = self.query_one("#feed", ListView)
+            view.clear()
+            self.items = []
+            self.sub_title = ""
+            self._show_empty("没有启用的源 · 按 s 键管理")
+            return
+        source = self.current_source
 
         open_coro = source.open_feed(self.current_feed)
 
@@ -563,6 +655,18 @@ class FeedScopeApp(App[None]):
         """source_key 绑定的一键直达：直接落到注册表第 idx 个源（绑定由 _bind_source_keys 生成）。"""
         await self._goto_source(idx)
 
+    async def action_source_hotkey(self, source_id: str) -> None:
+        """直达键的分发动作：按 source_id 在当前启用列表里寻址。
+
+        绑定覆盖全部注册源（含停用的，见 _bind_source_keys），启用集变化不必
+        重绑；停用源的直达键按下要给反馈，不静默。
+        """
+        for idx, source in enumerate(self.sources):
+            if source.source_id == source_id:
+                await self._goto_source(idx)
+                return
+        feedback.info(self, "该源未启用 · s 键管理")
+
     async def action_select_feed(self, idx: int) -> None:
         feeds = self.current_source.feeds
         if not feeds or not 0 <= idx < len(feeds):
@@ -597,6 +701,9 @@ class FeedScopeApp(App[None]):
         加载的 default 组，u 不会打断在途的 _refresh。
         """
         if not self._on_main_screen():
+            return
+        if not self.sources:
+            feedback.info(self, "没有启用的源 · s 键管理")
             return
         self.run_worker(self._account(), group="account", exclusive=True)
 
@@ -661,6 +768,32 @@ class FeedScopeApp(App[None]):
             return
         feedback.info(self, f"已登出 {source.label}" if had else f"{source.label} 本就没有登录")
         self.action_refresh()
+
+    # ---- 源管理：s 键启用 / 停用 ----
+
+    def action_manage_sources(self) -> None:
+        """s 键源管理：勾选启用的源，保存即生效——增加 / 删除 / 修改启用集都走这里。
+
+        只在列表主屏生效；走 worker 因为 push_screen 的 wait_for_dismiss 只能
+        在 worker 里用，group 独立于列表加载，s 不打断在途的 _refresh。
+        """
+        if not self._on_main_screen():
+            return
+        self.run_worker(self._manage_sources(), group="sources", exclusive=True)
+
+    async def _manage_sources(self) -> None:
+        current_ids = [s.source_id for s in self.sources]
+        chosen = await self.push_screen(
+            ManageSourcesScreen(self._setup_entries(), current_ids), wait_for_dismiss=True
+        )
+        if chosen is None:
+            return  # 取消：不落盘、不动状态
+        config.save_enabled(chosen)
+        await self._apply_enabled(chosen)
+        if chosen:
+            feedback.info(self, f"已保存：{len(chosen)} 源启用")
+        else:
+            feedback.info(self, "已保存：当前没有启用的源（s 键可再开启）")
 
     def current_item(self) -> FeedItem | None:
         if not self.items:
