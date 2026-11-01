@@ -32,18 +32,18 @@ from feedscope.ui.wrap import wrap_markdown
 class AnswerScreen(Screen[None]):
     """单条回答全文 + 它的评论区（评论此刻才请求）。
 
-    Esc 返回问题屏（阅读位置不变）；n 加载更多评论（评论多时一层层翻）；
-    [/] 在已加载的回答间换（要更多回答回问题屏按 n）。
+    Esc 返回问题屏（阅读位置不变）；Ctrl+N 加载更多评论（评论多时一层层翻）；
+    [/] 在已加载的回答间换（要更多回答回问题屏按 Ctrl+N）。
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
+        # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
+        # 原生键，无需声明
         Binding("escape", "back", "返回"),
-        Binding("n", "more", "更多评论"),
-        Binding("o", "open_browser", "浏览器"),
+        Binding("ctrl+n", "more", "更多评论"),
+        Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_answer", "下一回答"),
         Binding("left", "prev_answer", "上一回答"),
-        Binding("j", "scroll_down", "下滚", show=False),  # 与列表/问题屏键位一致
-        Binding("k", "scroll_up", "上滚", show=False),
     ]
 
     def __init__(
@@ -51,7 +51,7 @@ class AnswerScreen(Screen[None]):
     ) -> None:
         super().__init__()
         self.source = source
-        self.item = item        # 问题条目（o 键回退用它）
+        self.item = item        # 问题条目（Ctrl+O 回退用它）
         self.qloader = qloader  # 问题 loader（共享页签的底座）
         self.index = index
         self.cloader: CommentLoader | None = None  # 评论 loader（契约见 core.source.CommentLoader）
@@ -115,7 +115,7 @@ class AnswerScreen(Screen[None]):
     def _hint_widget(self) -> Static:
         # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重
         return Static(
-            f"[dim]── n 加载更多{self._unit} · ← → 换回答 · Esc 返回 ──[/dim]", classes="cm-hint"
+            f"[dim]── Ctrl+N 加载更多{self._unit} · ← → 换回答 · Esc 返回 ──[/dim]", classes="cm-hint"
         )
 
     def _comment_floor(self, c: Comment) -> list[Widget]:
@@ -164,7 +164,7 @@ class AnswerScreen(Screen[None]):
             self.cloader = await self.qloader.open_comments(self.index)
         except Exception as exc:
             feedback.fail(self.app, self.source, exc, action="评论加载失败")
-            self._swap_status("cm-loading", f"[red]评论加载失败：{escape(feedback.failure_text(self.source, exc))} · n 重试[/red]")
+            self._swap_status("cm-loading", f"[red]评论加载失败：{escape(feedback.failure_text(self.source, exc))} · Ctrl+N 重试[/red]")
             return
         comments = self.cloader.comments
         self._exhausted = self.cloader.done and not comments
@@ -217,7 +217,7 @@ class AnswerScreen(Screen[None]):
 
     def action_more(self) -> None:
         if self.cloader is None:
-            # 评论首载失败（或还在途）时 n = 原地重试（与问题屏首载重试同动线）
+            # 评论首载失败（或还在途）时 Ctrl+N = 原地重试（与问题屏首载重试同动线）
             self.run_worker(self._retry_comments(), group="comments", exclusive=True)
             return
         if self._exhausted:
@@ -247,7 +247,7 @@ class AnswerScreen(Screen[None]):
                 self._exhausted = True
                 self._remove_hint()
                 await body.mount(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"))
-            else:  # 拉空没到头（网慢/懒加载没触发）：可再按 n
+            else:  # 拉空没到头（网慢/懒加载没触发）：可再按 Ctrl+N
                 await self._mount_hint()
             return
         await self._mount_floors(new, first=False)
@@ -260,7 +260,7 @@ class AnswerScreen(Screen[None]):
         await self._retarget(-1)
 
     async def _retarget(self, delta: int) -> None:
-        """←/→ 换回答：同问题内相邻楼层（更多回答回问题屏按 n 加载）。"""
+        """←/→ 换回答：同问题内相邻楼层（更多回答回问题屏按 Ctrl+N 加载）。"""
         n_answers = len(self.qloader.doc.answers)
         nxt = self.index + delta
         if not 0 <= nxt < n_answers:

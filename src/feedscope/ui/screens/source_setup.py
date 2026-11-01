@@ -1,4 +1,4 @@
-"""源选择弹层：首启引导 + 日常源管理（s 键）。
+"""源选择弹层：首启引导 + 日常源管理（F2）。
 
 两屏同一套 SelectionList 勾选交互（空格切换）：确认返回勾选的源 id 列表
 （**按勾选顺序**——展示顺序 = 勾选顺序，后勾上的排末尾；勾选行实时标
@@ -116,7 +116,7 @@ class OnboardingScreen(SourceSetupScreen):
 
 
 class ManageSourcesScreen(SourceSetupScreen):
-    """s 键源管理：勾选 = 启用、取消勾选 = 停用，保存后立即生效。"""
+    """F2 源管理：勾选 = 启用、取消勾选 = 停用，保存后立即生效。"""
 
     title_text = "源管理"
     prompt_text = "空格切换勾选；序号即站点排列顺序，取消再勾选 = 移到末尾"

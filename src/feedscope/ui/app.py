@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import webbrowser
 from typing import Any, ClassVar
 
@@ -9,7 +10,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.events import Resize
+from textual.events import Key, Resize
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -30,16 +31,22 @@ from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScr
 from feedscope.ui.theme import FEEDSCOPE_THEME
 from feedscope.ui.wrap import display_width, wrap_display
 
-# 数字键直达信息流（1-9）；两轴导航：Tab/Shift+Tab 切站、数字切流
+# 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
+# 中文输入法只拦字母/数字进候选框），字母键只留给站点直达键（z/x）
 PREWARM = True  # 启动即后台预热浏览器；测试环境置 False（见 tests/conftest.py）
 
-_FEED_KEYS = [Binding(str(i + 1), f"app.select_feed({i})", show=False) for i in range(9)]
 
-# 源的一键直达键（source_key，单个小写字母）不得占用这些 UI 自有字母键：
-# q 退出 · r 刷新 · o 浏览器 · n 加载更多 · j/k 移动 · u 账号（登录/登出）· s 源管理
-# （其余键位非字母，天然被「单个小写字母」约束排除）。冲突声明跳过并警告，
-# 见 FeedScopeApp._bind_source_keys。
-_SOURCE_KEY_RESERVED = frozenset({"q", "r", "o", "n", "j", "k", "u", "s"})
+def _is_cjk(ch: str) -> bool:
+    """是否中日韩字符（表意文字 / 中文标点 / 全角形式）：输入法上屏内容的判定范围。"""
+    return (
+        "\u4e00" <= ch <= "\u9fff"
+        or "\u3400" <= ch <= "\u4dbf"
+        or "\u3000" <= ch <= "\u303f"
+        or "\uff00" <= ch <= "\uffef"
+    )
+
+
+_CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
 
 
 def meta_col_text(source: Source, it: FeedItem) -> str:
@@ -101,7 +108,7 @@ class SourceTab(Static):
 
 
 class FeedNavItem(Static):
-    """左侧信息流项：数字键序号 + 流名，点击切流；高亮由 CSS class 决定。"""
+    """左侧信息流项：流名，点击切流（键盘走 ←/→）；高亮由 CSS class 决定。"""
 
     def __init__(self, idx: int, label: str, active: bool) -> None:
         super().__init__(
@@ -117,16 +124,17 @@ class FeedNavItem(Static):
 
 
 class FeedListView(ListView):
-    """列表视图：Tab/Shift+Tab 切网站、数字键切信息流、n 加载更多（widget 层绑定压过 Screen 焦点切换）。"""
+    """列表视图：Tab/Shift+Tab 切网站、←/→ 切信息流、Ctrl+N 加载更多（widget 层绑定压过 Screen 焦点切换）。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 切站/直达键不进页脚：顶部 tab 条已标注「名称(键)」，页脚再列就重复了
         Binding("tab", "app.next_source", "切站", show=False),
         Binding("shift+tab", "app.prev_source", "切站", show=False),
-        Binding("n", "app.more", "加载更多"),
-        Binding("j", "cursor_down", show=False),  # 与详情屏键位保持一致
-        Binding("k", "cursor_up", show=False),
-        *_FEED_KEYS,
+        Binding("ctrl+n", "app.more", "加载更多"),
+        # ←/→ 切流（与详情屏 [/] 换篇同构：横向换内容、纵向移动选中）。widget 层
+        # 绑定压过 VerticalScroll 继承的 left/right 横滚（列表本就无横向滚动）
+        Binding("left", "app.prev_feed", "切流"),
+        Binding("right", "app.next_feed", "切流"),
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -190,12 +198,15 @@ class FeedScopeApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
 
     BINDINGS: ClassVar[list[Binding]] = [
-        # q 全局生效（详情屏也直接退出）：一键退出必须是全局的
-        Binding("q", "quit", "退出"),
-        Binding("r", "refresh", "刷新"),
-        Binding("o", "open_browser", "浏览器打开"),
-        Binding("u", "account", "账号", show=False),
-        Binding("s", "manage_sources", "源管理"),
+        # 键位全部非打印键：字母/数字会被中文输入法拦进候选框，一个动作只留
+        # 一个键，不给字母留别名（唯一例外：站点直达键 z/x，见 _bind_source_keys，
+        # 仍走字母因为 Tab 循环已可达、直达键是加速位）。Ctrl+C 连按退出是
+        # Textual 自带兜底，不占页脚。
+        Binding("ctrl+q", "quit", "退出", priority=True),
+        Binding("f5", "refresh", "刷新"),
+        Binding("ctrl+o", "open_browser", "浏览器"),
+        Binding("f2", "manage_sources", "源管理"),
+        Binding("ctrl+u", "account", "账号", show=False),
     ]
 
     CSS = """
@@ -262,10 +273,11 @@ class FeedScopeApp(App[None]):
         self._score_width = 1 + META_COL_SPARE
         self._login_in_progress = False  # 有头登录进行中：挡下刷新/切源误触发 profile 锁冲突
         # 用户已拒绝登录询问的源（本次运行内有效）：撞墙不再自动弹框，只留
-        # 常驻「u 键登录」提示。u 键手动登录照常可用；登录成功/登出后清除，
-        # 后续撞墙（登录过期、换账号）恢复自动询问。
+        # 常驻「Ctrl+U 登录」提示。Ctrl+U 手动登录照常可用；登录成功/登出后
+        # 清除，后续撞墙（登录过期、换账号）恢复自动询问。
         self._login_refused: set[str] = set()
         self._source_key_skipped: list[str] = []  # 键位冲突被跳过的声明（on_mount 汇总警告）
+        self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
         self._bind_source_keys()
 
     def _enabled_sources(self) -> list[Source]:
@@ -284,18 +296,20 @@ class FeedScopeApp(App[None]):
     def _bind_source_keys(self) -> None:
         """按注册表给声明了 source_key 的源生成一键直达绑定（z 直切知乎、x 直切 X……）。
 
-        动态绑定必须随实例走（类级 BINDINGS 在 import 时就被 Textual 固化，测试换
-        注册表时对不上）。绑定覆盖全部注册源（含停用的），动作按 source_id 动态
-        寻址（action_source_hotkey 查当前启用列表）——Textual 没有解绑 API，停用
-        源若不占住键位，重新启用后直达键就回不来了。冲突声明跳过并警告，该源仍
-        可 Tab 循环到达。
+        UI 键位已全部非打印键（见 BINDINGS 注释），字母键整个让给直达键——历史
+        上被 UI 占用的 q/r/o/n 等如今也可声明。动态绑定必须随实例走（类级
+        BINDINGS 在 import 时就被 Textual 固化，测试换注册表时对不上）。绑定覆盖
+        全部注册源（含停用的），动作按 source_id 动态寻址（action_source_hotkey
+        查当前启用列表）——Textual 没有解绑 API，停用源若不占住键位，重新启用后
+        直达键就回不来了。非法声明（非单个小写字母）与源间撞键跳过并警告，
+        该源仍可 Tab 循环到达。
         """
         claimed: set[str] = set()
         for cls in source_classes():
             key = cls.source_key
             if key is None:
                 continue
-            if len(key) != 1 or not key.islower() or key in claimed or key in _SOURCE_KEY_RESERVED:
+            if len(key) != 1 or not key.islower() or key in claimed:
                 self._source_key_skipped.append(f"{cls.label}({key})")
                 continue
             claimed.add(key)
@@ -397,7 +411,7 @@ class FeedScopeApp(App[None]):
         self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
 
     async def _apply_enabled(self, ids: list[str]) -> None:
-        """启用集变化的生效路径（s 键管理）：状态重建 + 两侧导航重渲染 + 刷新。
+        """启用集变化的生效路径（F2 源管理）：状态重建 + 两侧导航重渲染 + 刷新。
 
         只在 sources 组的 worker 里调用（该组不被 default 组的 exclusive 刷新
         取消，见 action_manage_sources）。
@@ -423,22 +437,18 @@ class FeedScopeApp(App[None]):
             )
 
     async def _render_feed_sidebar(self) -> None:
-        """按当前源重建左侧信息流边栏，高亮当前流（数字序号与 1-9 键一致）。"""
+        """按当前源重建左侧信息流边栏，高亮当前流（←/→ 依序切换）。"""
         nav = self.query_one("#feed-nav", Vertical)
         await nav.remove_children()
         items: list[Widget] = []
         if self.sources:
             source = self.current_source
             items = [
-                FeedNavItem(
-                    idx,
-                    f"{idx + 1} {source.feed_labels.get(name, name)}",
-                    active=(idx == self.feed_idx),
-                )
+                FeedNavItem(idx, source.feed_labels.get(name, name), active=(idx == self.feed_idx))
                 for idx, name in enumerate(source.feeds)
             ]
         if not items:
-            hint = "（未启用任何源，s 键管理）" if not self.sources else "（无信息流）"
+            hint = "（未启用任何源，F2 管理）" if not self.sources else "（无信息流）"
             items.append(Static(f"[dim]{hint}[/dim]"))
         await nav.mount(*items)
 
@@ -474,7 +484,7 @@ class FeedScopeApp(App[None]):
         return len(self.screen_stack) == 1
 
     def _require_main_screen(self) -> bool:
-        """主屏专属动作的守卫：被挡下要给反馈，绝不静默（与空态下按 n 同一原则）。"""
+        """主屏专属动作的守卫：被挡下要给反馈，绝不静默（与空态下按 Ctrl+N 同一原则）。"""
         if self._on_main_screen():
             return True
         feedback.info(self, "详情屏中，Esc 返回列表")
@@ -484,12 +494,12 @@ class FeedScopeApp(App[None]):
         if self.feed_loader is not None:  # 切流前关掉旧页签
             await self.feed_loader.close()
             self.feed_loader = None
-        if not self.sources:  # 全部停用：常驻空态指路（s 再开），不退出
+        if not self.sources:  # 全部停用：常驻空态指路（F2 再开），不退出
             view = self.query_one("#feed", ListView)
             view.clear()
             self.items = []
             self.sub_title = ""
-            self._show_empty("没有启用的源 · 按 s 键管理")
+            self._show_empty("没有启用的源 · 按 F2 管理")
             return
         source = self.current_source
 
@@ -503,7 +513,7 @@ class FeedScopeApp(App[None]):
             loader = await open_coro
         except LoginRequired as exc:
             self.sub_title = self._crumb("未登录")
-            hint = f"{exc} · u 键登录"
+            hint = f"{exc} · Ctrl+U 登录"
             if source.source_id in self._login_refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
                 self._show_empty(hint)
@@ -520,7 +530,7 @@ class FeedScopeApp(App[None]):
             else:
                 self._login_refused.add(source.source_id)
                 self._show_empty(hint)
-                feedback.info(self, "已取消，本次运行不再自动询问；u 键可登录")
+                feedback.info(self, "已取消，本次运行不再自动询问；Ctrl+U 可登录")
             return
         except Exception as exc:
             self.sub_title = self._crumb("加载失败")
@@ -537,7 +547,7 @@ class FeedScopeApp(App[None]):
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
         else:
-            self._show_empty("没有内容 · r 刷新 · Tab 或点击顶部 tab 切换站点")
+            self._show_empty("没有内容 · F5 刷新 · Tab 或点击顶部 tab 切换站点")
         self.sub_title = self._crumb(f"{len(self.items)} 条")
 
     def _show_empty(self, text: str) -> None:
@@ -575,7 +585,7 @@ class FeedScopeApp(App[None]):
                 feedback.info(self, "没有更多了")
             else:
                 self.sub_title = self._crumb(f"{len(self.items)} 条 · 这轮没拉到新内容")
-                feedback.info(self, "这轮没拉到新内容，稍后再按 n 重试")
+                feedback.info(self, "这轮没拉到新内容，稍后再按 Ctrl+N 重试")
             return
         self.items = loader.items
         view = self.query_one("#feed", ListView)
@@ -672,7 +682,7 @@ class FeedScopeApp(App[None]):
             if source.source_id == source_id:
                 await self._goto_source(idx)
                 return
-        feedback.info(self, "该源未启用 · s 键管理")
+        feedback.info(self, "该源未启用 · F2 管理")
 
     async def action_select_feed(self, idx: int) -> None:
         feeds = self.current_source.feeds
@@ -685,23 +695,39 @@ class FeedScopeApp(App[None]):
         await self._render_feed_sidebar()  # 高亮跟随（数字键/点击都走这里）
         self.action_refresh()
 
+    async def action_prev_feed(self) -> None:
+        await self._step_feed(-1)
+
+    async def action_next_feed(self) -> None:
+        await self._step_feed(1)
+
+    async def _step_feed(self, delta: int) -> None:
+        """←/→ 切流（数字键的相对移动版，输入法免疫）：到边界给反馈，不静默。"""
+        if not self.sources:
+            return
+        target = self.feed_idx + delta
+        if not 0 <= target < len(self.current_source.feeds):
+            feedback.info(self, "已是第一个流" if delta < 0 else "已是最后一个流")
+            return
+        await self.action_select_feed(target)
+
     def action_open_browser(self) -> None:
         item = self.current_item()
         if item is None:
-            feedback.info(self, "当前没有选中的条目")  # 空态/加载中按 o 也绝不无声
+            feedback.info(self, "当前没有选中的条目")  # 空态/加载中按 Ctrl+O 也绝不无声
             return
         webbrowser.open(item.url)
 
     def action_more(self) -> None:
         if self.feed_loader is None:
-            feedback.info(self, "当前列表没有可加载的内容")  # 失败/空态下按 n 也绝不无声
+            feedback.info(self, "当前列表没有可加载的内容")  # 失败/空态下按 Ctrl+N 也绝不无声
             return
         self.run_worker(self._load_more_feed(), group="more", exclusive=True)
 
-    # ---- 账号：u 键登录 / 登出 ----
+    # ---- 账号：Ctrl+U 登录 / 登出 ----
 
     def action_account(self) -> None:
-        """u 键按当前源状态分派：匿名源提示、已登录弹登出、未登录弹登录。
+        """Ctrl+U 按当前源状态分派：匿名源提示、已登录弹登出、未登录弹登录。
 
         只在列表主屏生效（详情屏/已有弹框时不叠加新账号框）；走 worker 因为
         push_screen 的 wait_for_dismiss 只能在 worker 里用。group 独立于列表
@@ -710,7 +736,7 @@ class FeedScopeApp(App[None]):
         if not self._on_main_screen():
             return
         if not self.sources:
-            feedback.info(self, "没有启用的源 · s 键管理")
+            feedback.info(self, "没有启用的源 · F2 管理")
             return
         self.run_worker(self._account(), group="account", exclusive=True)
 
@@ -776,10 +802,10 @@ class FeedScopeApp(App[None]):
         feedback.info(self, f"已登出 {source.label}" if had else f"{source.label} 本就没有登录")
         self.action_refresh()
 
-    # ---- 源管理：s 键启用 / 停用 ----
+    # ---- 源管理：F2 启用 / 停用 ----
 
     def action_manage_sources(self) -> None:
-        """s 键源管理：勾选启用的源，保存即生效——增加 / 删除 / 修改启用集都走这里。
+        """F2 源管理：勾选启用的源，保存即生效——增加 / 删除 / 修改启用集都走这里。
 
         只在列表主屏生效；走 worker 因为 push_screen 的 wait_for_dismiss 只能
         在 worker 里用，group 独立于列表加载，s 不打断在途的 _refresh。
@@ -800,7 +826,7 @@ class FeedScopeApp(App[None]):
         if chosen:
             feedback.info(self, f"已保存：{len(chosen)} 源启用")
         else:
-            feedback.info(self, "已保存：当前没有启用的源（s 键可再开启）")
+            feedback.info(self, "已保存：当前没有启用的源（F2 可再开启）")
 
     def current_item(self) -> FeedItem | None:
         if not self.items:
@@ -842,6 +868,27 @@ class FeedScopeApp(App[None]):
             self.push_screen(DetailScreen(item, self.current_source, self.step_readable_item))
         else:
             webbrowser.open(item.url)
+
+    # ---- 输入法没切英文的自救指路 ----
+
+    def on_key(self, event: Key) -> None:
+        """中文输入落地 → 提示哪些键不受输入法影响。
+
+        输入法 composing 期间按键根本到不了终端（拦在候选框里），应用侧无从
+        得知；只有用户把中文「打出来」（上屏字符经 pty 送进应用）才是输入法
+        没切英文的可靠信号。本应用没有任何文本输入框，中文落地必是误输入。
+        到达这里的键都已被绑定链筛过（无任何绑定命中才冒泡到 App），节流防连打刷屏。
+        """
+        ch = event.character or event.key  # 模拟按键（测试）只有 key，真终端两者同值
+        if not any(_is_cjk(c) for c in ch):
+            return
+        now = time.monotonic()
+        if now - self._cjk_hint_at < _CJK_HINT_INTERVAL:
+            return
+        self._cjk_hint_at = now
+        feedback.info(
+            self, "检测到中文输入：仅 z/x 站点直达键需英文输入法，其余快捷键不受影响"
+        )
 
     # ---- 清理 ----
 

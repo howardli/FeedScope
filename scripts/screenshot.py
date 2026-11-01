@@ -351,8 +351,11 @@ def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
 
 
 def main() -> None:
-    # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；PREWARM 关掉不拉真 Chrome
-    os.environ["FEEDSCOPE_CONFIG"] = str(DOCS.parent / ".screenshot-sources.toml")
+    # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
+    # （引导是交互弹层，自动化流程过不去）；PREWARM 关掉不拉真 Chrome
+    cfg = DOCS.parent / ".screenshot-sources.toml"
+    cfg.write_text('enabled = ["zhihu", "x"]\n', encoding="utf-8")
+    os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
     app_mod.PREWARM = False
     saved = dict(_REGISTRY)
     _REGISTRY.clear()

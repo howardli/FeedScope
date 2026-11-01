@@ -1,10 +1,11 @@
 """离线 TUI 冒烟：stub 源驱动整条 UI 链路。
 
-覆盖：列表加载 / 元信息列（[类型标签] 与作者/热度并列，统一按显示宽截断）/ jk 导航 / n 加载更多 /
+覆盖：列表加载 / 元信息列（[类型标签] 与作者/热度并列，统一按显示宽截断）/ 方向键导航 / Ctrl+N 加载更多 /
 详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 n 重试 /
 resize 整屏重排（列表 + 详情）/ Enter 行为分派（详情 vs 浏览器）/
 每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / s 键源管理（启停用、
-直达键动态寻址、零启用空态）。不碰网络、不开浏览器。
+直达键动态寻址、零启用空态）/ 非打印键位（←/→ 切流、Ctrl+N/O/F5/F2；字母/数字键已废弃）/
+中文落地指路提示。不碰网络、不开浏览器。
 
 改契约（FeedItem / Source / Loader）或 TUI 行为后必须全绿。
 """
@@ -191,7 +192,8 @@ class StubSourceTwo(StubSource):
 
 
 class StubSourceBadKey(StubSource):
-    """声明了被 UI 占用的直达键（n = 加载更多）：启动时应跳过并警告，n 仍归「加载更多」。"""
+    """声明了历史上被 UI 占用的直达键（n 曾是「加载更多」）：UI 键位全部
+    非打印键后，字母键位整个让给直达键——n 应可绑定，不再跳过警告。"""
 
     source_id = "stub3"
     label = "存根三"
@@ -274,7 +276,7 @@ def two_source_registry():
 
 @pytest.fixture()
 def bad_key_registry():
-    """含键位冲突声明的两个 stub 源：驱动「跳过并警告」出口。"""
+    """含历史冲突键声明的两个 stub 源：驱动「被释放的字母可绑定直达键」出口。"""
     saved = dict(_REGISTRY)
     _REGISTRY.clear()
     _REGISTRY[StubSource.source_id] = StubSource
@@ -310,19 +312,19 @@ async def _run_flow(opened: list[str]) -> None:
         hot_meta = str(rows.nodes[2].query_one(".item-score").content)
         assert "42热度" in hot_meta, f"元信息列（热度文本），实际 {hot_meta.strip()}"
 
-        await pilot.press("j")
-        assert app.query_one("#feed").index == 1, "j 下移"
-        await pilot.press("k")
-        assert app.query_one("#feed").index == 0, "k 上移"
+        await pilot.press("down")
+        assert app.query_one("#feed").index == 1, "↓ 下移"
+        await pilot.press("up")
+        assert app.query_one("#feed").index == 0, "↑ 上移"
 
-        await pilot.press("n")
-        assert await _settle(pilot, lambda: len(app.items) == 5), "n 加载更多（列表）"
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 加载更多（列表）"
 
-        await pilot.press("n")
+        await pilot.press("ctrl+n")
         assert await _settle(
             pilot,
             lambda: "没有更多了" in app.sub_title and len(app.items) == 5,
-        ), "n 到头：状态行常驻提示（不只瞬时 toast）"
+        ), "Ctrl+N 到头：状态行常驻提示（不只瞬时 toast）"
 
         await pilot.resize_terminal(120, 40)
         await asyncio.sleep(0.4)  # 列表 resize 已防抖（与详情屏一致），等稳定重排
@@ -352,7 +354,7 @@ async def _run_flow(opened: list[str]) -> None:
         ), "已在首篇：反馈而非静默"
         assert detail.item.id == "i0", "边界处不换篇"
 
-        # 读到末尾再按 n：视口应停在原阅读断点（新楼层从底部接上），不整屏跳走
+        # 读到末尾再按 Ctrl+N：视口应停在原阅读断点（新楼层从底部接上），不整屏跳走
         body = detail.query_one("#detail-body", VerticalScroll)
         body.scroll_end(animate=False)
         assert await _settle(
@@ -360,17 +362,17 @@ async def _run_flow(opened: list[str]) -> None:
         ), "读到末尾（首批溢出视口，scroll_y > 0）"
         scroll_before = body.scroll_y
 
-        await pilot.press("n")
-        assert await _settle(pilot, lambda: len(detail.loader.doc.answers) == 5), "n 加载更多回答"
-        assert body.scroll_y == scroll_before, "n 后视口停在原阅读断点（不整屏滚动）"
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(detail.loader.doc.answers) == 5), "Ctrl+N 加载更多回答"
+        assert body.scroll_y == scroll_before, "Ctrl+N 后视口停在原阅读断点（不整屏滚动）"
         assert body.max_scroll_y > scroll_before, "新批次确实加长了内容（断言有意义）"
 
-        await pilot.press("n")
+        await pilot.press("ctrl+n")
         assert await _settle(pilot, lambda: detail._exhausted), "到头判死"
-        await pilot.press("n")
+        await pilot.press("ctrl+n")
         assert await _settle(
             pilot, lambda: "没有更多回答" in _last_notification(app)
-        ), "到头后再按 n 有反馈（不静默）"
+        ), "到头后再按 Ctrl+N 有反馈（不静默）"
 
         before = len(detail.query(Markdown))
         await pilot.resize_terminal(130, 40)
@@ -384,7 +386,7 @@ async def _run_flow(opened: list[str]) -> None:
         assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
 
         # 非详情类型 -> 浏览器
-        await pilot.press("j")
+        await pilot.press("down")
         await pilot.press("enter")
         assert opened and opened[-1].endswith("/1"), f"Enter(video) -> 浏览器，实际 {opened}"
 
@@ -403,36 +405,36 @@ async def _run_failure_flow() -> None:
     async with app.run_test(size=(90, 36)) as pilot:
         # 增量失败：通知带源标签与消息体（不再是裸异常类名）
         assert await _settle(pilot, lambda: len(app.items) == 1)
-        await pilot.press("n")
+        await pilot.press("ctrl+n")
         assert await _settle(pilot, lambda: "失败源 加载更多失败" in _last_notification(app)), (
             f"增量失败要有带源标签的通知，实际 {_last_notification(app)!r}"
         )
         assert "模拟增量网络中断" in _last_notification(app), "通知要带消息体"
 
         # 首载失败：面包屑「加载失败」+ 列表区常驻空态提示
-        await pilot.press("2")
+        await pilot.press("right")
         assert await _settle(pilot, lambda: "加载失败" in app.sub_title), "面包屑标记加载失败"
         hint = str(app.query_one("#empty-hint").content)
         assert "失败源 请求失败（HTTP 500）" in hint, f"空态常驻提示，实际 {hint}"
-        await pilot.press("o")
+        await pilot.press("ctrl+o")
         assert await _settle(
             pilot, lambda: "没有选中" in _last_notification(app)
-        ), "空列表按 o 有反馈（不静默）"
+        ), "空列表按 Ctrl+O 有反馈（不静默）"
 
         # 详情首载失败：屏内常驻失败态（notify 是瞬时的，屏幕不能空着）
-        await pilot.press("1")
+        await pilot.press("left")
         assert await _settle(pilot, lambda: len(app.items) == 1)
         await pilot.press("enter")
         assert await _settle(
             pilot,
             lambda: "失败源 详情打开失败" in str(app.screen.query_one("#detail-loading").content),
         ), "详情失败屏内提示"
-        assert "重试" in str(app.screen.query_one("#detail-loading").content), "失败行预告 n 重试"
+        assert "重试" in str(app.screen.query_one("#detail-loading").content), "失败行预告 Ctrl+N 重试"
         assert app.sub_title == "加载失败", "失败态常驻状态行"
 
-        # n 原地重试：动线不断（不退出详情屏重进）
-        await pilot.press("n")
-        assert await _settle(pilot, lambda: app.screen._rendered), "n 重试成功渲染"
+        # Ctrl+N 原地重试：动线不断（不退出详情屏重进）
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: app.screen._rendered), "Ctrl+N 重试成功渲染"
         assert len(app.screen.loader.doc.answers) == 3, "重试后正常内容上屏"
         await pilot.press("escape")
 
@@ -450,11 +452,11 @@ async def _run_guard_flow() -> None:
         assert await _settle(pilot, lambda: app.screen._rendered)
         title = app.sub_title  # 详情标题（_load 设置）
 
-        await pilot.press("r")  # 主屏守卫：详情屏上 r 不做隐形后台刷新，但有反馈
+        await pilot.press("f5")  # 主屏守卫：详情屏上 F5 不做隐形后台刷新，但有反馈
         await asyncio.sleep(0.3)
         await pilot.pause()
         assert app.sub_title == title, "详情屏上 r 不应顶掉详情标题"
-        assert "详情屏" in _last_notification(app), "r 被挡下要有反馈（不静默）"
+        assert "详情屏" in _last_notification(app), "F5 被挡下要有反馈（不静默）"
 
         await pilot.press("escape")
         assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
@@ -529,31 +531,30 @@ def test_source_key_jump(two_source_registry) -> None:
     asyncio.run(_run_source_jump_flow())
 
 
-async def _run_bad_key_flow() -> None:
+async def _run_freed_key_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
-        # 冲突声明（n = 加载更多）启动时跳过并警告
-        assert "已跳过" in _last_notification(app), (
-            f"键位冲突要有警告，实际 {_last_notification(app)!r}"
-        )
+        # UI 键位已全部非打印键：历史上被「加载更多」占用的 n 如今是合法直达键
+        assert not _last_notification(app), f"合法声明不该有警告，实际 {_last_notification(app)!r}"
 
-        await pilot.press("n")  # n 仍是加载更多，不被源直达键顶掉
-        assert await _settle(pilot, lambda: len(app.items) == 5), "n 仍是加载更多"
-        assert app.current_source.source_id == "stub", "n 不得切到冲突源"
-
-        await pilot.press("tab")  # 冲突源仍可 Tab 循环到达
+        await pilot.press("n")  # n 直达 stub3（字母键位整个让给直达键）
         assert await _settle(
             pilot,
             lambda: app.current_source.source_id == "stub3" and len(app.items) == 3,
-        ), "冲突源仍可 Tab 到达"
+        ), "被释放的 n 可绑定直达键"
+
+        await pilot.press("shift+tab")  # Tab 循环回到 stub
+        assert await _settle(pilot, lambda: app.current_source.source_id == "stub")
+        await pilot.press("ctrl+n")  # Ctrl+N 仍是加载更多，与直达键互不干扰
+        assert await _settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 仍是加载更多"
 
 
-def test_source_key_reserved_skipped(bad_key_registry) -> None:
-    asyncio.run(_run_bad_key_flow())
+def test_freed_letter_claimable_by_source(bad_key_registry) -> None:
+    asyncio.run(_run_freed_key_flow())
 
 
-# ---- 首启源选择引导 + s 键源管理（启停用 / 直达键动态寻址 / 零启用空态） ----
+# ---- 首启源选择引导 + F2 源管理（启停用 / 直达键动态寻址 / 零启用空态） ----
 
 
 async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
@@ -614,8 +615,8 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
         assert await _settle(pilot, lambda: len(app.items) == 3)
         assert len(app.query(".source-tab")) == 2
 
-        # 停用 stub2：s 打开管理 → 空格取消第二项 → 保存
-        await pilot.press("s")
+        # 停用 stub2：F2 打开管理 → 空格取消第二项 → 保存
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         sl = app.screen.query_one(SelectionList)
         assert set(sl.selected) == {"stub", "stub2"}, "当前启用的源默认勾上"
@@ -636,7 +637,7 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
         assert app.current_source.source_id == "stub"
 
         # 再启用：直达键即刻恢复
-        await pilot.press("s")
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         await pilot.press("down")
         await pilot.press("space")  # 勾回 stub2
@@ -649,7 +650,7 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
 
         # 管理取消：不落盘不动状态
         before = cfg.read_text(encoding="utf-8")
-        await pilot.press("s")
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         await pilot.press("space")  # 勾掉第一项也无所谓——取消
         await pilot.click("#setup-cancel")
@@ -671,7 +672,7 @@ async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
 
-        await pilot.press("s")
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         await pilot.press("space")  # 停用 stub
         await pilot.press("down")
@@ -679,14 +680,14 @@ async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
         await pilot.click("#setup-confirm")
         assert await _settle(pilot, lambda: not app.sources), "全部停用"
         hint = str(app.query_one("#empty-hint").content)
-        assert "没有启用的源" in hint and "s" in hint, "空态常驻提示指路 s 键"
+        assert "没有启用的源" in hint and "F2" in hint, "空态常驻提示指路 F2"
         assert app.is_running, "零启用不退出 App（s 随时再开）"
 
-        await pilot.press("u")  # 空态守卫：有反馈不崩溃
+        await pilot.press("ctrl+u")  # 空态守卫：有反馈不崩溃
         assert await _settle(pilot, lambda: "没有启用的源" in _last_notification(app))
 
-        # s 再开：从空态恢复
-        await pilot.press("s")
+        # F2 再开：从空态恢复
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         await pilot.press("space")  # 勾回 stub
         await pilot.click("#setup-confirm")
@@ -754,7 +755,7 @@ async def _run_manage_reorder_flow(monkeypatch, tmp_path: Path) -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
-        await pilot.press("s")
+        await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         # 取消再勾回第一项（stub）：移到末尾 → [stub2, stub]
         await pilot.press("space")
@@ -799,10 +800,10 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
             "楼中楼" in str(w.content) for w in answer.query(".comment-head")
         ), "子回复渲染"
 
-        # n 翻页评论；再到头
-        await pilot.press("n")
-        assert await _settle(pilot, lambda: len(answer.cloader.comments) == 3), "n 加载更多评论"
-        await pilot.press("n")
+        # Ctrl+N 翻页评论；再到头
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(answer.cloader.comments) == 3), "Ctrl+N 加载更多评论"
+        await pilot.press("ctrl+n")
         assert await _settle(pilot, lambda: answer._exhausted), "评论到头"
 
         # [/] 换回答：换到下一条，评论重新按需请求
@@ -810,9 +811,9 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
         assert await _settle(pilot, lambda: answer.index == 1 and answer.cloader is not None), "] 换回答并重开评论"
         assert "作者1 的回答" in str(answer.query_one("#answer-title").content)
 
-        # o 打开该回答直达链接
-        await pilot.press("o")
-        assert opened and opened[-1].endswith("/0"), f"o -> 回答 URL，实际 {opened}"
+        # Ctrl+O 打开该回答直达链接
+        await pilot.press("ctrl+o")
+        assert opened and opened[-1].endswith("/0"), f"Ctrl+O -> 回答 URL，实际 {opened}"
 
         # Esc 逐层返回：回答屏 -> 问题屏（位置不变）-> 列表
         await pilot.press("escape")
@@ -833,3 +834,79 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
 
 def test_answer_layer_flow(stub_registry, opened) -> None:
     asyncio.run(_run_answer_layer_flow(opened))
+
+# ---- 非打印键位：中文输入法开启也不受影响；字母/数字键已废弃 ----
+
+
+async def _run_ime_safe_flow(opened: list[str]) -> None:
+    """键位全部非打印键（方向键/F 键/Ctrl 组合），一个动作只留一个键。
+
+    顺带验证：字母/数字旧键位确已废弃（按了不动），以及中文落地指路——
+    应用无法探测输入法状态，上屏字符是唯一可靠信号（本应用没有文本输入框，
+    中文必是误输入）。
+    """
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+
+        # ←/→ 相对切流，到边界给反馈不静默
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: app.feed_idx == 1 and len(app.items) == 3), "→ 切流"
+        assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: "已是最后一个流" in _last_notification(app)), "到边界有反馈"
+        await pilot.press("left")
+        assert await _settle(pilot, lambda: app.feed_idx == 0 and len(app.items) == 3), "← 切回流"
+
+        # 旧字母/数字键已废弃：按下无任何效果（不被任何绑定命中）
+        await pilot.press("n")
+        await pilot.press("r")
+        await pilot.press("1")
+        await pilot.pause()
+        assert len(app.items) == 3 and app.feed_idx == 0, "n/r/1 均已废弃（无副作用）"
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.query_one("#feed").index == 0, "j 已废弃（选中不动，移动走 ↑/↓）"
+
+        # Ctrl+N 加载更多；F5 刷新回首批
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 加载更多"
+        await pilot.press("f5")
+        assert await _settle(pilot, lambda: len(app.items) == 3), "F5 刷新回首批"
+
+        # Ctrl+O 浏览器打开当前选中条目
+        await pilot.press("ctrl+o")
+        assert opened and opened[-1].endswith("/0"), f"Ctrl+O -> 浏览器，实际 {opened}"
+
+        # F2 源管理弹层；Ctrl+U 账号（stub 源免登录的提示出口）
+        await pilot.press("f2")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen)), "F2 源管理"
+        await pilot.press("escape")
+        await pilot.press("ctrl+u")
+        assert await _settle(pilot, lambda: "无需登录" in _last_notification(app)), "Ctrl+U 账号"
+
+        # 中文落地 → 指路提示（键位已免疫，提示只点明 z/x 直达键仍需英文输入法）
+        await pilot.press("你")
+        assert await _settle(pilot, lambda: "输入法" in _last_notification(app)), "中文输入要指路"
+
+        # 详情/评论屏的 Ctrl+N / Ctrl+O 在屏级（进各屏自己的动作，不走 App 的列表路径）
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await _settle(pilot, lambda: detail._rendered)
+        before = len(detail.loader.doc.answers)
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(detail.loader.doc.answers) == before + 2), "详情屏 Ctrl+N"
+        await pilot.press("ctrl+o")
+        assert opened[-1].endswith("/0"), "详情屏 Ctrl+O -> 浏览器"
+
+        await pilot.press("enter")  # 进回答层（评论此刻才请求）
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await _settle(pilot, lambda: answer.cloader is not None)
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(answer.cloader.comments) == 3), "评论层 Ctrl+N"
+
+
+def test_ime_safe_keys(stub_registry, opened) -> None:
+    asyncio.run(_run_ime_safe_flow(opened))

@@ -30,17 +30,17 @@ from feedscope.ui.wrap import wrap_markdown
 
 
 class DetailScreen(Screen[None]):
-    """全屏阅读一个问题：Esc 返回（列表位置不变），n 加载更多回答，[/] 换篇。"""
+    """全屏阅读一个问题：Esc 返回（列表位置不变），Ctrl+N 加载更多回答，[/] 换篇。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
+        # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
+        # 原生键，无需声明
         Binding("escape", "back", "返回"),
-        Binding("n", "more", "更多"),
+        Binding("ctrl+n", "more", "更多"),
         Binding("enter", "pick_answer", "评论"),
-        Binding("o", "open_browser", "浏览器"),
+        Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_article", "下一篇"),
         Binding("left", "prev_article", "上一篇"),
-        Binding("j", "scroll_down", "下滚", show=False),  # 与列表屏键位保持一致
-        Binding("k", "scroll_up", "上滚", show=False),
     ]
 
     @property
@@ -90,7 +90,7 @@ class DetailScreen(Screen[None]):
             feedback.fail(self.app, self.source, exc)
             self.app.sub_title = "加载失败"  # 状态行常驻标记失败（与列表屏面包屑同一手法）
             loading.update(
-                f"[red]加载失败：{escape(feedback.failure_text(self.source, exc))} · n 重试[/red]"
+                f"[red]加载失败：{escape(feedback.failure_text(self.source, exc))} · Ctrl+N 重试[/red]"
             )
             return
         loading.remove()
@@ -129,7 +129,7 @@ class DetailScreen(Screen[None]):
 
     def _hint_widget(self) -> Static:
         return Static(
-            f"[dim]── Enter 看{self._unit}的评论 · n 加载更多{self._unit} · ← → 换上一篇/下一篇 · Esc 返回 ──[/dim]",
+            f"[dim]── Enter 看{self._unit}的评论 · Ctrl+N 加载更多{self._unit} · ← → 换上一篇/下一篇 · Esc 返回 ──[/dim]",
             id="more-hint",
         )
 
@@ -243,7 +243,7 @@ class DetailScreen(Screen[None]):
 
     def action_more(self) -> None:
         if self.loader is None:
-            # 首载失败（或还在途）时 n = 原地重试：比起 Esc 退出再进，动线不断
+            # 首载失败（或还在途）时 Ctrl+N = 原地重试：比起 Esc 退出再进，动线不断
             self.run_worker(self._retry(), group="load", exclusive=True)
             return
         if self._exhausted:
@@ -294,7 +294,7 @@ class DetailScreen(Screen[None]):
         try:
             new = await self.loader.load_more()
         except Exception as exc:
-            # 不再静默：失败要告诉用户（否则按 n 无反馈，误以为按键失灵）
+            # 不再静默：失败要告诉用户（否则按 Ctrl+N 无反馈，误以为按键失灵）
             feedback.fail(self.app, self.source, exc, action="加载更多失败")
             new = []
         if loading.parent is not None:  # 期间可能整屏重排过，loading 已被清掉
@@ -305,7 +305,7 @@ class DetailScreen(Screen[None]):
                 self._remove_hint()
                 await body.mount(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="no-more"))
             else:
-                # 拉空但没到头（网慢/懒加载没触发）：不判死，可以再按 n
+                # 拉空但没到头（网慢/懒加载没触发）：不判死，可以再按 Ctrl+N
                 await self._mount_hint()
             return
         widgets: list[Widget] = []

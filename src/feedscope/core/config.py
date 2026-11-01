@@ -4,7 +4,7 @@
   sources.toml（platformdirs，Linux 为 ~/.config/feedscope/sources.toml）
 - 容错哲学：配置问题绝不挡启动——文件不存在 = 全默认；TOML 语法错 / 结构
   不符 = 警告日志 + 当作不存在（feedscope doctor 可诊断）。
-- 写入只走 save_enabled（首启引导 / s 键管理界面）：保留各源 hide 段，
+- 写入只走 save_enabled（首启引导 / F2 管理界面）：保留各源 hide 段，
   无法识别的键丢弃；原子落盘（临时文件 + os.replace），不留半截文件。
 """
 
@@ -97,7 +97,7 @@ def _toml_array(values: list[str]) -> str:
 
 
 def save_enabled(ids: list[str]) -> None:
-    """保存启用的源列表（首启引导 / s 键管理界面的落盘路径）。
+    """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。
 
     只覆写本工具认识的键：enabled + 各源非空 hide 段（其余丢弃，记 info——
     这里的「重新生成」与手改文件的自由度是此消彼长，注释头已说明归属）。
@@ -105,7 +105,7 @@ def save_enabled(ids: list[str]) -> None:
     data = _read()[0]
     lines = [
         "# FeedScope 源配置：enabled = 启用的源；各源 hide = 隐藏的信息流",
-        "# 由 feedscope 自动维护（首启引导 / s 键管理），也可手动编辑，改完重启生效",
+        "# 由 feedscope 自动维护（首启引导 / F2 管理），也可手动编辑，改完重启生效",
         "",
         f"enabled = {_toml_array(list(ids))}",
     ]

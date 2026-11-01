@@ -1,7 +1,7 @@
 """账号（登录/登出）TUI 流程：stub 登录源 + monkeypatch login.py 驱动整条链路。
 
 覆盖：撞登录墙自动弹登录框（取消/确认）、选登录调 login 并刷新出内容、
-u 键三分派（匿名源 / 未登录弹登录 / 已登录弹登出并清登录态）。不碰网络、不开浏览器。
+Ctrl+U 三分派（匿名源 / 未登录弹登录 / 已登录弹登出并清登录态）。不碰网络、不开浏览器。
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class LoginSource(Source):
 
 
 class AnonSource(Source):
-    """匿名源：无 login_url，u 键应提示「无需登录」。"""
+    """匿名源：无 login_url，Ctrl+U 应提示「无需登录」。"""
 
     source_id = "anon"
     label = "匿名源"
@@ -151,18 +151,18 @@ async def _run_cancel_remembered_flow() -> None:
         await pilot.press("escape")  # 取消
         assert await _settle(pilot, lambda: not isinstance(app.screen, AccountScreen))
 
-        # 取消被记住：再刷新不再自动弹框，常驻提示保留 u 键登录入口
-        await pilot.press("r")
+        # 取消被记住：再刷新不再自动弹框，常驻提示保留 Ctrl+U 登录入口
+        await pilot.press("f5")
         await asyncio.sleep(0.3)
         await pilot.pause()
         assert not isinstance(app.screen, AccountScreen), "取消后刷新不得再自动弹框"
         assert "未登录" in app.sub_title
         hint = str(app.query_one("#empty-hint", Label).content)
-        assert "u 键登录" in hint, "常驻提示要指明登录入口"
+        assert "Ctrl+U 登录" in hint, "常驻提示要指明登录入口"
 
-        # u 键手动登录入口不受取消记忆影响
-        await pilot.press("u")
-        assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen)), "u 键仍可手动登录"
+        # Ctrl+U 手动登录入口不受取消记忆影响
+        await pilot.press("ctrl+u")
+        assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen)), "Ctrl+U 仍可手动登录"
         await pilot.press("escape")
         assert await _settle(pilot, lambda: not isinstance(app.screen, AccountScreen))
 
@@ -192,7 +192,7 @@ async def _run_refusal_survives_switch_flow() -> None:
         await asyncio.sleep(0.3)
         await pilot.pause()
         assert not isinstance(app.screen, AccountScreen), "切回已拒绝的源不得再自动弹框"
-        assert "u 键登录" in str(app.query_one("#empty-hint", Label).content)
+        assert "Ctrl+U 登录" in str(app.query_one("#empty-hint", Label).content)
 
 
 def test_refusal_survives_source_switch(anon_login_registry) -> None:
@@ -234,13 +234,13 @@ async def _run_logout_reprompts_flow(calls) -> None:
         assert await _settle(pilot, lambda: not isinstance(app.screen, AccountScreen))
 
         # u 手动登录成功 → 刷新出内容
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.click("#account-go")
         assert await _settle(pilot, lambda: LoginSource.authed and len(app.items) == 1), "登录成功出内容"
 
         # 登出（换账号动线）：撞墙要重新弹登录框，不能被旧的拒绝记录压住
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.click("#account-go")
         assert await _settle(
@@ -276,7 +276,7 @@ async def _run_account_key_flow(calls) -> None:
     async with app.run_test(size=(80, 30)) as pilot:
         # 匿名源（注册顺序第一位 = 默认源）：u 提示无需登录，不弹框
         assert await _settle(pilot, lambda: app.current_source.source_id == "anon" and len(app.items) == 1)
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: "无需登录" in _last_notification(app)), "匿名源 u 有反馈"
         assert not isinstance(app.screen, AccountScreen), "匿名源 u 不弹框"
 
@@ -288,18 +288,18 @@ async def _run_account_key_flow(calls) -> None:
         await pilot.press("escape")  # 取消
 
         # 未登录 u：同样弹登录框
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.press("escape")
 
         # 走一次成功登录让 authed=True（列表出内容）
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.click("#account-go")
         assert await _settle(pilot, lambda: LoginSource.authed and len(app.items) == 1), "登录成功刷新出内容"
 
         # 已登录：u 弹登出框
-        await pilot.press("u")
+        await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         prompt = str(app.screen.query_one("#account-prompt").content)
         assert "登出" in prompt, "已登录时 u 弹的是登出框"
