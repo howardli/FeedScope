@@ -120,7 +120,8 @@ class FeedListView(ListView):
     """列表视图：Tab/Shift+Tab 切网站、数字键切信息流、n 加载更多（widget 层绑定压过 Screen 焦点切换）。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("tab", "app.next_source", "切站"),
+        # 切站/直达键不进页脚：顶部 tab 条已标注「名称(键)」，页脚再列就重复了
+        Binding("tab", "app.next_source", "切站", show=False),
         Binding("shift+tab", "app.prev_source", "切站", show=False),
         Binding("n", "app.more", "加载更多"),
         Binding("j", "cursor_down", show=False),  # 与详情屏键位保持一致
@@ -182,6 +183,11 @@ class AccountScreen(ModalScreen[bool]):
 
 class FeedScopeApp(App[None]):
     TITLE = "FeedScope（观流）"
+
+    # 关闭 Textual 自带命令面板（页脚 palette 链接 + Ctrl+P）：里面只有框架默认的
+    # Theme/Quit/Keys/Screenshot 系统命令，对本应用全是冗余——主题定死编辑器风、
+    # 退出有 q，其余是调试入口，不该暴露给用户。
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS: ClassVar[list[Binding]] = [
         # q 全局生效（详情屏也直接退出）：一键退出必须是全局的
@@ -293,7 +299,8 @@ class FeedScopeApp(App[None]):
                 self._source_key_skipped.append(f"{cls.label}({key})")
                 continue
             claimed.add(key)
-            self.bind(key, f"app.source_hotkey({cls.source_id!r})", description=f"切到{cls.label}")
+            # show=False：直达键不进页脚——顶部 tab 已显示「名称(直达键)」，不重复
+            self.bind(key, f"app.source_hotkey({cls.source_id!r})", description=f"切到{cls.label}", show=False)
 
     def compose(self) -> ComposeResult:
         yield Header()
