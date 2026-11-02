@@ -26,6 +26,7 @@ import re
 from collections.abc import Iterator
 
 from feedscope.core.display import fmt_count, signature, votes_text
+from feedscope.core.media import mark
 from feedscope.core.models import Answer, FeedItem
 from feedscope.core.text import strip_zwsp, truncate_display
 from feedscope.core.timefmt import fmt_twitter
@@ -97,22 +98,21 @@ def _best_video_url(m: dict) -> str:
 
 
 def _media_links(r: dict) -> str:
-    """媒体尾注（详情正文/回复楼层）：每个媒体「[图] 地址 / [视频] 地址」一个 token。
+    """媒体尾注（详情正文/回复楼层）：每个媒体一个「[图]/[视频](地址)」链接 token。
 
-    地址取 pbs.twimg.com 原图 / 最高码率 mp4——贴浏览器直达媒体本体；正文里
+    地址取 pbs.twimg.com 原图 / 最高码率 mp4——点击直达媒体本体；正文里
     嵌的 entities.media[].url 是 t.co 跳板（不指向媒体）不用。残卡无地址退
-    纯记号（[图]/[视频]）。与知乎「[图] 地址内联」同词汇：TUI 显示不了媒体，
-    地址留在正文里自己贴浏览器看。
+    纯记号（[图]/[视频]）。与知乎/RSS 同词汇同形式（core.media.mark）：
+    TUI 显示不了媒体，链接折叠地址、点击开浏览器。
     """
     media = ((r.get("legacy") or {}).get("entities") or {}).get("media") or []
     tokens: list[str] = []
     for m in media:
         if m.get("type") == "photo":
             url = str(m.get("media_url_https") or m.get("media_url") or "")
-            tokens.append(f"[图] {url}" if url else "[图]")
+            tokens.append(mark("[图]", url))
         elif m.get("type") in ("video", "animated_gif"):
-            url = _best_video_url(m)
-            tokens.append(f"[视频] {url}" if url else "[视频]")
+            tokens.append(mark("[视频]", _best_video_url(m)))
     return f" {' '.join(tokens)}" if tokens else ""
 
 

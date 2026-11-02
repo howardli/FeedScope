@@ -215,13 +215,13 @@ def test_zhihu_question_doc_missing_fields_not_forced() -> None:
 def test_zhihu_md_marks_image_and_video() -> None:
     out = _md_zhihu('<p>你好</p><img src="https://a/1.png"><video><source src="https://v/1.mp4"></video>')
     assert "你好" in out
-    assert "[图] https://a/1.png" in out
-    assert "[视频] https://v/1.mp4" in out
+    assert "[图](https://a/1.png)" in out  # 可点击的 markdown 链接（同 RSS）
+    assert "[视频](https://v/1.mp4)" in out
 
 
 def test_zhihu_md_merges_adjacent_same_image() -> None:
     out = _md_zhihu('<img src="https://a/1.png"><img src="https://a/1.png">')
-    assert out.count("[图]") == 1  # 懒加载双标记只留一张
+    assert out == "[图](https://a/1.png)"  # 懒加载双标记只留一张
 
 
 def test_zhihu_md_sticker_becomes_alt_text() -> None:
@@ -735,7 +735,7 @@ def test_x_detail_doc_media_only() -> None:
     )
     title, _meta, desc, _time = _detail_doc(r, None)
     assert title == "[图 2]"  # 标题回退仍是计数记号（扫描面词汇）
-    assert desc == "[图] https://pbs.twimg.com/media/a.jpg [图] https://pbs.twimg.com/media/b.jpg"
+    assert desc == "[图](https://pbs.twimg.com/media/a.jpg) [图](https://pbs.twimg.com/media/b.jpg)"
 
 
 def test_x_detail_media_no_url_falls_back_to_marker() -> None:
@@ -761,7 +761,7 @@ def test_x_media_links_video_best_variant() -> None:
     r = _tweet_result("100", text="看视频", media=[video], new_user=True)
     title, _meta, desc, _time = _detail_doc(r, None)
     assert title == "看视频"  # 有正文标题即正文首行（计数记号只在无正文时回退）
-    assert desc == "看视频 [视频] https://video.twimg.com/hi.mp4"
+    assert desc == "看视频 [视频](https://video.twimg.com/hi.mp4)"
 
 
 def test_x_detail_doc_prepends_parent_quote() -> None:
@@ -816,7 +816,7 @@ def test_x_reply_answer_media_link() -> None:
     )
     a = _reply_answer(r)
     assert a is not None
-    assert a.content_md == "回复 [图] https://pbs.twimg.com/media/c.jpg"
+    assert a.content_md == "回复 [图](https://pbs.twimg.com/media/c.jpg)"
 
 
 def test_x_reply_answer_quote_snippet() -> None:
@@ -926,7 +926,7 @@ def test_x_reply_answer_translation_after_media() -> None:
     a = _reply_answer(r)
     assert a is not None
     assert a.content_md == (
-        "Nice shot [图] https://pbs.twimg.com/media/c.jpg ▸ 引用 作者 @who：被引"
+        "Nice shot [图](https://pbs.twimg.com/media/c.jpg) ▸ 引用 作者 @who：被引"
         "\n\n> **译文**（英语）：拍得好"
     )
 

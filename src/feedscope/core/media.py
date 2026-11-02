@@ -1,5 +1,6 @@
-"""HTML 媒体标签 -> 文本标记的共用件：TUI 显示不了图/视频，正文里换成「[图]/[视频] + 原始地址」，
-地址留给用户自己贴浏览器看。知乎的 _md 在用，源内特例留在源文件里。
+"""HTML 媒体标签 -> 文本标记的共用件：TUI 显示不了图/视频，正文里换成
+「[图]/[视频]」markdown 链接（地址折叠可点击，见 mark）。知乎与 X 在用，
+源内特例留在源文件里。
 
 地址不能直接进 html2text：它会把 URL 里的 & 当实体转义坏（&x=1 -> &x;=1）。
 所以先换成 NUL 包裹的记号（NUL 不会出现在正文里，html2text 原样放过），
@@ -45,12 +46,16 @@ def video_url(block: str) -> str:
 
 
 def mark(label: str, url: str) -> str:
-    """「[图] 地址」；地址拿不到时退回纯标记。
+    """媒体记号 -> markdown 链接「[图](地址)」；地址拿不到时退回纯标记。
 
-    地址后补一个空格：紧跟其后的中文会被 markdown-it 的 linkify 吞进 URL
-    （href 里混进 %E4%… 编码），空格划清边界；行尾多出来的空格渲染不可见。
+    链接形式比裸 URL 平铺好两截：Textual 的 Markdown 把它渲染成可点击
+    组件（点击即开浏览器），URL 折叠不占行宽；显式链接语法也不会被
+    markdown-it 的 linkify 吞掉后续中文。URL 里的 ) 截断链接语法，转义
+    成 %29（维基类图片地址常见）。
     """
-    return f"{label} {url} " if url else label
+    if not url:
+        return label
+    return f"{label}({url.replace(')', '%29')})"
 
 
 class Tokens:

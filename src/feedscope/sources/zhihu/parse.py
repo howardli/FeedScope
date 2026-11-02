@@ -47,9 +47,11 @@ def _md(html: str) -> str:
     )
     html = VIDEO_RE.sub(lambda m: tok.stash(mark("[视频]", video_url(m.group(0)))), html)
     text = strip_zwsp(tok.expand(_H2T.handle(html)))
-    # 相邻同图合并（懒加载双标记会把同一张图渲染两次）；不同图各自保留
-    text = re.sub(r"\[图\] (\S+)(?:[ \t]*\[图\] \1)+", r"[图] \1", text)
-    return re.sub(r"(\[图\])(?:[ \t]*\1)+", r"\1", text)
+    # 相邻同图合并（懒加载双标记会把同一张图渲染两次）；不同图各自保留。
+    # 链接形式 [图](url) 整体比对；纯记号合并的 (?!\() 断言防止把带地址的
+    # [图](…) 误吞成纯 [图] 丢掉链接
+    text = re.sub(r"(\[图\]\([^)]*\))(?:[ \t]*\1)+", r"\1", text)
+    return re.sub(r"(\[图\](?!\())(?:[ \t]*\[图\](?!\())+", r"\1", text)
 
 
 def _hot_api_items(data: dict) -> list[FeedItem]:

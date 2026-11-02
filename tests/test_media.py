@@ -30,10 +30,12 @@ def test_video_url_own_src_fallback() -> None:
     assert video_url('<video src="https://v/2.mp4"></video>') == "https://v/2.mp4"
 
 
-def test_mark_appends_trailing_space() -> None:
-    # 尾随空格划清与中文的边界（防 linkify 吞并）；无地址退回纯标记
-    assert mark("[图]", "https://a") == "[图] https://a "
+def test_mark_is_clickable_markdown_link() -> None:
+    # markdown 链接：Textual 渲染成可点击组件、URL 折叠；无地址退回纯标记
+    assert mark("[图]", "https://a") == "[图](https://a)"
     assert mark("[图]", "") == "[图]"
+    # URL 里的 ) 截断链接语法，转义 %29（维基类图片地址常见）
+    assert mark("[图]", "https://a/b(1).jpg") == "[图](https://a/b(1%29.jpg)"
 
 
 def test_tokens_roundtrip() -> None:
