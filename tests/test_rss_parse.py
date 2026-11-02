@@ -92,8 +92,18 @@ def test_fallback_url_used_when_entry_linkless() -> None:
 def test_html_to_md_converts_image_links() -> None:
     md = html_to_md('<p>正文</p><img src="https://example.com/i.png" alt="图">')
     assert "正文" in md
-    assert "[图]" in md and "https://example.com/i.png" in md  # 图片变直链，不随 ignore_images 丢掉
+    # 钉住形态（不能只做子串包含——[[图]](url) 双层括号也含 [图] 与 URL，曾漏网）：
+    # 单层 [图](url)，渲染成带下划线的可点击「图」
+    assert "[图](https://example.com/i.png)" in md
+    assert "[[图]]" not in md and "](http" not in md.replace("[图](http", "")
     assert "<img" not in md
+
+
+def test_html_to_md_keeps_query_string_intact() -> None:
+    """URL 绕过 html2text（stash 记号）：& 不被实体转义弄坏。"""
+    md = html_to_md('<img src="https://example.com/i.png?x=1&amp;y=2">')
+    assert "[图](https://example.com/i.png?x=1&y=2)" in md
+    assert "&amp;" not in md and ";" not in md.split("y=2")[0].split("?")[1]
 
 
 def test_html_to_md_empty() -> None:
