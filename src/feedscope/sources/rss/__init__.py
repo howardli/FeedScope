@@ -53,6 +53,7 @@ class RssSource(Source):
     label = "RSS"
     # source_key 留 None：字母键整个让给 z/x 直达键，本源 Tab 循环可达
     supports_detail = True
+    subscribable = True  # feeds 来自用户订阅：F2 里 Enter 进订阅管理屏
     detail_kinds = frozenset({""})  # 全部条目（kind 空）Enter 都进终端详情
     detail_unit_label = "正文"  # 无楼层，详情屏尾行与 probe 用这个词
 

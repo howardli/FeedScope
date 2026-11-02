@@ -277,6 +277,7 @@ class FeedScopeApp(App[None]):
         # 常驻「Ctrl+U 登录」提示。Ctrl+U 手动登录照常可用；登录成功/登出后
         # 清除，后续撞墙（登录过期、换账号）恢复自动询问。
         self._login_refused: set[str] = set()
+        self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._source_key_skipped: list[str] = []  # 键位冲突被跳过的声明（on_mount 汇总警告）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
         self._bind_source_keys()
@@ -390,14 +391,18 @@ class FeedScopeApp(App[None]):
         遍历实例而非类：feeds 是配置合成后的视图，rss 的流来自用户订阅表
         （类默认为空）。文案带上各源的信息流名（超 3 个截成计数，几十个
         订阅不至于刷屏）；无可选信息流的源不列出——勾上也只能得到空 tab，
-        配置好订阅（/取消隐藏）自然会回到列表里。
+        例外是可订阅源（Source.subscribable）：空订阅也列出，→ 进订阅管
+        理屏就地添加（否则零订阅的 rss 永远进不了这个列表，鸡生蛋）。
         """
         entries: list[tuple[str, str]] = []
         for source in all_sources():
             labels = [source.feed_labels.get(f, f) for f in source.feeds]
-            if not labels:
+            if not labels and not source.subscribable:
                 continue
-            feeds = "、".join(labels[:3]) + (f" 等 {len(labels)} 个流" if len(labels) > 3 else "")
+            if labels:
+                feeds = "、".join(labels[:3]) + (f" 等 {len(labels)} 个流" if len(labels) > 3 else "")
+            else:
+                feeds = "无订阅 · → 添加"
             entries.append((source.source_id, f"{source.label} [dim]{feeds}[/dim]"))
         return entries
 
@@ -838,16 +843,27 @@ class FeedScopeApp(App[None]):
     async def _manage_sources(self) -> None:
         current_ids = [s.source_id for s in self.sources]
         chosen = await self.push_screen(
-            ManageSourcesScreen(self._setup_entries(), current_ids), wait_for_dismiss=True
+            ManageSourcesScreen(self._setup_entries(), current_ids, self._mark_subs_dirty),
+            wait_for_dismiss=True,
         )
         if chosen is None:
-            return  # 取消：不落盘、不动状态
+            # 取消：启用集不落盘，但订阅若在二级屏改过已即时生效——重建不欠着
+            if self._subs_dirty:
+                self._subs_dirty = False
+                ids = config.enabled_ids()
+                await self._apply_enabled(ids if ids is not None else current_ids)
+            return
         config.save_enabled(chosen)
+        self._subs_dirty = False  # 确认路径 _apply_enabled 全量重建，无需再消费
         await self._apply_enabled(chosen)
         if chosen:
             feedback.info(self, f"已保存：{len(chosen)} 源启用")
         else:
             feedback.info(self, "已保存：当前没有启用的源（F2 可再开启）")
+
+    def _mark_subs_dirty(self) -> None:
+        """订阅管理屏回调：改过信息流。F2 收尾（无论确认取消）都要重建。"""
+        self._subs_dirty = True
 
     def current_item(self) -> FeedItem | None:
         if not self.items:
@@ -897,7 +913,8 @@ class FeedScopeApp(App[None]):
 
         输入法 composing 期间按键根本到不了终端（拦在候选框里），应用侧无从
         得知；只有用户把中文「打出来」（上屏字符经 pty 送进应用）才是输入法
-        没切英文的可靠信号。本应用没有任何文本输入框，中文落地必是误输入。
+        没切英文的可靠信号。主屏没有文本输入框，中文落地到 App 必是误输入
+        （订阅管理屏的输入框自己消费字符键，不会冒泡到这里）。
         到达这里的键都已被绑定链筛过（无任何绑定命中才冒泡到 App），节流防连打刷屏。
         """
         ch = event.character or event.key  # 模拟按键（测试）只有 key，真终端两者同值

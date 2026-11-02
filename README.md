@@ -67,7 +67,7 @@ feedscope
 | `Ctrl+O` | 浏览器打开当前条目 |
 | `F5` | 刷新 |
 | `Ctrl+U` | 账号：登录 / 登出 |
-| `F2` | 源管理：勾选启用 / 停用，保存即生效 |
+| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS） |
 | `Esc` | 逐层返回 |
 | `Ctrl+Q` | 退出（`Ctrl+C` 连按两次兜底） |
 
@@ -92,7 +92,7 @@ feedscope [tui]           # 启动 TUI（默认）
 feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x）
 feedscope probe [源 id…]  # 全源巡检：定位改版，原始样本落盘
 feedscope doctor          # 环境自检（Chrome / profile / 配置）
-feedscope rss add <url> [--key k --label 名]  # 加 RSS 订阅（显示名缺省拉 feed 标题，自动启用）
+feedscope rss add <url> [--key k --label 名]  # 加订阅：feed 直链 / 站点首页（自动发现）/ OPML 路径
 feedscope rss list | remove <key>             # 查看 / 删除订阅
 feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合并）/ 导出
 ```
@@ -119,12 +119,19 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 
 ### RSS 订阅
 
-订阅管理两条路，改完重启 TUI 生效：
+订阅管理三条路，任选：
 
-- **子命令（推荐）**：`feedscope rss add 地址` 一条条加（显示名自动拉 feed 标题）；从别的阅读器迁移用 `feedscope rss import 订阅.opml`（Feedly / Inoreader / NetNewsWire 等导出的 OPML 都认，已订阅的自动跳过）；`export` 随时可带走订阅防锁定。add / import 会自动把 RSS 加进启用列表，不用再开 F2
+- **TUI 内（F2）**：`F2` 源管理里光标移到 RSS 行按 `→` 进订阅管理屏——`Insert` 添加、`Enter` 改名、`Delete` 删除、`↑↓` 选择，改动即时落盘；返回后 RSS 自动勾上，保存即生效
+- **子命令**：`feedscope rss add / list / remove` 增删查；从别的阅读器迁移用 `feedscope rss import 订阅.opml`（Feedly / Inoreader / NetNewsWire 等导出的 OPML 都认，已订阅的自动跳过）；`export` 随时可带走订阅防锁定
 - **手编配置**：直接改 `[rss.feeds]` 表（见上节示例），加完 `F2` 勾选 RSS 启用
 
-零订阅时 RSS 不出现在源列表。行为要点：
+添加入口的便利设计（TUI 添加框与 `rss add` 行为一致）：
+
+- 地址粘 RSS/Atom 直链，**或直接粘站点首页**——自动发现页面上声明的 feed
+- 粘**本地 OPML 文件路径** = 批量导入（从 Finder 把文件拖进终端即得路径）
+- 显示名缺省拉一次 feed 标题；add / import 会自动把 RSS 加进启用列表，不用再开 F2
+
+零订阅时 RSS 不出现在源列表（F2 里仍可选中它进订阅管理添加第一条）。行为要点：
 
 - 「全部」流 = 全部订阅按发布时间倒序合并，同文多源（转载 / 聚合）按 URL 去重；单个订阅拉取失败只损失自己的条目，全部失败才报错
 - 详情读 feed 自带正文（`content` 全文优先，`summary` 兜底），图片转原图直链；摘要型源正文短，`Ctrl+O` 跳浏览器读全文

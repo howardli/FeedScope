@@ -155,6 +155,7 @@ class Source(ABC):
     feed_labels: ClassVar[dict[str, str]] = {}  # 信息流显示名，缺省用 name 本身
     supports_detail: ClassVar[bool] = False     # 决定 Enter 是否可能进详情屏
     supports_comments: ClassVar[bool] = False   # 决定详情屏 Enter 是否可能进评论层
+    subscribable: ClassVar[bool] = False        # 信息流来自用户订阅：F2 里 Enter 进订阅管理屏
     kind_labels: ClassVar[dict[str, str]] = {}  # kind -> 元信息列标签
     detail_kinds: ClassVar[frozenset[str]] = frozenset({""})
     detail_unit_label: ClassVar[str] = "回答"   # 详情屏楼层单位词（X 覆写为"回复"）

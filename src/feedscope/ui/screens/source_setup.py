@@ -6,10 +6,15 @@
 放弃使用（App 退出），管理里 None = 不落盘。候选与初始勾选由 App 注入，
 屏不读写配置：选择生效路径（保存 + 重建站点栏）集中在 App（_start /
 action_manage_sources）。
+
+可订阅源（Source.subscribable，目前 rss）在此层还有二级入口：→ 进
+订阅管理屏，改动即时落盘；返回后这里只同步该源勾选（有订阅 = 勾上，
+空 = 取消）并回调 App 标脏。
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -19,6 +24,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
+from feedscope.core.registry import source_classes
+from feedscope.ui import feedback
+from feedscope.ui.screens.subscriptions import SubscriptionsScreen
+
 
 class SourceSetupScreen(ModalScreen[list[str] | None]):
     """源勾选弹层基类：样式与交互共用，标题/文案/确认键由子类给出。"""
@@ -27,7 +36,13 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
     prompt_text: ClassVar[str] = ""
     confirm_label: ClassVar[str] = "确认"
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "cancel", "取消", show=False),
+        # → 深入下一层（与主屏 → 切流/换篇同构），Esc 返回。Enter 不能用：
+        # SelectionList 把它截停转成勾选切换（widget 内 event.stop()），
+        # 屏级绑定与事件路径都压不过——留给勾选，二级入口走 →
+        Binding("right", "manage_feeds", "管理订阅", show=False),
+    ]
 
     CSS = """
     #setup-dialog {
@@ -41,11 +56,17 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
     #setup-actions Button { margin-right: 1; }
     """
 
-    def __init__(self, entries: list[tuple[str, str]], initial_ids: list[str]) -> None:
+    def __init__(
+        self,
+        entries: list[tuple[str, str]],
+        initial_ids: list[str],
+        on_feeds_changed: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__()
         self._entries = list(entries)  # (source_id, 行文案)，注册顺序即列表顺序
         self._labels: dict[str, str] = dict(entries)  # sid -> 不带序号的基础文案
         self._initial = set(initial_ids)
+        self._on_feeds_changed = on_feeds_changed  # 订阅管理屏改过东西：App 标脏
         # 勾选顺序（= 展示顺序）。初始勾选不触发 SelectionToggled（Textual 只对
         # 显式切换发消息），沿用传入顺序；之后的每次切换在 handler 里维护。
         self._order: list[str] = list(initial_ids)
@@ -106,6 +127,47 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+    # ---- →：可订阅源的二级管理（订阅增删改名）----
+
+    def action_manage_feeds(self) -> None:
+        """→：进高亮源的订阅管理屏；不可订阅的源按了要给反馈，不静默。"""
+        sl = self.query_one(SelectionList)
+        idx = sl.highlighted
+        if idx is None or not 0 <= idx < len(self._entries):
+            return
+        sid = self._entries[idx][0]
+        cls = next((c for c in source_classes() if c.source_id == sid), None)
+        if cls is None or not cls.subscribable:
+            feedback.info(self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅")
+            return
+        self.run_worker(self._manage_feeds(sid, cls))
+
+    async def _manage_feeds(self, sid: str, cls: type) -> None:
+        changed = await self.app.push_screen(SubscriptionsScreen(cls.label), wait_for_dismiss=True)
+        if not changed:
+            return
+        self._sync_row(sid)
+        if self._on_feeds_changed is not None:
+            self._on_feeds_changed()
+
+    def _sync_row(self, sid: str) -> None:
+        """订阅管理返回后同步该源勾选：还有可选信息流 = 勾上（加订阅显然想
+        用，与 CLI 的 enabled 联动同语义）；删空 = 取消勾选。"""
+        cls = next((c for c in source_classes() if c.source_id == sid), None)
+        if cls is None:
+            return
+        want = bool(cls().feeds)
+        sl = self.query_one(SelectionList)
+        if want and sid not in sl.selected:
+            sl.select(sid)
+            if sid not in self._order:
+                self._order.append(sid)
+        elif not want and sid in sl.selected:
+            sl.deselect(sid)
+            if sid in self._order:
+                self._order.remove(sid)
+        self._renumber()
+
 
 class OnboardingScreen(SourceSetupScreen):
     """首启引导：勾选要启用的源，确认后进入主界面。"""
@@ -119,5 +181,5 @@ class ManageSourcesScreen(SourceSetupScreen):
     """F2 源管理：勾选 = 启用、取消勾选 = 停用，保存后立即生效。"""
 
     title_text = "源管理"
-    prompt_text = "空格切换勾选；序号即站点排列顺序，取消再勾选 = 移到末尾"
+    prompt_text = "空格/Enter 勾选；序号即站点顺序，取消再勾选 = 移到末尾；→ 管理订阅（RSS）"
     confirm_label = "保存"

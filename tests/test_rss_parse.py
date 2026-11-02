@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from feedscope.sources.rss.parse import html_to_md, parse_feed
+from feedscope.sources.rss.parse import discover_feed_link, html_to_md, parse_feed, probe
 
 _EPOCH_NOV2 = datetime(2026, 11, 2, 0, 0, tzinfo=UTC).timestamp()  # 08:00 +0800
 
@@ -98,3 +98,24 @@ def test_html_to_md_converts_image_links() -> None:
 
 def test_html_to_md_empty() -> None:
     assert html_to_md("") == ""
+
+
+def test_probe_title_and_entry_count() -> None:
+    title, count = probe(RSS_XML)
+    assert title == "测试源" and count == 3
+    assert probe("<html><body>不是 feed</body></html>") == ("", 0)  # 普通网页两空
+
+
+def test_discover_feed_link() -> None:
+    head = '<link rel="alternate" type="application/atom+xml" href="{}">'
+    # 相对 href 以页面地址绝对化；绝对 href 原样保留
+    assert discover_feed_link(head.format("feed.xml"), "https://a.test/blog/") == (
+        "https://a.test/blog/feed.xml"
+    )
+    assert discover_feed_link(head.format("https://b.test/atom"), "https://x.test/") == (
+        "https://b.test/atom"
+    )
+    # 非 alternate、非 feed 类型、无 href 都不算
+    assert discover_feed_link('<link rel="stylesheet" href="/f">', "https://a.test/") == ""
+    assert discover_feed_link('<link rel="alternate" type="text/html" href="/h">', "https://a.test/") == ""
+    assert discover_feed_link('<link rel="alternate" type="application/rss+xml">', "https://a.test/") == ""

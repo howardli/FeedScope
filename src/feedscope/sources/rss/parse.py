@@ -11,6 +11,7 @@ import calendar
 import html as html_mod
 import re
 from time import struct_time
+from urllib.parse import urljoin
 
 import feedparser
 
@@ -24,6 +25,10 @@ SOURCE_ID = "rss"
 _TAGS = re.compile(r"<[^>]*>")
 # 图片先换成链接再进 html2text：ignore_images 会连 src 一起丢，原图直链就没
 _IMG = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
+# 首页 HTML 里的 <link> 声明（自动发现 feed 用）
+_LINK_TAG = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_HREF = re.compile(r"""href=(["'])(.*?)\1""", re.IGNORECASE)
+_FEED_TYPES = ("rss+xml", "atom+xml", "feed+json", "feed+xml")
 
 
 def _clean(text: object) -> str:
@@ -57,10 +62,24 @@ def html_to_md(html: str) -> str:
     return new_h2t().handle(linked).strip()
 
 
-def feed_title(body: bytes | str) -> str:
-    """feed 自述标题（channel / feed.title），订阅管理用它当默认显示名。"""
+def probe(body: bytes | str) -> tuple[str, int]:
+    """(feed 自述标题, 条目数)：订阅管理判断「这是不是 feed」与取默认显示名。"""
     parsed = feedparser.parse(body)
-    return _clean(getattr(parsed, "feed", None).get("title")) if getattr(parsed, "feed", None) else ""
+    title = _clean(parsed.feed.get("title")) if getattr(parsed, "feed", None) else ""
+    return title, len(parsed.entries)
+
+
+def discover_feed_link(html: str, base_url: str) -> str:
+    """首页 HTML -> feed 地址：<link rel="alternate" type="…rss/atom…">，
+    相对 href 以 base_url 绝对化；找不到回空串。"""
+    for tag in _LINK_TAG.findall(html):
+        low = tag.lower()
+        if "alternate" not in low or not any(t in low for t in _FEED_TYPES):
+            continue
+        m = _HREF.search(tag)
+        if m and m.group(2):
+            return urljoin(base_url, m.group(2))
+    return ""
 
 
 def parse_feed(

@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     rss_sub = rss.add_subparsers(dest="rss_command", required=True)
     rss_sub.add_parser("list", help="列出全部订阅")
     add_p = rss_sub.add_parser("add", help="添加订阅（显示名缺省拉一次 feed 标题）")
-    add_p.add_argument("url", help="RSS / Atom 地址")
+    add_p.add_argument("url", help="RSS / Atom 地址、站点首页（自动发现 feed）或 OPML 文件路径")
     add_p.add_argument("--key", help="订阅 key（缺省按域名生成）")
     add_p.add_argument("--label", help="显示名（缺省用 feed 自述标题）")
     remove_p = rss_sub.add_parser("remove", help="删除订阅")
@@ -62,12 +62,20 @@ def _run_rss(args: argparse.Namespace) -> int:
         return 0
 
     if args.rss_command == "add":
+        # add_from_input 只分流 URL / OPML 路径；显式 key/label 仍走 add_feed
         try:
-            feed = asyncio.run(subs.add_feed(args.url, key=args.key, label=args.label))
+            if args.key or args.label:
+                feed = asyncio.run(subs.add_feed(args.url, key=args.key, label=args.label))
+                added, summary = [feed], f"已订阅 {feed.key}：{feed.label} <{feed.url}>"
+            else:
+                added, summary = asyncio.run(subs.add_from_input(args.url))
         except subs.SubscriptionError as exc:
             print(f"未添加：{exc}")
             return 1
-        print(f"已订阅 {feed.key}：{feed.label} <{feed.url}>（重启 TUI 生效）")
+        if len(added) > 1:  # OPML 批量：逐条列出，方便核对
+            for f in added:
+                print(f"  {f.key:<16} {f.label}  <{f.url}>")
+        print(f"{summary}（重启 TUI 生效）")
         return 0
 
     if args.rss_command == "remove":

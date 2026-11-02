@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from pathlib import Path
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
 from feedscope.core import config
 from feedscope.core.config import RssFeed
-from feedscope.sources.rss.parse import feed_title
+from feedscope.sources.rss.parse import discover_feed_link, probe
 
 
 class SubscriptionError(Exception):
@@ -38,21 +39,22 @@ def derive_key(url: str, existing: Iterable[str]) -> str:
     return f"{base}-{n}"
 
 
-async def _fetch_feed_title(url: str) -> str:
-    """拉一次 feed 取自述标题；失败回空串——取名是尽力而为，不挡加订阅。"""
+async def _fetch_body_or_none(url: str) -> bytes | None:
+    """拉一次地址；失败回 None——取名/自动发现是尽力而为，不挡加订阅。"""
     from feedscope.core import http
 
     try:
-        r = await http.get(url, source="RSS")
+        return (await http.get(url, source="RSS")).content
     except Exception:
-        return ""
-    return feed_title(r.content)
+        return None
 
 
 async def add_feed(url: str, *, key: str | None = None, label: str | None = None) -> RssFeed:
     """加一条订阅并落盘；显示名缺省拉一次 feed 标题，再缺省回 key。
 
-    重复地址 / 显式 key 撞已有或保留字 all → SubscriptionError（不动配置）。
+    地址不是 feed 而是站点首页时自动发现 feed 声明（<link rel="alternate">）
+    并改订发现的地址（key 沿用）；重复地址 / 显式 key 撞已有或保留字 all →
+    SubscriptionError（不动配置）。
     """
     feeds = config.rss_feeds()
     if any(f.url == url for f in feeds):
@@ -65,10 +67,58 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
     elif key in {f.key for f in feeds}:
         raise SubscriptionError(f"key {key!r} 已被占用（feedscope rss list 查看）")
     if not label:
-        label = (await _fetch_feed_title(url)) or key
-    feed = RssFeed(key=key, label=label, url=url)
+        body = await _fetch_body_or_none(url)
+        if body is not None:
+            title, entries = probe(body)
+            if not title and not entries:
+                # 拉回来不像 feed：当首页试自动发现（粘博客首页也能订上）
+                alt = discover_feed_link(body.decode("utf-8", "ignore"), url)
+                if alt and alt != url:
+                    return await add_feed(alt, key=key)
+            label = title
+    feed = RssFeed(key=key, label=label or key, url=url)
     config.update_rss_feeds([*feeds, feed])
     return feed
+
+
+def rename_feed(key: str, new_label: str) -> RssFeed | None:
+    """改显示名；名字清空 / key 不存在返回 None（不动配置）。"""
+    new_label = new_label.strip()
+    if not new_label:
+        return None
+    feeds = config.rss_feeds()
+    if key not in {f.key for f in feeds}:
+        return None
+    renamed = RssFeed(
+        key=key, label=new_label, url=next(f.url for f in feeds if f.key == key)
+    )
+    config.update_rss_feeds([renamed if f.key == key else f for f in feeds])
+    return renamed
+
+
+async def add_from_input(text: str) -> tuple[list[RssFeed], str]:
+    """添加入口的智能分流：http(s) 地址 → 单条添加；本地路径 → OPML 导入。
+
+    返回 (本次新增, 结果描述)；`~` 开头的路径自动展开。CLI 的 add 与 TUI
+    订阅管理屏的添加框共用这里，行为永远一致。
+    """
+    text = text.strip()
+    if not text:
+        raise SubscriptionError("输入为空")
+    if text.startswith(("http://", "https://")):
+        feed = await add_feed(text)
+        return [feed], f"已订阅 {feed.key}：{feed.label}"
+    path = Path(text).expanduser()
+    try:
+        opml_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SubscriptionError(f"文件读不了：{exc}") from None
+    try:
+        added, skipped = import_opml(opml_text)
+    except ET.ParseError as exc:
+        raise SubscriptionError(f"不是合法的 OPML：{exc}") from None
+    detail = f"，跳过 {len(skipped)} 条" if skipped else ""
+    return added, f"导入 {len(added)} 条订阅{detail}"
 
 
 def remove_feed(key: str) -> RssFeed | None:

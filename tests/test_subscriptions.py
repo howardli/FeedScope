@@ -232,3 +232,82 @@ def test_cli_rss_import_file(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) 
     bad.write_text("<not-opml>", encoding="utf-8")
     assert main(["rss", "import", str(bad)]) == 2  # 坏 XML：退出码 2
     assert main(["rss", "import", str(tmp_path / "absent.opml")]) == 2  # 文件不存在
+
+
+# ---- 自动发现 / 改名 / 添加入口分流（订阅管理屏与 CLI 共用）----
+
+_HOME_HTML = (
+    "<html><head>"
+    '<link rel="alternate" type="application/rss+xml" href="feed.xml" title="blog"/>'
+    "</head><body>只是个首页</body></html>"
+)
+
+
+def test_add_feed_autodiscovers_from_homepage(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """粘博客首页：HTML 里的 <link rel=alternate> 自动发现 feed，改订真地址。"""
+    _use_config(monkeypatch, tmp_path, "")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(200, text=_HOME_HTML, request=request)
+        return httpx.Response(200, text=RSS_XML, request=request)  # 发现的地址是真 feed
+
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    feed = asyncio.run(subs.add_feed("https://blog.test/"))
+    assert feed.url == "https://blog.test/feed.xml"  # 订的是发现出来的地址
+    assert feed.key == "blog-test"  # key 沿用首页域名生成的那个
+    assert feed.label == "测试源"  # 显示名取自真 feed 标题
+
+
+def test_add_feed_plain_page_without_link_still_adds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """页面不是 feed 也没有声明链接：尊重用户给的地址照常添加（显示名回 key）。"""
+    _use_config(monkeypatch, tmp_path, "")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>普通网页</body></html>", request=request)
+
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    feed = asyncio.run(subs.add_feed("https://plain.test/"))
+    assert (feed.url, feed.label) == ("https://plain.test/", "plain-test")
+
+
+def test_rename_feed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _use_config(monkeypatch, tmp_path, '[rss.feeds]\na = { label = "旧名", url = "https://a.test/f" }\n')
+    renamed = subs.rename_feed("a", "  新名  ")  # 顺手 strip
+    assert renamed is not None and renamed.label == "新名"
+    assert config.rss_feeds()[0].label == "新名"
+    assert subs.rename_feed("a", "   ") is None  # 空名不动配置
+    assert subs.rename_feed("nope", "x") is None  # 未知 key 不动配置
+    assert config.rss_feeds()[0].label == "新名"
+
+
+def test_add_from_input_dispatches_url_and_opml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _use_config(monkeypatch, tmp_path, "")
+    _mock_title_fetch(monkeypatch)
+
+    added, summary = asyncio.run(subs.add_from_input("  https://one.test/feed.xml  "))
+    assert len(added) == 1 and "已订阅 one-test" in summary
+
+    opml = tmp_path / "s.opml"
+    opml.write_text(_OPML, encoding="utf-8")
+    added, summary = asyncio.run(subs.add_from_input(str(opml)))
+    assert len(added) == 3 and "导入 3 条" in summary
+    assert [f.key for f in config.rss_feeds()] == [
+        "one-test",  # URL 先加的
+        "r-test", "hnrss-org", "notitle-test",  # OPML 全新 3 条
+    ]
+
+
+def test_add_from_input_bad_input_raises(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _use_config(monkeypatch, tmp_path, "")
+    for text in ("", "   ", str(tmp_path / "absent.opml")):
+        with pytest.raises(subs.SubscriptionError):
+            asyncio.run(subs.add_from_input(text))
+    bad = tmp_path / "bad.opml"
+    bad.write_text("<broken", encoding="utf-8")
+    with pytest.raises(subs.SubscriptionError, match="OPML"):
+        asyncio.run(subs.add_from_input(str(bad)))

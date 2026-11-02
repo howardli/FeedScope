@@ -1,0 +1,278 @@
+"""RSS 订阅管理屏：F2 里 → 进入，列表 + 增删改名，改动即时落盘。
+
+- 键位全非打印：↑↓ 选择、Enter 改名（走 ListView 的 Selected，与主列表
+  同一条路径）、Insert 添加、Delete 删除、Esc 返回
+- 添加框是全应用唯一的文本输入：一个入口两用——http(s) 地址单条添加
+  （站点首页自动发现 feed），本地路径当 OPML 批量导入（从 Finder 拖进
+  终端即得路径）；分流逻辑在 subscriptions.add_from_input，与 CLI 同源
+- 改动即时落盘（update_rss_feeds 原子写）：订阅是数据不是待确认的草稿，
+  Esc 只退出不回滚；删除有轻确认，误删可重新添加（标题会再拉一次）
+- 业务编排全部复用顶层 subscriptions 模块，本屏只做展示与键位；订阅概念
+  目前只有 rss 一个实现（Source.subscribable 门控入口）
+"""
+
+from __future__ import annotations
+
+from typing import ClassVar
+
+from rich.markup import escape
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+
+from feedscope.core import config
+from feedscope.core.config import RssFeed
+from feedscope.subscriptions import (
+    SubscriptionError,
+    add_from_input,
+    remove_feed,
+    rename_feed,
+)
+from feedscope.ui import feedback
+
+
+class InputScreen(ModalScreen[str | None]):
+    """单行输入弹层：Enter 确定 / Esc 取消，返回文本（空 = None）。
+
+    全应用唯一的文本输入（粘贴走终端原生 bracketed paste，从 Finder 拖
+    文件进终端即得路径）；Input 自己消费字符键，不会冒泡触发 App 的
+    「中文输入指路」逻辑。
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
+
+    CSS = """
+    #input-dialog {
+        width: 64; height: auto;
+        background: $surface; border: ascii $primary; padding: 1 2;
+    }
+    #input-title { text-style: bold; padding-bottom: 1; }
+    #input-line { width: 1fr; }
+    #input-actions { height: auto; margin-top: 1; }
+    #input-actions Button { margin-right: 1; }
+    """
+
+    def __init__(self, title: str, *, initial: str = "", placeholder: str = "") -> None:
+        super().__init__()
+        self._title = title
+        self._initial = initial
+        self._placeholder = placeholder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="input-dialog"):
+            yield Label(self._title, id="input-title")
+            yield Input(value=self._initial, placeholder=self._placeholder, id="input-line")
+            with Horizontal(id="input-actions"):
+                yield Button("确定", id="input-ok", variant="primary")
+                yield Button("取消", id="input-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#input-line", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "input-ok":
+            self.dismiss(self.query_one("#input-line", Input).value.strip() or None)
+        else:
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ConfirmModal(ModalScreen[bool]):
+    """轻确认弹层（删除订阅用）：True=确认，Esc/取消 = False。"""
+
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
+
+    CSS = """
+    #confirm-dialog {
+        width: auto; max-width: 60; height: auto;
+        background: $surface; border: ascii $primary; padding: 1 2;
+    }
+    #confirm-prompt { padding-bottom: 1; }
+    #confirm-actions { height: auto; }
+    #confirm-actions Button { margin-right: 1; }
+    """
+
+    def __init__(self, prompt: str, confirm_label: str = "确认") -> None:
+        super().__init__()
+        self._prompt = prompt
+        self._confirm_label = confirm_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-dialog"):
+            yield Label(self._prompt, id="confirm-prompt")
+            with Horizontal(id="confirm-actions"):
+                yield Button(self._confirm_label, id="confirm-ok", variant="primary")
+                yield Button("取消", id="confirm-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-ok")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class SubscriptionsScreen(ModalScreen[bool]):
+    """订阅管理：dismiss(True) = 本次有过改动（调用方据此同步勾选与刷新）。"""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "back", "返回"),
+        Binding("insert", "add", "添加"),
+        Binding("delete", "remove", "删除"),
+    ]
+
+    CSS = """
+    #subs-dialog {
+        width: auto; min-width: 64; max-width: 96; height: auto;
+        background: $surface; border: ascii $primary; padding: 1 2;
+    }
+    #subs-title { text-style: bold; padding-bottom: 1; }
+    #subs-list { width: 1fr; height: auto; max-height: 14; padding: 0 1; }
+    #subs-empty { padding: 1 0; color: $text-muted; }
+    #subs-hint { padding-top: 1; color: $text-muted; }
+    #subs-actions { height: auto; margin-top: 1; }
+    #subs-actions Button { margin-right: 1; }
+    """
+
+    def __init__(self, source_label: str) -> None:
+        super().__init__()
+        self._label = source_label
+        self._changed = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="subs-dialog"):
+            yield Label(f"{self._label} 订阅管理", id="subs-title")
+            yield ListView(id="subs-list")
+            yield Label("", id="subs-empty")
+            yield Label(
+                "↑↓ 选择 · Enter 改名 · Insert 添加（地址 / 首页 / OPML 路径）· Delete 删除",
+                id="subs-hint",
+            )
+            with Horizontal(id="subs-actions"):
+                yield Button("添加", id="subs-add", variant="primary")
+                yield Button("改名", id="subs-rename")
+                yield Button("删除", id="subs-remove")
+
+    async def on_mount(self) -> None:
+        await self._rebuild()
+
+    # ---- 列表 ----
+
+    async def _rebuild(self) -> None:
+        """按当前配置重建列表（每条操作后调用），保持选中位尽量不动。"""
+        view = self.query_one("#subs-list", ListView)
+        idx = view.index
+        await view.remove_children()
+        feeds = config.rss_feeds()
+        if feeds:
+            await view.mount(
+                *[
+                    ListItem(
+                        Static(
+                            f"{escape(f.key)}  [b]{escape(f.label)}[/b]\n[dim]{escape(f.url)}[/dim]"
+                        )
+                    )
+                    for f in feeds
+                ]
+            )
+            view.index = 0 if idx is None else min(idx, len(feeds) - 1)
+            view.display = True
+            self.query_one("#subs-empty", Label).update("")
+        else:
+            view.display = False
+            self.query_one("#subs-empty", Label).update("还没有订阅 · Insert 添加（可粘贴 OPML 路径）")
+        view.focus()
+
+    def _current(self) -> RssFeed | None:
+        """当前选中的订阅（列表顺序 = 配置顺序，索引即位）。"""
+        view = self.query_one("#subs-list", ListView)
+        feeds = config.rss_feeds()
+        if view.index is None or not feeds or view.index >= len(feeds):
+            return None
+        return feeds[view.index]
+
+    # ---- 动作（键盘与按钮共用路径）----
+
+    def action_add(self) -> None:
+        self.run_worker(self._add_flow())
+
+    async def _add_flow(self) -> None:
+        text = await self.app.push_screen(
+            InputScreen(
+                "添加订阅",
+                placeholder="RSS/Atom 地址、站点首页或 OPML 文件路径（可从 Finder 拖入终端）",
+            ),
+            wait_for_dismiss=True,
+        )
+        if not text:
+            return
+        try:
+            _added, summary = await add_from_input(text)
+        except SubscriptionError as exc:
+            feedback.warn(self.app, str(exc), title="添加失败")
+            return
+        except Exception as exc:  # 网络等意外：订阅管理没有 Source 实例，不走 feedback.fail
+            feedback.warn(self.app, f"添加失败：{exc}", title="添加失败")
+            return
+        self._changed = True
+        await self._rebuild()
+        feedback.info(self.app, summary)
+
+    def action_remove(self) -> None:
+        feed = self._current()
+        if feed is None:
+            feedback.info(self.app, "先选中一条订阅")
+            return
+        self.run_worker(self._remove_flow(feed.key, feed.label))
+
+    async def _remove_flow(self, key: str, label: str) -> None:
+        if not await self.app.push_screen(
+            ConfirmModal(f"删除订阅「{label}」？", confirm_label="删除"), wait_for_dismiss=True
+        ):
+            return
+        if remove_feed(key) is not None:
+            self._changed = True
+            await self._rebuild()
+            feedback.info(self.app, f"已删除 {label}（想看回来可重新添加）")
+
+    def action_rename(self) -> None:
+        feed = self._current()
+        if feed is None:
+            feedback.info(self.app, "先选中一条订阅")
+            return
+        self.run_worker(self._rename_flow(feed.key, feed.label))
+
+    async def _rename_flow(self, key: str, label: str) -> None:
+        text = await self.app.push_screen(
+            InputScreen("改显示名", initial=label), wait_for_dismiss=True
+        )
+        if not text:
+            return
+        if rename_feed(key, text) is None:
+            feedback.info(self.app, "名字没变（空名或订阅已不存在）")
+            return
+        self._changed = True
+        await self._rebuild()
+        feedback.info(self.app, f"已改名为 {text}")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "subs-list":
+            self.action_rename()  # Enter = 改名（与主列表 Enter 进详情同一事件路径）
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        by_id = {
+            "subs-add": self.action_add,
+            "subs-remove": self.action_remove,
+            "subs-rename": self.action_rename,
+        }
+        if handler := by_id.get(event.button.id or ""):
+            handler()
+
+    def action_back(self) -> None:
+        self.dismiss(self._changed)
