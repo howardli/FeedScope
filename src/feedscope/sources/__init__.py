@@ -10,7 +10,7 @@
       parse.py      解析层：raw dict/HTML -> FeedItem/Answer/DetailDoc/markdown，
                     纯函数，直接可写 fixture 测试；不碰网络。
       __init__.py   编排层：@register 的 Source 子类，只做能力声明
-                    （feeds/source_key/kind_labels/detail_kinds/登录声明）与 open_* 分派
+                    （feeds/kind_labels/detail_kinds/登录声明）与 open_* 分派
                     （出口统一过 require_feed_items 首屏守卫），加无资源的内存分页 Loader。
 
 依赖方向只允许 __init__ -> fetch -> parse -> core（parse 永远是最底层叶子）。

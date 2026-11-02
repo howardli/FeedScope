@@ -50,7 +50,6 @@ async def _x_session(what: str) -> XSession:
 class XSource(Source):
     source_id = "x"
     label = "X"
-    source_key = "x"  # 一键直达键
     supports_detail = True
     feeds: ClassVar[list[str]] = ["foryou", "following"]  # 与 X 主页页签同序：默认进「推荐」
     feed_labels: ClassVar[dict[str, str]] = {"foryou": "推荐", "following": "正在关注"}

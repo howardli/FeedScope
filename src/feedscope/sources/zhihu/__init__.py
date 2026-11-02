@@ -47,7 +47,6 @@ _FEED_CTX = {
 class ZhihuSource(Source):
     source_id = "zhihu"
     label = "知乎"
-    source_key = "z"  # 一键直达键
     supports_detail = True
     supports_comments = True  # 详情屏 Enter 进楼层选择 -> 回答的评论层（按需抓取）
     feeds: ClassVar[list[str]] = ["hot", "recommend", "follow"]

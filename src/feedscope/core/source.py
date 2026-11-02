@@ -139,10 +139,6 @@ class Source(ABC):
     feeds 的顺序就是 Tab 切换顺序。类里写死的是内置默认流；用户可在
     sources.toml 隐藏内置流（见 core/config.py），__init__ 合成实例视图。
 
-    源还可以声明一键直达键 source_key（如 "z"）：TUI 启动时按注册表自动生成
-    绑定，无需修改 UI；与 UI 自有键位或其他源冲突的声明会被跳过并警告，
-    该源仍可 Tab 循环到达。
-
     类型词汇表归源所有，UI 不认识任何具体类型：
     - kind_labels：kind -> 元信息列标签（如 pin -> "想法"），预告 Enter 跳浏览器；
     - detail_kinds：Enter 进终端详情屏的 kind，其余一律跳浏览器。
@@ -150,7 +146,6 @@ class Source(ABC):
 
     source_id: ClassVar[str]                    # 注册键，如 "zhihu"
     label: ClassVar[str]                        # 展示名，如 "知乎"
-    source_key: ClassVar[str | None] = None     # 一键直达键（单个小写字母，如 "z"）；None = 只能 Tab 循环到达
     feeds: ClassVar[list[str]] = []             # 命名信息流；空 = 只有默认流（name=""）
     feed_labels: ClassVar[dict[str, str]] = {}  # 信息流显示名，缺省用 name 本身
     supports_detail: ClassVar[bool] = False     # 决定 Enter 是否可能进详情屏

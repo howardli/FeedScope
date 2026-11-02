@@ -32,7 +32,7 @@ from feedscope.ui.theme import FEEDSCOPE_THEME
 from feedscope.ui.wrap import display_width, wrap_display
 
 # 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
-# 中文输入法只拦字母/数字进候选框），字母键只留给站点直达键（z/x/r）
+# 中文输入法只拦字母/数字进候选框）
 PREWARM = True  # 启动即后台预热浏览器；测试环境置 False（见 tests/conftest.py）
 
 
@@ -73,7 +73,7 @@ def score_col_width(source: Source, items: list[FeedItem]) -> int:
 
 
 class SourceTabPressed(Message):
-    """顶部站点 tab 被点击：与键盘直达键共用同一条切源路径。"""
+    """顶部站点 tab 被点击：与 Tab 循环共用同一条切源路径。"""
 
     def __init__(self, idx: int) -> None:
         self.idx = idx
@@ -89,15 +89,14 @@ class FeedNavPressed(Message):
 
 
 class SourceTab(Static):
-    """顶部站点 tab：显示「名称(直达键)」，点击直达该源；高亮由 CSS class 决定。
+    """顶部站点 tab：显示源名，点击切到该源；高亮由 CSS class 决定。
 
     不可聚焦（can_focus=False 默认）：点击不抢列表焦点，Tab 键语义完全不变。
     """
 
-    def __init__(self, idx: int, label: str, key: str | None, active: bool) -> None:
-        text = f"{label}({key})" if key else label
+    def __init__(self, idx: int, label: str, active: bool) -> None:
         super().__init__(
-            text,
+            label,
             id=f"source-tab-{idx}",
             classes="source-tab" + (" source-tab-active" if active else ""),
         )
@@ -127,9 +126,9 @@ class FeedListView(ListView):
     """列表视图：Tab/Shift+Tab 切网站（widget 层绑定压过 Screen 焦点切换）。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
-        # 切站/直达键不进页脚：顶部 tab 条已标注「名称(键)」，页脚再列就重复了
-        Binding("tab", "app.next_source", "切站", show=False),
-        Binding("shift+tab", "app.prev_source", "切站", show=False),
+        # 切站进页脚（与 ←/→ 切流同款）：Tab 是切站唯一键位，页脚要给出来路
+        Binding("tab", "app.next_source", "切站"),
+        Binding("shift+tab", "app.prev_source", "切站"),
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -194,8 +193,7 @@ class FeedScopeApp(App[None]):
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键：字母/数字会被中文输入法拦进候选框，一个动作只留
-        # 一个键，不给字母留别名（唯一例外：站点直达键 z/x/r，见
-        # _bind_source_keys，仍走字母因为 Tab 循环已可达、直达键是加速位）。
+        # 一个键，不给字母留别名。
         # Ctrl+C 连按退出是
         # Textual 自带兜底，不占页脚。
         # ←/→ / Ctrl+N 放 App 级（非 FeedListView）：焦点不在列表上也必须生效
@@ -292,9 +290,7 @@ class FeedScopeApp(App[None]):
         # 清除，后续撞墙（登录过期、换账号）恢复自动询问。
         self._login_refused: set[str] = set()
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
-        self._source_key_skipped: list[str] = []  # 键位冲突被跳过的声明（on_mount 汇总警告）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
-        self._bind_source_keys()
 
     def _enabled_sources(self) -> list[Source]:
         """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
@@ -313,29 +309,6 @@ class FeedScopeApp(App[None]):
         # 空 tab 只有噪音；配置好订阅 / 取消隐藏后 F2 重勾即回来
         return [s for s in made if s.feeds]
 
-    def _bind_source_keys(self) -> None:
-        """按注册表给声明了 source_key 的源生成一键直达绑定（z 直切知乎、x 直切 X……）。
-
-        UI 键位已全部非打印键（见 BINDINGS 注释），字母键整个让给直达键——历史
-        上被 UI 占用的 q/r/o/n 等如今也可声明。动态绑定必须随实例走（类级
-        BINDINGS 在 import 时就被 Textual 固化，测试换注册表时对不上）。绑定覆盖
-        全部注册源（含停用的），动作按 source_id 动态寻址（action_source_hotkey
-        查当前启用列表）——Textual 没有解绑 API，停用源若不占住键位，重新启用后
-        直达键就回不来了。非法声明（非单个小写字母）与源间撞键跳过并警告，
-        该源仍可 Tab 循环到达。
-        """
-        claimed: set[str] = set()
-        for cls in source_classes():
-            key = cls.source_key
-            if key is None:
-                continue
-            if len(key) != 1 or not key.islower() or key in claimed:
-                self._source_key_skipped.append(f"{cls.label}({key})")
-                continue
-            claimed.add(key)
-            # show=False：直达键不进页脚——顶部 tab 已显示「名称(直达键)」，不重复
-            self.bind(key, f"app.source_hotkey({cls.source_id!r})", description=f"切到{cls.label}", show=False)
-
     def compose(self) -> ComposeResult:
         yield Header()
         yield Horizontal(id="source-tabs")  # 顶部站点 tab 条（子项由 _render_source_tabs 挂载）
@@ -350,12 +323,6 @@ class FeedScopeApp(App[None]):
             self.exit(message="没有注册任何源")
             return
         self.query_one("#feed", ListView).focus()
-        if self._source_key_skipped:
-            feedback.warn(
-                self,
-                "、".join(self._source_key_skipped) + " 的直达键与现有键位冲突，已跳过（仍可 Tab 切换）",
-                title="键位冲突",
-            )
         self.run_worker(self._start())
         if PREWARM:
             self.run_worker(self._prewarm(), group="prewarm")  # 后台预热，见 _prewarm
@@ -424,8 +391,7 @@ class FeedScopeApp(App[None]):
         """按启用列表重建源列表与选中位（纯状态，不碰 DOM）。
 
         展示顺序 = ids 顺序（弹屏按勾选顺序产出，落盘 enabled 同序）；尽量停
-        在原来的源（没被停用的话）；直达键绑定不用动——按 id 动态寻址（见
-        _bind_source_keys）。
+        在原来的源（没被停用的话）。
         """
         chosen = set(ids)
         classes = {cls.source_id: cls for cls in source_classes()}
@@ -463,9 +429,7 @@ class FeedScopeApp(App[None]):
         tabs = self.query_one("#source-tabs", Horizontal)
         await tabs.remove_children()
         for idx, source in enumerate(self.sources):
-            await tabs.mount(
-                SourceTab(idx, source.label, source.source_key, active=(idx == self.source_idx))
-            )
+            await tabs.mount(SourceTab(idx, source.label, active=(idx == self.source_idx)))
 
     async def _render_feed_sidebar(self) -> None:
         """按当前源重建左侧信息流边栏，高亮当前流（←/→ 依序切换）。"""
@@ -669,27 +633,24 @@ class FeedScopeApp(App[None]):
 
     # ---- 键位 ----
 
-    # ---- 导航多路合一：顶部 tab 点击 / Tab 循环 / source_key 直达键，侧栏点击 / ←→ 切流 ----
+    # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
 
     async def _goto_source(self, target: int) -> None:
-        """切到第 target 个源：Tab 循环（±1）、source_key 直达键与 tab 点击共用。
+        """切到第 target 个源：Tab 循环（±1）与 tab 点击共用。
 
-        source_key 直达键在详情屏也要生效：先退回列表再切源（z 直切知乎，不强迫
-        先 Esc）；Tab 循环与 tab 点击本就在主屏触发，不受这条路径影响。只有一个
-        源或已在目标源时不做任何事。
+        两个入口都只在主屏生效（列表绑定 / 主屏点击），不会在详情屏下触发。
+        只有一个源或已在目标源时不做任何事。
         """
         if len(self.sources) < 2:
             return
         target %= len(self.sources)
-        while not self._on_main_screen():
-            self.pop_screen()  # 详情屏中按直达键：退回列表再切源（与 Esc 同一条 pop 路径）
         if target == self.source_idx:
             return
         self.source_idx = target
         feeds = self.current_source.feeds
         mem = self._feed_memory.get(self.current_source.source_id, 0)
         self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0  # 回到该站上次的信息流
-        await self._render_source_tabs()  # 高亮跟随（键盘/点击/直达键都走这里）
+        await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
         await self._render_feed_sidebar()
         self.action_refresh()
 
@@ -700,20 +661,8 @@ class FeedScopeApp(App[None]):
         await self._goto_source(self.source_idx - 1)
 
     async def action_select_source(self, idx: int) -> None:
-        """source_key 绑定的一键直达：直接落到注册表第 idx 个源（绑定由 _bind_source_keys 生成）。"""
+        """顶部 tab 点击的落点：直接切到第 idx 个源。"""
         await self._goto_source(idx)
-
-    async def action_source_hotkey(self, source_id: str) -> None:
-        """直达键的分发动作：按 source_id 在当前启用列表里寻址。
-
-        绑定覆盖全部注册源（含停用的，见 _bind_source_keys），启用集变化不必
-        重绑；停用源的直达键按下要给反馈，不静默。
-        """
-        for idx, source in enumerate(self.sources):
-            if source.source_id == source_id:
-                await self._goto_source(idx)
-                return
-        feedback.info(self, "该源未启用 · F2 管理")
 
     async def action_select_feed(self, idx: int) -> None:
         feeds = self.current_source.feeds
@@ -938,9 +887,7 @@ class FeedScopeApp(App[None]):
         if now - self._cjk_hint_at < _CJK_HINT_INTERVAL:
             return
         self._cjk_hint_at = now
-        feedback.info(
-            self, "检测到中文输入：仅 z/x/r 站点直达键需英文输入法，其余快捷键不受影响"
-        )
+        feedback.info(self, "检测到中文输入：快捷键全部是非打印键，不受输入法影响")
 
     # ---- 清理 ----
 

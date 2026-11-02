@@ -4,7 +4,7 @@
 详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 Ctrl+N 重试 /
 resize 整屏重排（列表 + 详情）/ Enter 行为分派（详情 vs 浏览器）/
 每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / F2 源管理（启停用、
-直达键动态寻址、零启用空态）/ 非打印键位（←/→ 切流、Ctrl+N/O/F5/F2；字母/数字键已废弃）/
+零启用空态）/ 非打印键位（Tab 切站、←/→ 切流、Ctrl+N/O/F5/F2；字母/数字键已废弃）/
 中文落地指路提示。不碰网络、不开浏览器。
 
 改契约（FeedItem / Source / Loader）或 TUI 行为后必须全绿。
@@ -182,25 +182,15 @@ class StubSource(Source):
 
 
 class StubSourceTwo(StubSource):
-    """第二个 stub 源：声明一键直达键 z，驱动「一键直达 + Tab 循环共存」。"""
+    """第二个 stub 源：驱动「Tab 循环 + 顶部 tab 点击」两条切源路径。"""
 
     source_id = "stub2"
     label = "存根二"
-    source_key = "z"
     feeds: ClassVar[list[str]] = ["only"]
     feed_labels: ClassVar[dict[str, str]] = {"only": "唯一流"}
 
     async def fetch_feed(self, name: str) -> list[FeedItem]:
         return [_item(50, "topic", "9回复")]
-
-
-class StubSourceBadKey(StubSource):
-    """声明了历史上被 UI 占用的直达键（n 曾是「加载更多」）：UI 键位全部
-    非打印键后，字母键位整个让给直达键——n 应可绑定，不再跳过警告。"""
-
-    source_id = "stub3"
-    label = "存根三"
-    source_key = "n"
 
 
 class StubSourceNoComments(StubSource):
@@ -276,23 +266,11 @@ def failing_registry():
 
 @pytest.fixture()
 def two_source_registry():
-    """两个 stub 源：驱动一键直达键 z 与 Tab 循环共存。"""
+    """两个 stub 源：驱动「Tab 循环 + 顶部 tab 点击」两条切源路径。"""
     saved = dict(_REGISTRY)
     _REGISTRY.clear()
     _REGISTRY[StubSource.source_id] = StubSource
     _REGISTRY[StubSourceTwo.source_id] = StubSourceTwo
-    yield
-    _REGISTRY.clear()
-    _REGISTRY.update(saved)
-
-
-@pytest.fixture()
-def bad_key_registry():
-    """含历史冲突键声明的两个 stub 源：驱动「被释放的字母可绑定直达键」出口。"""
-    saved = dict(_REGISTRY)
-    _REGISTRY.clear()
-    _REGISTRY[StubSource.source_id] = StubSource
-    _REGISTRY[StubSourceBadKey.source_id] = StubSourceBadKey
     yield
     _REGISTRY.clear()
     _REGISTRY.update(saved)
@@ -502,25 +480,25 @@ def test_app_keys_guarded_on_detail(stub_registry) -> None:
     asyncio.run(_run_guard_flow())
 
 
-async def _run_source_jump_flow() -> None:
+async def _run_source_switch_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
         assert app.source_idx == 0 and app.current_source.source_id == "stub"
 
-        await pilot.press("z")  # 一键直达第二个源
+        await pilot.press("tab")  # Tab 切到第二个源
         assert await _settle(
             pilot,
             lambda: app.current_source.source_id == "stub2" and len(app.items) == 1,
-        ), "z 一键直达源"
+        ), "Tab 切站"
         assert app.query_one("#source-tab-1").has_class("source-tab-active"), "顶部 tab 高亮新源"
         assert app.query_one("#feed-nav-0").has_class("feed-nav-active"), "侧栏高亮当前流"
 
-        await pilot.press("shift+tab")  # Tab 循环仍可用：回第一个源
+        await pilot.press("shift+tab")  # Shift+Tab 循环回第一个源
         assert await _settle(
             pilot,
             lambda: app.current_source.source_id == "stub" and len(app.items) == 3,
-        ), "Tab 循环与直达键共存"
+        ), "Shift+Tab 循环切站"
 
         # 鼠标点击：顶部 tab 切站、左侧边栏切流（与键盘共用同一条动作路径）
         await pilot.click("#source-tab-1")
@@ -546,51 +524,16 @@ async def _run_source_jump_flow() -> None:
         assert await _settle(
             pilot,
             lambda: app.current_source.source_id == "stub" and len(app.items) == 3,
-        ), "回到第一个源再进详情"
+        ), "回到第一个源"
         assert app.feed_idx == 1, "切回站点恢复上次的信息流（每源记忆）"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "记忆的流高亮"
 
-        # 详情屏上直达键也生效：先退回列表再切源（z 直切知乎，不强迫先 Esc）
-        await pilot.press("enter")
-        assert isinstance(app.screen, DetailScreen)
-        await pilot.press("z")
-        assert await _settle(
-            pilot,
-            lambda: not isinstance(app.screen, DetailScreen)
-            and app.current_source.source_id == "stub2"
-            and len(app.items) == 1,
-        ), "详情屏上 z 直达键退回列表并切源"
-        assert app.query_one("#source-tab-1").has_class("source-tab-active"), "切源后顶部 tab 高亮新源"
+
+def test_source_switch_flow(two_source_registry) -> None:
+    asyncio.run(_run_source_switch_flow())
 
 
-def test_source_key_jump(two_source_registry) -> None:
-    asyncio.run(_run_source_jump_flow())
-
-
-async def _run_freed_key_flow() -> None:
-    app = FeedScopeApp()
-    async with app.run_test(size=(90, 36)) as pilot:
-        assert await _settle(pilot, lambda: len(app.items) == 3)
-        # UI 键位已全部非打印键：历史上被「加载更多」占用的 n 如今是合法直达键
-        assert not _last_notification(app), f"合法声明不该有警告，实际 {_last_notification(app)!r}"
-
-        await pilot.press("n")  # n 直达 stub3（字母键位整个让给直达键）
-        assert await _settle(
-            pilot,
-            lambda: app.current_source.source_id == "stub3" and len(app.items) == 3,
-        ), "被释放的 n 可绑定直达键"
-
-        await pilot.press("shift+tab")  # Tab 循环回到 stub
-        assert await _settle(pilot, lambda: app.current_source.source_id == "stub")
-        await pilot.press("ctrl+n")  # Ctrl+N 仍是加载更多，与直达键互不干扰
-        assert await _settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 仍是加载更多"
-
-
-def test_freed_letter_claimable_by_source(bad_key_registry) -> None:
-    asyncio.run(_run_freed_key_flow())
-
-
-# ---- 首启源选择引导 + F2 源管理（启停用 / 直达键动态寻址 / 零启用空态） ----
+# ---- 首启源选择引导 + F2 源管理（启停用 / 零启用空态） ----
 
 
 async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
@@ -665,24 +608,17 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
             pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
         ), "停在原源继续可读"
 
-        # 停用源的直达键：反馈不静默、不切站
-        await pilot.press("z")
-        assert await _settle(pilot, lambda: "未启用" in _last_notification(app)), (
-            "停用源直达键要有反馈"
-        )
-        assert app.current_source.source_id == "stub"
-
-        # 再启用：直达键即刻恢复
+        # 再启用：tab 即时重建、Tab 循环恢复两源
         await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         await pilot.press("down")
         await pilot.press("space")  # 勾回 stub2
         await pilot.click("#setup-confirm")
         assert await _settle(pilot, lambda: len(app.query(".source-tab")) == 2)
-        await pilot.press("z")
+        await pilot.press("tab")
         assert await _settle(
             pilot, lambda: app.current_source.source_id == "stub2" and len(app.items) == 1
-        ), "重新启用后直达键恢复"
+        ), "重新启用后 Tab 循环可达"
 
         # 管理取消：不落盘不动状态
         before = cfg.read_text(encoding="utf-8")
@@ -955,7 +891,7 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
         await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: "无需登录" in _last_notification(app)), "Ctrl+U 账号"
 
-        # 中文落地 → 指路提示（键位已免疫，提示只点明 z/x/r 直达键仍需英文输入法）
+        # 中文落地 → 指路提示（键位全非打印键已免疫，提示点明不受输入法影响）
         await pilot.press("你")
         assert await _settle(pilot, lambda: "输入法" in _last_notification(app)), "中文输入要指路"
 

@@ -197,7 +197,6 @@ class DemoZhihuDetail(DetailLoader):
 class DemoZhihu(Source):
     source_id = "zhihu"
     label = "知乎"
-    source_key = "z"
     supports_detail = True
     feeds: ClassVar[list[str]] = ["hot", "recommend", "follow"]
     feed_labels: ClassVar[dict[str, str]] = {"hot": "热榜", "recommend": "推荐", "follow": "关注"}
@@ -311,7 +310,6 @@ class DemoXDetail(DetailLoader):
 class DemoX(Source):
     source_id = "x"
     label = "X"
-    source_key = "x"
     supports_detail = True
     feeds: ClassVar[list[str]] = ["foryou", "following"]
     feed_labels: ClassVar[dict[str, str]] = {"foryou": "推荐", "following": "正在关注"}
@@ -332,7 +330,7 @@ async def _shots() -> None:
             await pilot.pause()
         DOCS.mkdir(exist_ok=True)
         _emit(app, "screenshot-zhihu")
-        await pilot.press("x")  # source_key 直达 X
+        await pilot.press("tab")  # Tab 切到 X
         for _ in range(6):
             await pilot.pause()
         _emit(app, "screenshot-x")

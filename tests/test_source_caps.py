@@ -49,7 +49,6 @@ def test_rss_source_declaration() -> None:
     r = by_id["rss"]
     assert r.feeds == []  # 测试配置零订阅：feeds 完全来自用户配置（见 test_rss_source）
     assert not r.feed_labels
-    assert r.source_key == "r"  # 直达键与 z（知乎）/ x（X）同体系
     assert r.supports_detail and r.detail_kinds == frozenset({""})  # 全部条目进终端详情
     assert not r.login_url and not r.logout_cookies  # 无登录生态
 
@@ -66,14 +65,3 @@ def test_comments_capability_declared() -> None:
 def test_registry_order_is_tab_order() -> None:
     # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前）
     assert [s.source_id for s in all_sources()] == ["zhihu", "x", "rss"]
-
-
-def test_source_keys_declared_unique() -> None:
-    # 一键直达键：每个源声明单个小写字母，且互不重复（UI 按注册表自动生成绑定）
-    by_id = {s.source_id: s for s in all_sources()}
-    keys = {sid: by_id[sid].source_key for sid in ("zhihu", "x", "rss")}
-    assert all(keys.values()), "每个源都要声明一键直达键（None = 只能 Tab 循环到达）"
-    assert keys == {"zhihu": "z", "x": "x", "rss": "r"}
-    assert len(set(keys.values())) == len(keys), f"直达键不得重复，实际 {keys}"
-    for key in keys.values():
-        assert len(key) == 1 and key.islower(), f"直达键应是单个小写字母，实际 {key!r}"
