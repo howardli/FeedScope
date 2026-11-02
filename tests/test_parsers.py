@@ -224,6 +224,36 @@ def test_zhihu_md_merges_adjacent_same_image() -> None:
     assert out == "[图](https://a/1.png)"  # 懒加载双标记只留一张
 
 
+# 2026-11 实测：content 里没有 <video> 标签，视频是 a.video-box 卡片（包封面缩略图）
+_VIDEO_BOX_HTML = (
+    '<p>看视频</p><a class="video-box" '
+    'href="https://link.zhihu.com/?target=https%3A//www.zhihu.com/video/2100583640916926727" '
+    'target="_blank" data-video-playable="true" data-lens-id="2100583640916926727" '
+    'data-poster="https://picx.zhimg.com/poster.jpg">'
+    '<img class="thumbnail" src="https://picx.zhimg.com/v2-thumb_720w.jpg"/></a>'
+)
+
+
+def test_zhihu_md_video_box_becomes_video_link() -> None:
+    out = _md_zhihu(_VIDEO_BOX_HTML)
+    assert "[视频](https://www.zhihu.com/video/2100583640916926727)" in out
+    # 封面缩略图与 link.zhihu.com 跳板都不再见（此前会搅成嵌套畸形链接）
+    assert "thumbnail" not in out and "link.zhihu.com" not in out and "poster" not in out
+
+
+def test_zhihu_md_video_box_without_lens_id_decodes_jump_href() -> None:
+    html = (
+        '<a class="video-box" href="https://link.zhihu.com/?target=https%3A//www.zhihu.com/video/123">'
+        '<img class="thumbnail" src="https://p/x.jpg"/></a>'
+    )
+    assert "[视频](https://www.zhihu.com/video/123)" in _md_zhihu(html)
+
+
+def test_zhihu_md_strips_thumbnail_proxy_prefix() -> None:
+    out = _md_zhihu('<img src="https://pica.zhimg.com/50/v2-abc123_720w.jpg?source=1def8aca">')
+    assert out == "[图](https://pica.zhimg.com/v2-abc123_720w.jpg?source=1def8aca)"  # /50/ 剥掉
+
+
 def test_zhihu_md_sticker_becomes_alt_text() -> None:
     """表情贴纸不是内容图：换成 alt 文本而非 [图]+地址。"""
     out = _md_zhihu('好激动<img src="https://pic/a.png" class="sticker" alt="[大哭]">')

@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs, urlparse
 
 from feedscope.core.const import new_h2t
 from feedscope.core.display import fmt_count, votes_text
-from feedscope.core.media import VIDEO_RE, Tokens, mark, pick_url, video_url
+from feedscope.core.media import VIDEO_RE, Tokens, attrs, mark, pick_url, video_url
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.text import strip_zwsp
 from feedscope.core.timefmt import fmt_unix
@@ -25,13 +26,40 @@ _STICKER_RE = re.compile(r'<img[^>]*class="[^"]*\bsticker\b[^"]*"[^>]*>', re.IGN
 _ALT_RE = re.compile(r'alt="([^"]*)"')
 _IMG_RE = re.compile(r"<img[^>]*>", re.IGNORECASE)
 # img 地址按尺寸优先（2026-08 实测标记形态）：data-original 原图 > data-actualsrc
-# 显示图 > src（src 常是 data:image/svg+xml 懒加载占位，pick_url 会跳过 data:）
+# 显示图 > src（src 常是 data:image/svg+xml 懒加载占位，pick_url 会跳过 data:）。
+# 2026-11 实测 data-original 整 URL 属性已没了（只剩 data-original-token），多数落到 src
 _IMG_URL_ATTRS = ("data-original", "data-actualsrc", "src")
+# 视频卡（2026-11 实测）：content 里没有 <video> 标签，视频是 <a class="video-box">
+# 卡片——href 是 link.zhihu.com 跳板，data-lens-id 是视频页 id，内部包封面缩略图
+_VIDEO_BOX_RE = re.compile(r'<a\b[^>]*class="video-box"[^>]*>.*?</a>', re.IGNORECASE | re.DOTALL)
+# zhimg 的 /50/ 是缩略代理路径（同 hash 内容更小），剥掉直达显示图
+_ZHIMG_50_RE = re.compile(r"^(https://pic[\da-z]*\.zhimg\.com)/50/")
+
+
+def _upgrade_img_url(url: str) -> str:
+    """图片地址微升级：剥 /50/ 缩略代理（实测同 hash 直连内容更大）。
+
+    不猜原图尺寸：_r 原尺寸版 / 80/…_1440w 都只对部分 hash 存在（2026-11
+    实测多数 405），盲改写会产出死链；src 的 _720w 本就是网页显示图。
+    """
+    return _ZHIMG_50_RE.sub(r"\1/", url)
+
+
+def _video_box_md(block: str) -> str:
+    """video-box 卡片 -> [视频](视频页)。优先 data-lens-id 构造（跳板不参与，
+    最稳）；缺了才 decode href 跳板的 target 参数。封面缩略图随整卡吃掉。"""
+    m = re.match(r"<a\b[^>]*>", block)
+    a = attrs(m.group(0)) if m else {}
+    if lens := a.get("data-lens-id", ""):
+        return mark("[视频]", f"https://www.zhihu.com/video/{lens}")
+    href = a.get("href", "")
+    target = parse_qs(urlparse(href).query).get("target")
+    return mark("[视频]", target[0] if target else href)
 
 
 def _md(html: str) -> str:
-    """HTML -> markdown：图片/视频换 [图]/[视频] + 原始地址（TUI 显示不了，
-    地址留在正文里，要看自己贴浏览器）、清零宽字符。"""
+    """HTML -> markdown：图片/视频换 [图]/[视频] 链接（TUI 显示不了媒体，
+    链接点击直达原图 / 视频页）、清零宽字符。"""
     if not html:
         return ""
     html = _NOSCRIPT_RE.sub("", html)  # noscript 里是 img 的重复副本
@@ -42,8 +70,12 @@ def _md(html: str) -> str:
 
     html = _STICKER_RE.sub(_sticker_text, html)  # 表情贴纸 -> "[大笑]" 文本
     tok = Tokens()
+    html = _VIDEO_BOX_RE.sub(  # 先于 img：整卡吃掉，封面缩略图不单独出 [图]
+        lambda m: tok.stash(_video_box_md(m.group(0))), html
+    )
     html = _IMG_RE.sub(
-        lambda m: tok.stash(mark("[图]", pick_url(m.group(0), _IMG_URL_ATTRS))), html
+        lambda m: tok.stash(mark("[图]", _upgrade_img_url(pick_url(m.group(0), _IMG_URL_ATTRS)))),
+        html,
     )
     html = VIDEO_RE.sub(lambda m: tok.stash(mark("[视频]", video_url(m.group(0)))), html)
     text = strip_zwsp(tok.expand(_H2T.handle(html)))
