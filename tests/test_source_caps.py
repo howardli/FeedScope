@@ -41,6 +41,7 @@ def test_detail_unit_label_per_source() -> None:
     by_id = {s.source_id: s for s in all_sources()}
     assert by_id["zhihu"].detail_unit_label == "回答"
     assert by_id["x"].detail_unit_label == "回复"
+    assert by_id["hn"].detail_unit_label == "评论"
     assert by_id["rss"].detail_unit_label == "正文"
 
 
@@ -55,13 +56,28 @@ def test_rss_source_declaration() -> None:
 
 def test_comments_capability_declared() -> None:
     by_id = {s.source_id: s for s in all_sources()}
-    # 评论层（DetailLoader.open_comments，详情屏 Enter）只有知乎有：
+    # 评论层（DetailLoader.open_comments，详情屏 Enter）知乎与 HN 有：
     # X 的详情到回复为止、RSS 全文无楼层——UI 按此声明决定是否预告 Enter
     assert by_id["zhihu"].supports_comments
+    assert by_id["hn"].supports_comments
     assert not by_id["x"].supports_comments
     assert not by_id["rss"].supports_comments
 
 
+def test_hn_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    h = by_id["hn"]
+    assert h.feeds == ["front", "new", "ask", "show"]
+    assert h.feed_labels == {"front": "首页", "new": "最新", "ask": "Ask", "show": "Show"}
+    assert h.supports_detail
+    assert h.detail_kinds == frozenset({"story", "ask", "show"})  # 全部条目进终端详情
+    assert not h.login_url and not h.logout_cookies  # 无登录生态（公开索引 API）
+    assert not h.subscribable  # 内置流，非用户订阅
+    # 知乎式三层词汇：楼层叫「评论」（顶层讨论串）、楼层内叫「回复」
+    assert h.detail_unit_label == "评论"
+    assert h.comment_unit_label == "回复"
+
+
 def test_registry_order_is_tab_order() -> None:
-    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前）
-    assert [s.source_id for s in all_sources()] == ["zhihu", "x", "rss"]
+    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，rss 聚合器殿后）
+    assert [s.source_id for s in all_sources()] == ["zhihu", "x", "hn", "rss"]

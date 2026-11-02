@@ -38,7 +38,7 @@ class DetailScreen(Screen[None]):
         # 原生键，无需声明
         Binding("escape", "back", "返回"),
         Binding("ctrl+n", "more", "更多"),
-        Binding("enter", "pick_answer", "评论"),  # 无评论层的源在 __init__ 隐藏此键位（不上 Footer）
+        Binding("enter", "pick_answer", "评论"),  # 标签占位：__init__ 换源词汇表；无评论层的源隐藏此键位
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_article", "下一篇"),
         Binding("left", "prev_article", "上一篇"),
@@ -58,14 +58,14 @@ class DetailScreen(Screen[None]):
         super().__init__()
         self.item = item
         self.source = source
-        if not source.supports_comments:
-            # 无评论层的源（supports_comments=False，如 X/RSS）：Footer 不预告
-            # Enter「评论」——键位隐藏但保留，误按仍走 action_pick_answer 的
-            # 「暂不支持」反馈，不无声（与尾行预告同一能力判定，词汇表归源）。
-            self._bindings.key_to_bindings["enter"] = [
-                dataclasses.replace(b, show=False)
-                for b in self._bindings.key_to_bindings.get("enter", [])
-            ]
+        # Enter 的键位文案随源词汇表（知乎「评论」、HN「回复」）；无评论层的源
+        # （supports_comments=False，如 X/RSS）Footer 不预告——键位隐藏但保留，
+        # 误按仍走 action_pick_answer 的「暂不支持」反馈，不无声（与尾行预告
+        # 同一能力判定）。
+        self._bindings.key_to_bindings["enter"] = [
+            dataclasses.replace(b, description=source.comment_unit_label, show=b.show and source.supports_comments)
+            for b in self._bindings.key_to_bindings.get("enter", [])
+        ]
         self._step_item = step_item  # 向 App 要相邻的可读条目（[/] 换篇，同步推进列表选中）
         self.loader: DetailLoader | None = None
         self._hint: Static | None = None
@@ -148,7 +148,7 @@ class DetailScreen(Screen[None]):
         """尾行动线预告：Enter 评论段只在源有评论层时列出（Footer 键位同判定）。"""
         segs = [f"Ctrl+N 加载更多{self._unit}", "← → 换上一篇/下一篇", "Esc 返回"]
         if self.source.supports_comments:
-            segs.insert(0, f"Enter 看{self._unit}的评论")
+            segs.insert(0, f"Enter 看{self._unit}的{self.source.comment_unit_label}")
         return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", id="more-hint")
 
     def _answer_widgets(self, ans: Answer) -> list[Widget]:

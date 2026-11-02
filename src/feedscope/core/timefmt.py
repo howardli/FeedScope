@@ -1,7 +1,7 @@
 """时间展示格式化：源的原始时间形态 -> 北京时间（UTC+8）「YYYY-MM-DD HH:MM」。
 
-各源原始形态不同（X 是英文 Twitter 串、知乎是页面上的 DOM 文本原样展示），
-统一在这里转成同一展示文本。一律折算成固定的北京时间而非本机时区：
+各源原始形态不同（X 是英文 Twitter 串、知乎是页面上的 DOM 文本、HN 是
+UTC 的 ISO 串），统一在这里转成同一展示文本。一律折算成固定的北京时间而非本机时区：
 跨时区设备（服务器/海外机器）不该看到不一样的时间。解析失败
 回空串——时间只是元信息，缺了不致命，别让一行脏数据炸掉整版内容。
 """
@@ -39,5 +39,15 @@ def fmt_unix(seconds: float | None) -> str:
         return ""
     try:
         return _bj(datetime.fromtimestamp(int(seconds), tz=_BJT))
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
+def fmt_iso(s: str | None) -> str:
+    """ISO 8601 串（HN Algolia 的 created_at，UTC 带 Z）-> 北京时间展示文本。"""
+    if not s:
+        return ""
+    try:
+        return _bj(datetime.fromisoformat(s))
     except (OverflowError, OSError, ValueError):
         return ""

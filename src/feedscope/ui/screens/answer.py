@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import webbrowser
 from typing import ClassVar
 
@@ -38,7 +39,8 @@ class AnswerScreen(Screen[None]):
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
-        # 原生键，无需声明
+        # 原生键，无需声明。标签是占位：__init__ 按源词汇表换成
+        # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）
         Binding("escape", "back", "返回"),
         Binding("ctrl+n", "more", "更多评论"),
         Binding("ctrl+o", "open_browser", "浏览器"),
@@ -55,7 +57,20 @@ class AnswerScreen(Screen[None]):
         self.qloader = qloader  # 问题 loader（共享页签的底座）
         self.index = index
         self.cloader: CommentLoader | None = None  # 评论 loader（契约见 core.source.CommentLoader）
+        # 词汇表归源：本屏两层各有单位词——楼层（← → 切换的对象，知乎「回答」、
+        # HN「评论」）与评论（Ctrl+N 翻的对象，知乎「评论」、HN「回复」）；键位
+        # 文案随词换（类级 BINDINGS 是占位，知乎渲染与内置文案逐字相同）
+        self._floor_unit = source.detail_unit_label
         self._unit = source.comment_unit_label
+        for key, label in (
+            ("ctrl+n", f"更多{self._unit}"),
+            ("right", f"下一{self._floor_unit}"),
+            ("left", f"上一{self._floor_unit}"),
+        ):
+            self._bindings.key_to_bindings[key] = [
+                dataclasses.replace(b, description=label)
+                for b in self._bindings.key_to_bindings.get(key, [])
+            ]
         self._exhausted = False        # 评论到头，n 不再触发
         self._floor_count = 0          # 评论楼层序号，跨 load_more 递增
         self._prev_sub_title: str | None = None
@@ -90,7 +105,7 @@ class AnswerScreen(Screen[None]):
         """整个回答详情上屏（单次 mount = 单次布局）；评论未到先占位。"""
         ans = self._answer
         body = self.query_one("#answer-body-scroll", VerticalScroll)
-        widgets: list[Widget] = [Static(escape(f"{ans.author} 的回答"), id="answer-title")]
+        widgets: list[Widget] = [Static(escape(f"{ans.author} 的{self._floor_unit}"), id="answer-title")]
         meta = " · ".join(x for x in (ans.votes, ans.comment_count, ans.time) if x)
         if meta:
             widgets.append(Static(f"[dim]{escape(meta)}[/dim]", id="answer-meta"))
@@ -115,7 +130,8 @@ class AnswerScreen(Screen[None]):
     def _hint_widget(self) -> Static:
         # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重
         return Static(
-            f"[dim]── Ctrl+N 加载更多{self._unit} · ← → 换回答 · Esc 返回 ──[/dim]", classes="cm-hint"
+            f"[dim]── Ctrl+N 加载更多{self._unit} · ← → 换{self._floor_unit} · Esc 返回 ──[/dim]",
+            classes="cm-hint",
         )
 
     def _comment_floor(self, c: Comment) -> list[Widget]:
@@ -159,7 +175,7 @@ class AnswerScreen(Screen[None]):
         sub_title 在这设而非 on_mount：worker 晚于 Header 挂载，同步设
         不会踩 HeaderTitle 未挂的时序坑。
         """
-        self.app.sub_title = f"{self._answer.author} 的回答"[:50]
+        self.app.sub_title = f"{self._answer.author} 的{self._floor_unit}"[:50]
         try:
             self.cloader = await self.qloader.open_comments(self.index)
         except Exception as exc:
@@ -260,11 +276,14 @@ class AnswerScreen(Screen[None]):
         await self._retarget(-1)
 
     async def _retarget(self, delta: int) -> None:
-        """←/→ 换回答：同问题内相邻楼层（更多回答回问题屏按 Ctrl+N 加载）。"""
+        """←/→ 换楼层：同问题内相邻楼层（更多楼屔回问题屏按 Ctrl+N 加载）。"""
         n_answers = len(self.qloader.doc.answers)
         nxt = self.index + delta
         if not 0 <= nxt < n_answers:
-            feedback.info(self.app, "后面没有已加载的回答了" if delta > 0 else "前面没有回答了")
+            feedback.info(
+                self.app,
+                f"后面没有已加载的{self._floor_unit}了" if delta > 0 else f"前面没有{self._floor_unit}了",
+            )
             return
         self.workers.cancel_group(self, "comments")  # 评论还在途：丢弃
         loader, self.cloader = self.cloader, None
