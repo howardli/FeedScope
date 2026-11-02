@@ -1,5 +1,5 @@
 """HTML 媒体标签 -> 文本标记的共用件：TUI 显示不了图/视频，正文里换成
-「[图]/[视频]」markdown 链接（地址折叠可点击，见 mark）。知乎与 X 在用，
+「[图片]/[视频]」markdown 链接（地址折叠可点击，见 mark）。知乎与 X 在用，
 源内特例留在源文件里。
 
 地址不能直接进 html2text：它会把 URL 里的 & 当实体转义坏（&x=1 -> &x;=1）。
@@ -46,7 +46,7 @@ def video_url(block: str) -> str:
 
 
 def mark(label: str, url: str) -> str:
-    """媒体记号 -> markdown 链接「[图](地址)」；地址拿不到时退回纯标记。
+    """媒体记号 -> markdown 链接「[图片](地址)」；地址拿不到时退回纯标记。
 
     链接形式比裸 URL 平铺好两截：Textual 的 Markdown 把它渲染成可点击
     组件（点击即开浏览器），URL 折叠不占行宽；显式链接语法也不会被

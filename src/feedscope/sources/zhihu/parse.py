@@ -21,7 +21,7 @@ _H2T = new_h2t()
 
 _NOSCRIPT_RE = re.compile(r"<noscript>.*?</noscript>", re.IGNORECASE | re.DOTALL)
 # 表情贴纸（class="sticker"）不是内容图：换成 alt 文本（如 "[大哭]"），
-# 走 _IMG_RE 会变 [图]+地址，那是看图不是看表情
+# 走 _IMG_RE 会变 [图片]+地址，那是看图不是看表情
 _STICKER_RE = re.compile(r'<img[^>]*class="[^"]*\bsticker\b[^"]*"[^>]*>', re.IGNORECASE)
 _ALT_RE = re.compile(r'alt="([^"]*)"')
 _IMG_RE = re.compile(r"<img[^>]*>", re.IGNORECASE)
@@ -58,7 +58,7 @@ def _video_box_md(block: str) -> str:
 
 
 def _md(html: str) -> str:
-    """HTML -> markdown：图片/视频换 [图]/[视频] 链接（TUI 显示不了媒体，
+    """HTML -> markdown：图片/视频换 [图片]/[视频] 链接（TUI 显示不了媒体，
     链接点击直达原图 / 视频页）、清零宽字符。"""
     if not html:
         return ""
@@ -70,20 +70,20 @@ def _md(html: str) -> str:
 
     html = _STICKER_RE.sub(_sticker_text, html)  # 表情贴纸 -> "[大笑]" 文本
     tok = Tokens()
-    html = _VIDEO_BOX_RE.sub(  # 先于 img：整卡吃掉，封面缩略图不单独出 [图]
+    html = _VIDEO_BOX_RE.sub(  # 先于 img：整卡吃掉，封面缩略图不单独出 [图片]
         lambda m: tok.stash(_video_box_md(m.group(0))), html
     )
     html = _IMG_RE.sub(
-        lambda m: tok.stash(mark("[图]", _upgrade_img_url(pick_url(m.group(0), _IMG_URL_ATTRS)))),
+        lambda m: tok.stash(mark("[图片]", _upgrade_img_url(pick_url(m.group(0), _IMG_URL_ATTRS)))),
         html,
     )
     html = VIDEO_RE.sub(lambda m: tok.stash(mark("[视频]", video_url(m.group(0)))), html)
     text = strip_zwsp(tok.expand(_H2T.handle(html)))
     # 相邻同图合并（懒加载双标记会把同一张图渲染两次）；不同图各自保留。
-    # 链接形式 [图](url) 整体比对；纯记号合并的 (?!\() 断言防止把带地址的
-    # [图](…) 误吞成纯 [图] 丢掉链接
-    text = re.sub(r"(\[图\]\([^)]*\))(?:[ \t]*\1)+", r"\1", text)
-    return re.sub(r"(\[图\](?!\())(?:[ \t]*\[图\](?!\())+", r"\1", text)
+    # 链接形式 [图片](url) 整体比对；纯记号合并的 (?!\() 断言防止把带地址的
+    # [图片](…) 误吞成纯 [图片] 丢掉链接
+    text = re.sub(r"(\[图片\]\([^)]*\))(?:[ \t]*\1)+", r"\1", text)
+    return re.sub(r"(\[图片\](?!\())(?:[ \t]*\[图片\](?!\())+", r"\1", text)
 
 
 def _hot_api_items(data: dict) -> list[FeedItem]:

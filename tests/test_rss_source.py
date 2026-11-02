@@ -193,7 +193,7 @@ def test_open_detail_renders_content(monkeypatch: pytest.MonkeyPatch, tmp_path) 
         assert doc.meta == "源一 · 张三"
         assert doc.time == "2026-11-02 08:00"  # epoch -> 北京时间
         assert "全文 1" in doc.description_md
-        assert "[图]" in doc.description_md and "https://example.com/i.png" in doc.description_md
+        assert "[图片]" in doc.description_md and "https://example.com/i.png" in doc.description_md
         assert not doc.answers and detail.done  # 无楼层、一次性到头
     finally:
         asyncio.run(detail.close())

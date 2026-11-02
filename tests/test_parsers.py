@@ -215,13 +215,13 @@ def test_zhihu_question_doc_missing_fields_not_forced() -> None:
 def test_zhihu_md_marks_image_and_video() -> None:
     out = _md_zhihu('<p>你好</p><img src="https://a/1.png"><video><source src="https://v/1.mp4"></video>')
     assert "你好" in out
-    assert "[图](https://a/1.png)" in out  # 可点击的 markdown 链接（同 RSS）
+    assert "[图片](https://a/1.png)" in out  # 可点击的 markdown 链接（同 RSS）
     assert "[视频](https://v/1.mp4)" in out
 
 
 def test_zhihu_md_merges_adjacent_same_image() -> None:
     out = _md_zhihu('<img src="https://a/1.png"><img src="https://a/1.png">')
-    assert out == "[图](https://a/1.png)"  # 懒加载双标记只留一张
+    assert out == "[图片](https://a/1.png)"  # 懒加载双标记只留一张
 
 
 # 2026-11 实测：content 里没有 <video> 标签，视频是 a.video-box 卡片（包封面缩略图）
@@ -251,14 +251,14 @@ def test_zhihu_md_video_box_without_lens_id_decodes_jump_href() -> None:
 
 def test_zhihu_md_strips_thumbnail_proxy_prefix() -> None:
     out = _md_zhihu('<img src="https://pica.zhimg.com/50/v2-abc123_720w.jpg?source=1def8aca">')
-    assert out == "[图](https://pica.zhimg.com/v2-abc123_720w.jpg?source=1def8aca)"  # /50/ 剥掉
+    assert out == "[图片](https://pica.zhimg.com/v2-abc123_720w.jpg?source=1def8aca)"  # /50/ 剥掉
 
 
 def test_zhihu_md_sticker_becomes_alt_text() -> None:
-    """表情贴纸不是内容图：换成 alt 文本而非 [图]+地址。"""
+    """表情贴纸不是内容图：换成 alt 文本而非 [图片]+地址。"""
     out = _md_zhihu('好激动<img src="https://pic/a.png" class="sticker" alt="[大哭]">')
     assert "[大哭]" in out
-    assert "[图]" not in out
+    assert "[图片]" not in out
 
 
 def test_zhihu_api_comment() -> None:
@@ -401,7 +401,7 @@ def test_x_tweet_media_markers_and_newline_collapse() -> None:
     media = [{"type": "photo"}, {"type": "photo"}, {"type": "video"}]
     it = _tweet_from_result(_tweet_result("1001", text="第一行\n\n第二行", media=media))
     assert it is not None
-    assert it.title == "第一行 第二行 [图 2] [视频]"  # 换行压成空格；媒体换记号缀尾
+    assert it.title == "第一行 第二行 [图片 2] [视频]"  # 换行压成空格；媒体换记号缀尾
 
 
 def test_x_tweet_video_only() -> None:
@@ -466,7 +466,7 @@ def test_x_tweet_media_tco_clipped_in_list() -> None:
     r["legacy"]["display_text_range"] = [0, 3]  # 「看这个」3 个码元，尾链不在显示区
     it = _tweet_from_result(r)
     assert it is not None
-    assert it.title == "看这个 [图 1]"  # raw 短链不漏，媒体记号缀尾
+    assert it.title == "看这个 [图片 1]"  # raw 短链不漏，媒体记号缀尾
 
 
 def test_x_tweet_media_tco_inside_display_range_still_stripped() -> None:
@@ -477,7 +477,7 @@ def test_x_tweet_media_tco_inside_display_range_still_stripped() -> None:
     r["legacy"]["display_text_range"] = [0, 17]  # 尾链 14 码元被划进显示区（异常形态）
     it = _tweet_from_result(r)
     assert it is not None
-    assert it.title == "正文 [图 1]"  # 记号代偿，raw 短链不漏
+    assert it.title == "正文 [图片 1]"  # 记号代偿，raw 短链不漏
 
 
 def test_x_tweet_inline_url_expanded() -> None:
@@ -764,16 +764,16 @@ def test_x_detail_doc_media_only() -> None:
         new_user=True,
     )
     title, _meta, desc, _time = _detail_doc(r, None)
-    assert title == "[图 2]"  # 标题回退仍是计数记号（扫描面词汇）
-    assert desc == "[图](https://pbs.twimg.com/media/a.jpg) [图](https://pbs.twimg.com/media/b.jpg)"
+    assert title == "[图片 2]"  # 标题回退仍是计数记号（扫描面词汇）
+    assert desc == "[图片](https://pbs.twimg.com/media/a.jpg) [图片](https://pbs.twimg.com/media/b.jpg)"
 
 
 def test_x_detail_media_no_url_falls_back_to_marker() -> None:
     # 残卡无地址：退纯记号，不硬凑
     r = _tweet_result("100", text="", media=[{"type": "photo"}], new_user=True)
     title, _meta, desc, _time = _detail_doc(r, None)
-    assert title == "[图 1]"
-    assert desc == "[图]"
+    assert title == "[图片 1]"
+    assert desc == "[图片]"
 
 
 def test_x_media_links_video_best_variant() -> None:
@@ -846,7 +846,7 @@ def test_x_reply_answer_media_link() -> None:
     )
     a = _reply_answer(r)
     assert a is not None
-    assert a.content_md == "回复 [图](https://pbs.twimg.com/media/c.jpg)"
+    assert a.content_md == "回复 [图片](https://pbs.twimg.com/media/c.jpg)"
 
 
 def test_x_reply_answer_quote_snippet() -> None:
@@ -956,7 +956,7 @@ def test_x_reply_answer_translation_after_media() -> None:
     a = _reply_answer(r)
     assert a is not None
     assert a.content_md == (
-        "Nice shot [图](https://pbs.twimg.com/media/c.jpg) ▸ 引用 作者 @who：被引"
+        "Nice shot [图片](https://pbs.twimg.com/media/c.jpg) ▸ 引用 作者 @who：被引"
         "\n\n> **译文**（英语）：拍得好"
     )
 

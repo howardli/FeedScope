@@ -69,7 +69,7 @@ def _is_long_form(r: dict) -> bool:
 
 
 def _media_markers(r: dict) -> str:
-    """媒体记号（[图 N] / [视频]）：扫描面用——列表缀尾、引用片段、详情标题回退。
+    """媒体记号（[图片 N] / [视频]）：扫描面用——列表缀尾、引用片段、详情标题回退。
 
     只报数量不附地址（列表一行是扫的不是读的，知乎列表同样不带）；地址
     形态见 _media_links（详情正文/回复楼层）。
@@ -79,7 +79,7 @@ def _media_markers(r: dict) -> str:
     has_video = any(m.get("type") in ("video", "animated_gif") for m in media)
     markers = ""
     if n_img:
-        markers += f" [图 {n_img}]"
+        markers += f" [图片 {n_img}]"
     if has_video:
         markers += " [视频]"
     return markers
@@ -98,11 +98,11 @@ def _best_video_url(m: dict) -> str:
 
 
 def _media_links(r: dict) -> str:
-    """媒体尾注（详情正文/回复楼层）：每个媒体一个「[图]/[视频](地址)」链接 token。
+    """媒体尾注（详情正文/回复楼层）：每个媒体一个「[图片]/[视频](地址)」链接 token。
 
     地址取 pbs.twimg.com 原图 / 最高码率 mp4——点击直达媒体本体；正文里
     嵌的 entities.media[].url 是 t.co 跳板（不指向媒体）不用。残卡无地址退
-    纯记号（[图]/[视频]）。与知乎/RSS 同词汇同形式（core.media.mark）：
+    纯记号（[图片]/[视频]）。与知乎/RSS 同词汇同形式（core.media.mark）：
     TUI 显示不了媒体，链接折叠地址、点击开浏览器。
     """
     media = ((r.get("legacy") or {}).get("entities") or {}).get("media") or []
@@ -110,7 +110,7 @@ def _media_links(r: dict) -> str:
     for m in media:
         if m.get("type") == "photo":
             url = str(m.get("media_url_https") or m.get("media_url") or "")
-            tokens.append(mark("[图]", url))
+            tokens.append(mark("[图片]", url))
         elif m.get("type") in ("video", "animated_gif"):
             tokens.append(mark("[视频]", _best_video_url(m)))
     return f" {' '.join(tokens)}" if tokens else ""
@@ -263,7 +263,7 @@ def _quote_snippet(r: dict) -> str:
 def _tweet_from_result(r: dict) -> FeedItem | None:
     """单条推文 result -> FeedItem；拿不到 id 或作者的残卡返回 None（调用方丢弃）。
 
-    换行压成空格（列表标题是扫描用的单段文本）；图片/视频在列表只换 [图 N]/
+    换行压成空格（列表标题是扫描用的单段文本）；图片/视频在列表只换 [图片 N]/
     [视频] 计数记号缀尾（列表是扫描面不附地址，知乎列表同；详情/楼层附直接
     地址见 _media_links），记号不参与截断；正文按 display_text_range 裁（藏
     开头 @ 提及与结尾媒体 t.co 短链，与 X 网页同形）。
@@ -447,7 +447,7 @@ def _visible_text(r: dict) -> str:
 
 
 def _strip_trailing_media(text: str, legacy: dict) -> str:
-    """剥结尾的媒体 t.co 短链（媒体已有 [图 N]/[视频] 记号代偿，X 网页也不显示它）。
+    """剥结尾的媒体 t.co 短链（媒体已有 [图片 N]/[视频] 记号代偿，X 网页也不显示它）。
 
     display_text_range 通常已把它排除，但实测个别推文会把它划进显示区（索引
     不可靠）——按「结尾恰好是某条媒体 url」剥，只剥尾不碰中段。
