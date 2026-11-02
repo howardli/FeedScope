@@ -2,13 +2,17 @@
 
 色板对齐 VS Code Dark+ 的克制取向：
 - 背景近黑灰（#1e1e1e）、前景浅灰（#d4d4d4），层级用 #252526/#2d2d30 的灰阶
-- 全主题唯一强调色是低饱和编辑器蓝 #569cd6（选中/焦点），选中态由 Textual
-  从 primary 派生暗化色，贴近 VS Code 列表选中背景 #264f78
+- 全主题唯一强调色是低饱和编辑器蓝 #569cd6（选中/焦点/链接），选中态由
+  Textual 从 primary 派生暗化色，贴近 VS Code 列表选中背景 #264f78
 - 语义色全部用暗色版：错误 #f48771、警告 #dcdcaa、成功 #6a9955
 - 不引入任何高饱和/荧光色
 
 Textual 8 的 Theme 是数据类：这些色直接喂给 ColorSystem，
-Header/Footer/Markdown/ListView 自动取色，无需逐组件写 CSS。
+Header/Footer/Markdown/ListView 自动取色，无需逐组件写 CSS。两处派生
+不合意、经 variables/CSS 覆写（后者见 app.py 的「正文统一格式」规则）：
+- Markdown 标题取 primary 会整行变蓝（H5/H6 甚至 ansi_cyan）——抹平成
+  段落样式，所有源的正文同一种格式；
+- 链接缺省取前景灰，灰底灰字认不出可点——编辑器蓝只留给链接。
 """
 
 from __future__ import annotations
@@ -29,5 +33,10 @@ FEEDSCOPE_THEME = Theme(
     panel="#2d2d30",  # 边框/分隔
     boost="#37373d",  # 悬浮
     dark=True,
-    variables={"footer-key-foreground": "#9aa0a6"},
+    variables={
+        "footer-key-foreground": "#9aa0a6",
+        # 链接：缺省取前景灰（灰底灰字认不出可点），编辑器蓝只留给这里
+        # （Markdown 标题的统一格式见 app.py CSS，不占强调色）
+        "link-color": "#569cd6",
+    },
 )

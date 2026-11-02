@@ -247,6 +247,19 @@ class FeedScopeApp(App[None]):
     .answer-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 窄终端长楼层头折行不裁剪 */
     .answer-body { padding: 0 2; }
 
+    /* 正文统一格式（所有源同形）：Markdown 标题抹平成段落样式——Textual 缺省
+    给 H1 居中加粗、H2 下划线、H3 加粗、H5/H6 甚至 ansi_cyan，且 Header 基类
+    color $text（auto 87%，比正文亮）+ margin 2 0 1 0；统一为正文的前景色/
+    样式/对齐/边距（App 基类 color: $foreground，段落即继承它），标题不再有
+    专属版式。蓝色与下划线只留给链接（theme.variables） */
+    MarkdownH1, MarkdownH2, MarkdownH3, MarkdownH4, MarkdownH5, MarkdownH6 {
+        color: $foreground;
+        background: transparent;
+        text-style: none;
+        content-align: left middle;
+        margin: 0 0 1 0;
+    }
+
     /* 回答详情屏（评论层）：正文区与问题详情同款，评论楼层为主楼层不缩进 */
     #answer-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
     #answer-meta { padding: 0 2; }

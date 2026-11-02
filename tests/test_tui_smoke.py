@@ -123,7 +123,10 @@ class StubDetailLoader(DetailLoader):
         self.doc = DetailDoc(
             title="存根问题标题",
             meta="42 个回答 · 1234 浏览",
-            description_md="描述正文，**包含粗体**与[链接](https://example.com)，验证折行不拆标记。",
+            description_md=(
+                "# 一级标题行\n## 二级标题行\n"
+                "描述正文，**包含粗体**与[链接](https://example.com)，验证折行不拆标记。"
+            ),
             answers=[
                 Answer(f"作者{i}", f"赞 {i}", f"回答正文第 {i} 条。" + "很长很长的内容，" * 60,
                        comment_count=f"{10 + i} 条评论")
@@ -357,6 +360,19 @@ async def _run_flow(opened: list[str]) -> None:
         detail = app.screen
         assert await _settle(pilot, lambda: detail._rendered), "详情渲染"
         assert len(detail.loader.doc.answers) == 3, "首批回答 3 条"
+
+        # 正文统一格式（所有源同形）：Markdown 标题抹平成段落样式——颜色 =
+        # 正文前景色（App 基类 color: $foreground，段落靠继承取到同一值）、
+        # 无粗体/下划线、不居中、同边距；蓝色与下划线只留给链接
+        fg = app.theme_variables["foreground"]
+        for w in detail.query("MarkdownH1, MarkdownH2"):
+            assert w.styles.color.hex.lower() == fg.lower(), f"标题颜色 = 正文前景 {fg}，实际 {w.styles.color.hex}"
+            assert not (w.styles.text_style.bold or w.styles.text_style.underline), (
+                "标题无粗体/下划线（下划线是链接「可点」的记号）"
+            )
+        assert str(detail.query_one("MarkdownH1").styles.content_align_horizontal) == "left", (
+            "H1 不再居中"
+        )
 
         # [/] 换篇：下一篇跳过 Enter 会跳浏览器的类型（video），列表选中同步推进
         await pilot.press("right")
