@@ -92,6 +92,9 @@ feedscope [tui]           # 启动 TUI（默认）
 feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x）
 feedscope probe [源 id…]  # 全源巡检：定位改版，原始样本落盘
 feedscope doctor          # 环境自检（Chrome / profile / 配置）
+feedscope rss add <url> [--key k --label 名]  # 加 RSS 订阅（显示名缺省拉 feed 标题，自动启用）
+feedscope rss list | remove <key>             # 查看 / 删除订阅
+feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合并）/ 导出
 ```
 
 ### 源与信息流配置
@@ -116,7 +119,12 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 
 ### RSS 订阅
 
-订阅即配置：手编 `[rss.feeds]`（改完重启生效），有订阅后 `F2` 勾选 RSS 启用；零订阅时 RSS 不出现在源列表。行为要点：
+订阅管理两条路，改完重启 TUI 生效：
+
+- **子命令（推荐）**：`feedscope rss add 地址` 一条条加（显示名自动拉 feed 标题）；从别的阅读器迁移用 `feedscope rss import 订阅.opml`（Feedly / Inoreader / NetNewsWire 等导出的 OPML 都认，已订阅的自动跳过）；`export` 随时可带走订阅防锁定。add / import 会自动把 RSS 加进启用列表，不用再开 F2
+- **手编配置**：直接改 `[rss.feeds]` 表（见上节示例），加完 `F2` 勾选 RSS 启用
+
+零订阅时 RSS 不出现在源列表。行为要点：
 
 - 「全部」流 = 全部订阅按发布时间倒序合并，同文多源（转载 / 聚合）按 URL 去重；单个订阅拉取失败只损失自己的条目，全部失败才报错
 - 详情读 feed 自带正文（`content` 全文优先，`summary` 兜底），图片转原图直链；摘要型源正文短，`Ctrl+O` 跳浏览器读全文

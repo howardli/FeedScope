@@ -185,6 +185,8 @@ def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert hidden_feeds("rss") == ["hn"]  # rss 源的 hide 段同样保留
     data = tomllib.loads(p.read_text(encoding="utf-8"))
     assert data["rss"]["feeds"]["ruanyq"]["url"] == "https://r.test/atom.xml"
+    assert "[rss]" in p.read_text(encoding="utf-8")  # 段名能裸写就裸写（["rss"] 合法但难读）
+    assert "[rss.feeds]" in p.read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
 
 

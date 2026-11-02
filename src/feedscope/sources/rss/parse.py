@@ -57,6 +57,12 @@ def html_to_md(html: str) -> str:
     return new_h2t().handle(linked).strip()
 
 
+def feed_title(body: bytes | str) -> str:
+    """feed 自述标题（channel / feed.title），订阅管理用它当默认显示名。"""
+    parsed = feedparser.parse(body)
+    return _clean(getattr(parsed, "feed", None).get("title")) if getattr(parsed, "feed", None) else ""
+
+
 def parse_feed(
     body: bytes | str,
     *,

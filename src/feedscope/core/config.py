@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +142,14 @@ def _toml_str(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)
 
 
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(s: str) -> str:
+    """键/段名：能裸写就裸写（[rss.feeds] 好读），含特殊字符才引用 _toml_str。"""
+    return s if _BARE_KEY.match(s) else _toml_str(s)
+
+
 def _toml_array(values: list[str]) -> str:
     return "[" + ", ".join(_toml_str(v) for v in values) + "]"
 
@@ -167,22 +176,21 @@ def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
     return out
 
 
-def save_enabled(ids: list[str]) -> None:
-    """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。
+def _render_config(ids: list[str] | None, data: dict) -> list[str]:
+    """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
 
-    只覆写本工具认识的键：enabled + 各源非空 hide 段 + feeds 订阅表（其余
+    只写本工具认识的键：enabled + 各源非空 hide 段 + feeds 订阅表（其余
     丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消彼长，注释头
     已说明归属）。feeds 是 rss 的订阅（用户数据，不是工具生成的状态），必须
     原样保留——丢段等于丢订阅。
     """
-    data = _read()[0]
     lines = [
         "# FeedScope 源配置：enabled = 启用的源；各源 hide = 隐藏的信息流",
         "# rss.feeds = RSS 订阅表（key = { label, url }）；[rss] hide 可隐藏流",
-        "# 由 feedscope 自动维护（首启引导 / F2 管理），也可手动编辑，改完重启生效",
-        "",
-        f"enabled = {_toml_array(list(ids))}",
+        "# 由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），也可手动编辑",
     ]
+    if ids is not None:
+        lines += ["", f"enabled = {_toml_array(ids)}"]
     for sid, section in data.items():
         if not isinstance(section, dict):
             logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)
@@ -195,22 +203,61 @@ def save_enabled(ids: list[str]) -> None:
         hide = section.get("hide")
         feeds = _valid_feeds(section.get("feeds"))
         if (isinstance(hide, list) and hide) or feeds:
-            lines += ["", f"[{_toml_str(sid)}]"]
+            lines += ["", f"[{_toml_key(sid)}]"]
             if isinstance(hide, list) and hide:
                 lines.append(f"hide = {_toml_array(hide)}")
             if feeds:
                 # 订阅行用内联表：一行一条，手编/比对都清爽；键引用字符串形式
                 # （json 串即合法 TOML），key 带空格等字符也不会写出坏文件
-                lines.append(f"[{_toml_str(sid)}.feeds]")
+                lines.append(f"[{_toml_key(sid)}.feeds]")
                 lines += [
-                    f"{_toml_str(key)} = {{ url = {_toml_str(url)}, label = {_toml_str(label)} }}"
+                    f"{_toml_key(key)} = {{ url = {_toml_str(url)}, label = {_toml_str(label)} }}"
                     for key, label, url in feeds
                 ]
+    return lines
+
+
+def _write_config(lines: list[str]) -> None:
+    """原子落盘（临时文件 + os.replace）：读者要么旧文件要么新文件，没有半截。"""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(tmp, path)  # 原子替换：读者要么旧文件要么新文件，没有半截
+    os.replace(tmp, path)
+
+
+def save_enabled(ids: list[str]) -> None:
+    """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。"""
+    _write_config(_render_config(list(ids), _read()[0]))
+
+
+def update_rss_feeds(feeds: list[RssFeed]) -> None:
+    """整体替换 RSS 订阅表（rss 子命令的落盘路径）；enabled / hide 原样保留。
+
+    enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺 rss
+    → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）；删到空 → 从
+    enabled 移除（空源留在启用列表只剩噪音）。enabled 未配置不动——缺省
+    本就是全启用，写了反而丢失「未配置」语义。
+    """
+    data = _read()[0]
+    section = data.get("rss")
+    if not isinstance(section, dict):
+        section = {}
+    if feeds:
+        section["feeds"] = {f.key: {"label": f.label, "url": f.url} for f in feeds}
+    else:
+        section.pop("feeds", None)
+    if section:
+        data["rss"] = section
+    elif "rss" in data:
+        del data["rss"]
+    enabled = data.get("enabled")
+    if isinstance(enabled, list):
+        if feeds and "rss" not in enabled:
+            enabled.append("rss")
+        if not feeds and "rss" in enabled:
+            enabled.remove("rss")
+    _write_config(_render_config(enabled, data))
 
 
 def describe() -> str:
