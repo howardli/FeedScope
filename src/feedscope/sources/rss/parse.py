@@ -15,8 +15,6 @@ from urllib.parse import urljoin
 
 import feedparser
 
-from feedscope.core.const import new_h2t
-from feedscope.core.media import Tokens, mark, pick_url
 from feedscope.core.models import FeedItem
 from feedscope.core.text import strip_zwsp
 
@@ -24,9 +22,6 @@ SOURCE_ID = "rss"
 
 # 标题/作者里的残余标签（<b>标题</b>、署名 <a> 之类），清理成纯文本
 _TAGS = re.compile(r"<[^>]*>")
-# img 标签（要求带 src）：进 html2text 前先 stash 成 [图片](src) 记号——
-# ignore_images 会连 src 一起丢，原图直链就没；绕行也防 & 被实体转义
-_IMG = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
 # 首页 HTML 里的 <link> 声明（自动发现 feed 用）
 _LINK_TAG = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _HREF = re.compile(r"""href=(["'])(.*?)\1""", re.IGNORECASE)
@@ -54,19 +49,6 @@ def _content_html(entry: dict) -> str:
             return first["value"]
     summary = entry.get("summary")
     return summary if isinstance(summary, str) else ""
-
-
-def html_to_md(html: str) -> str:
-    """HTML -> markdown：img 换 [图片](原图直链)，与知乎同管线（core.media）。
-
-    图片必须 stash 成 NUL 记号绕过 html2text 而不是先变 <a> 再转：链接文字
-    若带字面方括号（<a>[图片]</a>），html2text 会生成 [[图片]](url) 双层括号，
-    markdown 渲染不了；URL 里的 & 也会被它实体转义弄坏。"""
-    if not html:
-        return ""
-    tok = Tokens()
-    stashed = _IMG.sub(lambda m: tok.stash(mark("[图片]", pick_url(m.group(0), ("src",)))), html)
-    return strip_zwsp(tok.expand(new_h2t().handle(stashed))).strip()
 
 
 def probe(body: bytes | str) -> tuple[str, int]:

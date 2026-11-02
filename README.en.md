@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> Terminal-first feed reader — Zhihu, X (Twitter), Hacker News and RSS subscriptions, all in one terminal.
+> Terminal-first feed reader — Zhihu, X (Twitter), Hacker News, V2EX and RSS subscriptions, all in one terminal.
 
 **Language**: English · [中文](README.md)
 
 ## Features
 
-- **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, HN Front / New / Ask / Show — one UI, `Tab` to switch
+- **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, HN Front / New / Ask / Show, V2EX Hot / Latest — one UI, `Tab` to switch
 - **RSS subscriptions**: any RSS / Atom feed; the "All" stream merges by publish time (cross-feed dedup, a dead feed never drags others down); read feed-provided full text in-terminal; conditional requests keep refreshes polite to sources
 - **Full in-terminal reading**: feed → question → answers → comments, loaded per layer on demand
 - **HN discussion tree**: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads are flattened to two levels with `@parent` prefixes preserving who-replies-to-whom
@@ -45,6 +45,14 @@ HN story detail (one-line article link + top-level comments as floors, each floo
 HN reply tree of one comment (deep threads flattened to two levels, cross-level replies carry an `@parent` prefix):
 
 ![HN reply tree](docs/screenshot-hn-thread.png)
+
+V2EX Hot (no login; the "node · N replies · user" meta column scans as board + heat at a glance):
+
+![V2EX hot list](docs/screenshot-v2ex.png)
+
+V2EX topic detail (markdown body + replies as floors; floor numbers match the site's floor culture):
+
+![V2EX topic detail](docs/screenshot-v2ex-detail.png)
 
 ## Install
 
@@ -87,7 +95,7 @@ All keys are non-printing — they work while a Chinese IME is active; typing pr
 
 ### Login / Logout
 
-Zhihu and X require login (no anonymous feeds); HN and RSS work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x]`.
+Zhihu and X require login (no anonymous feeds); HN, V2EX and RSS work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x]`.
 
 ### Sources
 
@@ -96,6 +104,7 @@ Zhihu and X require login (no anonymous feeds); HN and RSS work out of the box. 
 | Zhihu | Hot / Recommend / Following | ✅ |
 | X (Twitter) | For You / Following | ✅ |
 | HN | Front / New / Ask / Show | — |
+| V2EX | Hot / Latest | — |
 | RSS | All / one per subscription | — |
 
 ### Subcommands
@@ -115,7 +124,7 @@ feedscope rss import <x.opml> | export [x.opml] # bulk import (idempotent merge)
 First launch shows a picker; `F2` reopens it anytime. Selections are saved to user config (`~/.config/feedscope/sources.toml` on Linux; `FEEDSCOPE_CONFIG` overrides), which you can also hand-edit; restart to apply:
 
 ```toml
-enabled = ["zhihu", "x", "hn", "rss"]  # order = site order; remove an id to disable
+enabled = ["zhihu", "x", "hn", "v2ex", "rss"]  # order = site order; remove an id to disable
 
 [zhihu]
 hide = ["follow"]    # hide built-in feeds you don't want
@@ -158,6 +167,14 @@ No login, no API key; data comes from the [public Algolia HN index](https://hn.a
 - Same three-layer shape as Zhihu: story (link posts: body = one article link; Ask/Show: self-text in full) → top-level comments as floors → `Enter` opens a floor's reply tree
 - Meta column shows "N pts · N comments · author"; deep threads flatten to two levels, cross-level replies carry an `@parent` prefix preserving the conversation thread
 - The index lags a few minutes and lists are sorted by points (not official rank); floors with no replies don't advertise `Enter`
+
+### V2EX
+
+No login; data comes from official public v1 endpoints (hot / latest / replies, no token needed; [official API reference](https://www.v2ex.com/help/api)). Behavior notes:
+
+- Two-layer shape: topic (markdown body; auto-embedded images become `[图片]` markers, `@` mentions become clickable links) → replies flattened as floors; V2EX replies have no nesting ("sub-replies" are just `@` text), so there is no third layer
+- Meta column shows "node · N replies · user"; floor numbers match the site's floor culture, and a floor's permalink is the `#reply` anchor on the topic page
+- The API returns everything in one shot (list fits a page, replies unpaginated) — floor paging costs zero requests; the body rides along with the list, so opening a detail costs exactly 1 request
 
 ## Disclaimer
 

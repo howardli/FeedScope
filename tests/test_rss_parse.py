@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from feedscope.sources.rss.parse import discover_feed_link, html_to_md, parse_feed, probe
+from feedscope.core.media import html_to_md
+from feedscope.sources.rss.parse import discover_feed_link, parse_feed, probe
 
 _EPOCH_NOV2 = datetime(2026, 11, 2, 0, 0, tzinfo=UTC).timestamp()  # 08:00 +0800
 

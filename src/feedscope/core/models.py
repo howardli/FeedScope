@@ -12,6 +12,7 @@ class FeedItem:
 
     extra 的键约定（列表传给详情抓取的上下文，属源内私有约定，UI 不读取）：
     - x：conversation_id（转发详情跳原推会话）
+    - v2ex：topic（列表端点正文即全量，详情只再拉回复）
     - zhihu：不使用
     """
 

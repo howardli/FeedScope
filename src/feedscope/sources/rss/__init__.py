@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from feedscope.core import config
+from feedscope.core.media import html_to_md
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
@@ -28,7 +29,7 @@ from feedscope.core.source import (
 )
 from feedscope.core.timefmt import fmt_unix
 from feedscope.sources.rss.fetch import fetch_body, fetch_merged
-from feedscope.sources.rss.parse import SOURCE_ID, html_to_md, parse_feed
+from feedscope.sources.rss.parse import SOURCE_ID, parse_feed
 
 logger = logging.getLogger(__name__)
 

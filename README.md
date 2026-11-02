@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Hacker News、RSS 订阅一个终端全看。
+> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Hacker News、V2EX、RSS 订阅一个终端全看。
 
 **语言**：中文 · [English](README.en.md)
 
 ## 特性
 
-- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，HN 首页 / 最新 / Ask / Show，一个界面切换
+- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，一个界面切换
 - **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
 - **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
 - **HN 讨论树**：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
@@ -45,6 +45,14 @@ HN story 详情（原文一行 + 顶层评论当楼层，楼层头带「N 条回
 HN 评论的回复树（深层讨论拍平成两层，隔层回复带 `@父作者` 前缀保住对话指向）：
 
 ![HN 回复树](docs/screenshot-hn-thread.png)
+
+V2EX 热门（免登录，元信息列「节点 · N 回复 · 用户名」扫一眼就是板块和热度）：
+
+![V2EX 热门列表](docs/screenshot-v2ex.png)
+
+V2EX 主题详情（markdown 正文 + 回复平铺当楼层，楼层号对齐站内楼层文化）：
+
+![V2EX 主题详情](docs/screenshot-v2ex-detail.png)
 
 ## 安装
 
@@ -87,7 +95,7 @@ feedscope
 
 ### 登录 / 登出
 
-知乎与 X 需要登录（无匿名流）；HN 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x]`。
+知乎与 X 需要登录（无匿名流）；HN、V2EX 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x]`。
 
 ### 站点一览
 
@@ -96,6 +104,7 @@ feedscope
 | 知乎 | 热榜 / 推荐 / 关注 | ✅ |
 | X（Twitter） | 推荐 / 正在关注 | ✅ |
 | HN | 首页 / 最新 / Ask / Show | — |
+| V2EX | 热门 / 最新 | — |
 | RSS | 全部 / 每订阅一流 | — |
 
 ### 子命令
@@ -115,7 +124,7 @@ feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合
 首次启动先弹勾选引导；之后 `F2` 随时增删。勾选落盘到用户配置（Linux 为 `~/.config/feedscope/sources.toml`，`FEEDSCOPE_CONFIG` 可换路径），也可手动编辑，改完重启生效：
 
 ```toml
-enabled = ["zhihu", "x", "hn", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
+enabled = ["zhihu", "x", "hn", "v2ex", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
 
 [zhihu]
 hide = ["follow"]    # 隐藏不想看的内置流
@@ -158,6 +167,14 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 三层结构与知乎同形：story（链接帖正文 = 原文一行，Ask/Show 带自述全文）→ 顶层评论当楼层（Enter 进单条评论的回复树）
 - 元信息列「N 点 · N 评 · 作者」；深层嵌套讨论拍平成两层，隔层回复带 `@父作者` 前缀保住对话指向
 - 索引有分钟级延迟，列表按热度排序（非官方榜序）；无回复的楼层不预告 Enter
+
+### V2EX
+
+免登录，数据走官方 v1 公开端点（hot / latest / replies，无需 token；[官方 API 参考](https://www.v2ex.com/help/api)）。行为要点：
+
+- 两层结构：主题（markdown 正文，自动内联图片换 `[图片]` 记号、`@` 提及转可点击链接）→ 回复平铺当楼层；V2EX 回复没有嵌套结构（「楼中楼」只是正文里的 `@` 文字），故无第三层
+- 元信息列「节点 · N 回复 · 用户名」；楼层号对齐站内楼层文化，楼层直达链接是原帖页的 `#reply` 锚点
+- 官方接口一次给全量（列表一页、回复不分页），楼层翻页零请求；正文随列表透传，打开一篇详情只花 1 个请求
 
 ## 免责声明
 

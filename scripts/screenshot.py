@@ -472,6 +472,106 @@ class DemoHn(Source):
         return DemoHnDetail()
 
 
+# ---- V2EX（编造的主题与回复，形态对齐 sources/v2ex/parse 产物）----
+
+_V2EX = [
+    ("有感而发：小团队真的别上微服务", "程序员 · 528 回复 · monolith4ever"),
+    ("试了下让 AI 写了一周的 Rust，聊聊它比我强和不如我的地方", "OpenAI · 412 回复 · rustacean"),
+    ("2026 年了，还是不理解为什么有人坚持用机械键盘写代码", "程序员 · 234 回复 · keyboardfan"),
+    ("把家里 NAS 从群晖迁到自建方案，一年下来的真实体验", "NAS · 167 回复 · homelabguy"),
+    ("凌晨三点的报警短信，把我从「再优化一下」的执念里炸醒了", "职场话题 · 96 回复 · oncallvictim"),
+    ("大家现在用什么 RSS 阅读器？我从云端服务迁出来后终于清净了", "分享创造 · 89 回复 · rsslover"),
+    ("周末给老人房装了个摄像头，用的全是自托管组件，零月费", "宽带与接入 · 54 回复 · selfhost"),
+    ("macOS 上有什么终端工具能替代全部图形界面？我列了个清单", "macOS · 47 回复 · terminalist"),
+]
+
+
+def _v2ex_item(title: str, meta: str) -> FeedItem:
+    return FeedItem(
+        source="v2ex",
+        id=str(abs(hash(title)) % 10**7),
+        title=title,
+        url="https://www.v2ex.com/t/demo",
+        kind="topic",
+        meta=meta,
+    )
+
+
+class DemoV2exDetail(DetailLoader):
+    """V2EX 主题详情 stub：markdown 正文 + 平铺回复楼层（无评论层）。"""
+
+    def __init__(self) -> None:
+        self.doc = DetailDoc(
+            title="有感而发：小团队真的别上微服务",
+            meta="程序员 · 528 回复 · monolith4ever",
+            time="2026-11-02 21:14",
+            description_md=(
+                "背景：五人团队，去年被外包架构师带着拆了 14 个服务。今年他走了，"
+                "剩下我们四个天天在排期表和链路追踪之间疲于奔命。\n\n"
+                "月初我们把全部服务合回单体，两周上线，CPU 成本降了 60%。"
+                "不是微服务不好，是**我们没有那个体量，却背了那个复杂度**。\n\n"
+                "架构图对比：[图片](https://i.imgur.com/demo-before-after.png)"
+            ),
+            answers=[
+                Answer(
+                    author="sre_monk",
+                    votes="",
+                    content_md=(
+                        "深有同感。微服务解决的是组织问题，不是技术问题——五个人的团队"
+                        "没有「组织」，只有「一起写代码的朋友」。"
+                    ),
+                    time="2026-11-02 21:30",
+                    url="https://www.v2ex.com/t/demo#reply1",
+                ),
+                Answer(
+                    author="distributed_fan",
+                    votes="",
+                    content_md=(
+                        "反对样本偏差：你们是「被拆错了」，不是「拆错了」。队列削峰、"
+                        "独立扩缩容这些收益，单体上你只能眼睁睁看着整站陪葬。\n\n"
+                        "@sre_monk 说的问题在于人，微服务只是把它放大了。"
+                    ),
+                    time="2026-11-02 21:47",
+                    url="https://www.v2ex.com/t/demo#reply2",
+                ),
+                Answer(
+                    author="monolith4ever",
+                    votes="",
+                    content_md="楼主补充：合回单体后测试也从 40 分钟降到 6 分钟，本地能跑全集成了。",
+                    time="2026-11-02 22:05",
+                    url="https://www.v2ex.com/t/demo#reply3",
+                ),
+            ],
+        )
+
+    @property
+    def done(self) -> bool:
+        return True
+
+    async def load_more(self) -> list[Answer]:
+        return []
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoV2ex(Source):
+    source_id = "v2ex"
+    label = "V2EX"
+    supports_detail = True
+    supports_comments = False  # 回复平铺无嵌套，详情到楼层为止（截图里 Footer 无 Enter 预告）
+    feeds: ClassVar[list[str]] = ["hot", "new"]
+    feed_labels: ClassVar[dict[str, str]] = {"hot": "热门", "new": "最新"}
+    detail_kinds: ClassVar[frozenset[str]] = frozenset({"topic"})
+    detail_unit_label = "回复"
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        return StaticFeedLoader([_v2ex_item(t, m) for t, m in _V2EX])
+
+    async def open_detail(self, item: FeedItem) -> DetailLoader:
+        return DemoV2exDetail()
+
+
 async def _shots() -> None:
     app = app_mod.FeedScopeApp()
     async with app.run_test(size=(120, 38)) as pilot:
@@ -500,6 +600,16 @@ async def _shots() -> None:
         for _ in range(8):
             await pilot.pause()
         _emit(app, "screenshot-hn-thread")
+        await pilot.press("escape")  # 回 HN 详情
+        await pilot.press("escape")  # 回 HN 列表
+        await pilot.press("tab")  # Tab 切到 V2EX
+        for _ in range(6):
+            await pilot.pause()
+        _emit(app, "screenshot-v2ex")
+        await pilot.press("enter")  # 进主题详情（markdown 正文 + 回复楼层）
+        for _ in range(8):
+            await pilot.pause()
+        _emit(app, "screenshot-v2ex-detail")
 
 
 def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
@@ -514,7 +624,7 @@ def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
     # （引导是交互弹层，自动化流程过不去）；PREWARM 关掉不拉真 Chrome
     cfg = DOCS.parent / ".screenshot-sources.toml"
-    cfg.write_text('enabled = ["zhihu", "x", "hn"]\n', encoding="utf-8")
+    cfg.write_text('enabled = ["zhihu", "x", "hn", "v2ex"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
     app_mod.PREWARM = False
     saved = dict(_REGISTRY)
@@ -522,6 +632,7 @@ def main() -> None:
     _REGISTRY[DemoZhihu.source_id] = DemoZhihu
     _REGISTRY[DemoX.source_id] = DemoX
     _REGISTRY[DemoHn.source_id] = DemoHn
+    _REGISTRY[DemoV2ex.source_id] = DemoV2ex
     try:
         asyncio.run(_shots())
     finally:

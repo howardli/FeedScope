@@ -51,10 +51,10 @@ async def _run_flow(cfg, monkeypatch) -> None:
     async with app.run_test(size=(100, 40)) as pilot:
         assert await _settle(pilot, lambda: app.query_one("#empty-hint").display)
 
-        # F2 → 选中 rss 行（第四行：知乎、X、HN、RSS）→ → 进订阅管理
+        # F2 → 选中 rss 行（第五行：知乎、X、HN、V2EX、RSS）→ → 进订阅管理
         await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down", "down")
+        await pilot.press("down", "down", "down", "down")
         await pilot.press("right")
         assert await _settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         assert _rows(app) == 0, "零订阅起步"
