@@ -122,7 +122,9 @@ def test_parse_detail_floors() -> None:
 
     img, at = floors
     assert img.votes == ""  # v1 回复不带赞数
-    assert "[图片](https://i.imgur.com/L62ZP7V.png)" in img.content_md  # 自动内联图片换记号
+    # 自动内联是 <a><img></a> 双层：整只塌缩成一个记号（嵌套链接 markdown
+    # 解析不了，会整段字面露出），必须全等不是包含
+    assert img.content_md == "感觉建模很娘炮 [图片](https://i.imgur.com/L62ZP7V.png)"
     assert img.time == "2026-11-02 09:09"
     assert img.url == "https://www.v2ex.com/t/1253638#reply18244992"  # 楼层直达锚点
 

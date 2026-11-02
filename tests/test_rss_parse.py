@@ -111,6 +111,23 @@ def test_html_to_md_empty() -> None:
     assert html_to_md("") == ""
 
 
+def test_html_to_md_unwraps_anchored_image() -> None:
+    """lightbox 的 <a 原图><img 缩略图></a> 塌缩成一个记号，取 <a> 的原图直链。
+
+    不塌会生成 [[图片](缩略图)](原图) 嵌套链接——markdown 不允许嵌套，
+    整段按字面露出（V2EX 自动内联同形态，靠这条管线兜住）。"""
+    md = html_to_md(
+        '<a href="https://example.com/full.png"><img src="https://example.com/thumb.png"></a>'
+    )
+    assert md == "[图片](https://example.com/full.png)"
+
+
+def test_html_to_md_keeps_text_links() -> None:
+    """普通文字链接照常转 markdown 链接（只包图的锚点才塌缩）。"""
+    md = html_to_md('<p>看<a href="https://example.com/post">这篇</a></p>')
+    assert md == "看[这篇](https://example.com/post)"
+
+
 def test_probe_title_and_entry_count() -> None:
     title, count = probe(RSS_XML)
     assert title == "测试源" and count == 3

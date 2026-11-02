@@ -71,6 +71,10 @@ class Tokens:
         self._texts.append(text)
         return f"\x00{len(self._texts) - 1}\x00"
 
+    def swap(self, index: int, text: str) -> None:
+        """替换已 stash 的文本（锚点图换成 <a> 指向的原图直链时用）。"""
+        self._texts[index] = text
+
     def expand(self, text: str) -> str:
         return _TOKEN_RE.sub(lambda m: self._texts[int(m.group(1))], text)
 
@@ -78,6 +82,11 @@ class Tokens:
 # img 标签（要求带 src）：进 html2text 前先 stash 成 [图片](src) 记号——
 # ignore_images 会连 src 一起丢，原图直链就没；绕行也防 & 被实体转义
 IMG_RE = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
+
+# 只包一张图的锚点（V2EX 自动内联 / 博客 lightbox）：整个 <a> 塌缩成那个
+# 图片记号。不塌的话外层 <a> 会被 html2text 再转一层链接，生成
+# [[图片](src)](href) 嵌套——markdown 不允许嵌套链接，整段按字面露出
+_ANCHOR_IMG_RE = re.compile(r"(<a\b[^>]*>)\s*\x00(\d+)\x00\s*</a>", re.IGNORECASE)
 
 
 def html_to_md(html: str) -> str:
@@ -87,8 +96,18 @@ def html_to_md(html: str) -> str:
     若带字面方括号（<a>[图片]</a>），html2text 会生成 [[图片]](url) 双层括号，
     markdown 渲染不了；URL 里的 & 也会被它实体转义弄坏。
     """
+
+    def _unwrap_anchor(m: re.Match[str]) -> str:
+        # 外层 <a> 的 href 是绝对地址时优先：lightbox 场景它指向原图，
+        # 缩略图 src 只是预览（V2EX 自动内联两者相同，无行为差异）
+        href = attrs(m.group(1)).get("href", "").strip()
+        if href.startswith(("http://", "https://")):
+            tok.swap(int(m.group(2)), mark("[图片]", href))
+        return f"\x00{m.group(2)}\x00"
+
     if not html:
         return ""
     tok = Tokens()
     stashed = IMG_RE.sub(lambda m: tok.stash(mark("[图片]", pick_url(m.group(0), ("src",)))), html)
+    stashed = _ANCHOR_IMG_RE.sub(_unwrap_anchor, stashed)
     return strip_zwsp(tok.expand(new_h2t().handle(stashed))).strip()
