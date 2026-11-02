@@ -17,6 +17,7 @@ from feedscope.core.config import (
     enabled_ids,
     hidden_feeds,
     is_configured,
+    rss_feeds,
     save_enabled,
 )
 from feedscope.core.registry import get_source
@@ -126,3 +127,69 @@ def test_describe_reports_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     _use_config(monkeypatch, tmp_path, 'enabled = ["zhihu"]\n[zhihu]\nhide = ["follow"]\n')
     d = describe()
     assert "启用 1 源" in d and "zhihu" in d and "1 隐藏" in d
+
+
+# ---- RSS 订阅表（[rss.feeds]）：读 / 容错 / 覆写保留 ----
+
+
+def test_rss_feeds_reads_table(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _use_config(
+        monkeypatch,
+        tmp_path,
+        "[rss.feeds]\n"
+        'ruanyq = { label = "阮一峰周刊", url = "https://r.test/atom.xml" }\n'
+        'hn = { url = "https://hnrss.org/frontpage" }\n',
+    )
+    feeds = rss_feeds()
+    assert [(f.key, f.label, f.url) for f in feeds] == [
+        ("ruanyq", "阮一峰周刊", "https://r.test/atom.xml"),  # 书写顺序即侧栏顺序
+        ("hn", "hn", "https://hnrss.org/frontpage"),  # label 缺省回 key
+    ]
+
+
+def test_rss_feeds_bad_entries_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _use_config(
+        monkeypatch,
+        tmp_path,
+        "[rss.feeds]\n"
+        'good = { url = "https://g.test/f" }\n'
+        "nourl = { label = '缺 url' }\n"
+        "notable = 'https://plain.test/f'\n"
+        "all = { url = 'https://all.test/f' }\n",
+    )
+    assert [(f.key, f.url) for f in rss_feeds()] == [("good", "https://g.test/f")]
+
+
+def test_rss_feeds_absent_section(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _use_config(monkeypatch, tmp_path, '[zhihu]\nhide = ["follow"]\n')
+    assert rss_feeds() == []
+
+
+def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """覆写不丢订阅（回归）：F2/首启保存只该动 enabled，feeds 是用户数据。"""
+    p = _use_config(
+        monkeypatch,
+        tmp_path,
+        "[rss.feeds]\n"
+        'ruanyq = { label = "阮一峰周刊", url = "https://r.test/atom.xml" }\n'
+        'hn = { url = "https://hnrss.org/frontpage" }\n'
+        '[rss]\nhide = ["hn"]\n',
+    )
+    save_enabled(["zhihu", "rss"])
+
+    assert enabled_ids() == ["zhihu", "rss"]
+    assert [(f.key, f.label) for f in rss_feeds()] == [
+        ("ruanyq", "阮一峰周刊"),
+        ("hn", "hn"),
+    ]  # 订阅表原样保留（label 缺省条目回填成 key 也无害）
+    assert hidden_feeds("rss") == ["hn"]  # rss 源的 hide 段同样保留
+    data = tomllib.loads(p.read_text(encoding="utf-8"))
+    assert data["rss"]["feeds"]["ruanyq"]["url"] == "https://r.test/atom.xml"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_describe_reports_rss_subscriptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _use_config(
+        monkeypatch, tmp_path, '[rss.feeds]\na = { url = "https://a.test/f" }\nb = { url = "https://b.test/f" }\n'
+    )
+    assert "RSS 2 订阅" in describe()

@@ -120,7 +120,15 @@ class DetailScreen(Screen[None]):
             widgets.extend([divider(), Static(f"[b]{self._unit}[/b]", classes="answers-header")])
             for ans in doc.answers:
                 widgets.extend(self._answer_widgets(ans))
-        if self._exhausted:
+        if self.loader.done and not doc.answers:
+            # 天生无楼层的完整文档（RSS 全文进 description_md）：没有「更多」
+            # 也没有评论层，预告换篇/返回即可；置 exhausted 让 Ctrl+N 走
+            # 「没有更多」反馈而不是空跑一次 load_more
+            self._exhausted = True
+            widgets.append(
+                Static("[dim]（完 · ← → 换上一篇/下一篇 · Ctrl+O 浏览器 · Esc 返回）[/dim]", id="no-more")
+            )
+        elif self._exhausted:
             widgets.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="no-more"))
         else:
             self._hint = self._hint_widget()

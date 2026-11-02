@@ -3,13 +3,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> 终端里的信息流聚合阅读器——知乎、X（Twitter）一个终端全看。
+> 终端里的信息流聚合阅读器——知乎、X（Twitter）、RSS 订阅一个终端全看。
 
-**English** — Terminal-first feed reader for Zhihu and X (Twitter): full in-terminal reading (feed → question → answers → comments), in-app Chrome login, auto-translation for foreign posts. UI is in Chinese.
+**English** — Terminal-first feed reader for Zhihu, X (Twitter) and RSS subscriptions: full in-terminal reading (feed → question → answers → comments), in-app Chrome login, auto-translation for foreign posts. UI is in Chinese.
 
 ## 特性
 
-- **双源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，一个界面切换
+- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，一个界面切换
+- **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
 - **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
 - **X 外文推自动附 Grok 译文**，媒体附原图 / 视频直链
 - **登录闭环**：未登录自动弹 Chrome 扫码 / 输密码，`Ctrl+U` 一键登出换账号
@@ -82,6 +83,7 @@ feedscope
 | --- | --- | --- | --- |
 | 知乎 | `z` | 热榜 / 推荐 / 关注 | ✅ |
 | X（Twitter） | `x` | 推荐 / 正在关注 | ✅ |
+| RSS | —（Tab 切换） | 全部 / 每订阅一流 | — |
 
 ### 子命令
 
@@ -97,13 +99,29 @@ feedscope doctor          # 环境自检（Chrome / profile / 配置）
 首次启动先弹勾选引导；之后 `F2` 随时增删。勾选落盘到用户配置（Linux 为 `~/.config/feedscope/sources.toml`，`FEEDSCOPE_CONFIG` 可换路径），也可手动编辑，改完重启生效：
 
 ```toml
-enabled = ["zhihu", "x"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
+enabled = ["zhihu", "x", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
 
 [zhihu]
 hide = ["follow"]    # 隐藏不想看的内置流
+
+[rss.feeds]          # RSS 订阅表：key 即流名（避免与保留字 all 撞名）
+ruanyq = { label = "阮一峰周刊", url = "https://www.ruanyifeng.com/blog/atom.xml" }
+hn = { url = "https://hnrss.org/frontpage" }   # label 缺省用 key
+
+[rss]
+hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
 ```
 
-`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段；停用源的直达键按下提示「未启用」。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
+`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `[rss.feeds]` 订阅表；停用源的直达键按下提示「未启用」。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
+
+### RSS 订阅
+
+订阅即配置：手编 `[rss.feeds]`（改完重启生效），有订阅后 `F2` 勾选 RSS 启用；零订阅时 RSS 不出现在源列表。行为要点：
+
+- 「全部」流 = 全部订阅按发布时间倒序合并，同文多源（转载 / 聚合）按 URL 去重；单个订阅拉取失败只损失自己的条目，全部失败才报错
+- 详情读 feed 自带正文（`content` 全文优先，`summary` 兜底），图片转原图直链；摘要型源正文短，`Ctrl+O` 跳浏览器读全文
+- 刷新走条件请求（ETag / Last-Modified），源没变不重复传正文
+- RSS 无登录、无直达键（Tab 循环到达）、无评论层
 
 ## 免责声明
 

@@ -17,3 +17,4 @@
 """
 from feedscope.sources import zhihu  # noqa: F401
 from feedscope.sources import x  # noqa: F401
+from feedscope.sources import rss  # noqa: F401

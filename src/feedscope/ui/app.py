@@ -290,9 +290,13 @@ class FeedScopeApp(App[None]):
         """
         enabled = config.enabled_ids()
         if enabled is None:
-            return all_sources()
-        classes = {cls.source_id: cls for cls in source_classes()}
-        return [classes[sid]() for sid in enabled if sid in classes]
+            made = all_sources()
+        else:
+            classes = {cls.source_id: cls for cls in source_classes()}
+            made = [classes[sid]() for sid in enabled if sid in classes]
+        # 无可选信息流的源不进 Tab（零订阅的 rss / 内置流全被隐藏的源）：
+        # 空 tab 只有噪音；配置好订阅 / 取消隐藏后 F2 重勾即回来
+        return [s for s in made if s.feeds]
 
     def _bind_source_keys(self) -> None:
         """按注册表给声明了 source_key 的源生成一键直达绑定（z 直切知乎、x 直切 X……）。
@@ -383,12 +387,18 @@ class FeedScopeApp(App[None]):
     def _setup_entries(self) -> list[tuple[str, str]]:
         """源选择弹层的行数据：(source_id, 行文案)，注册顺序即列表顺序。
 
-        文案带上各源的信息流名，首启选择时不用进 App 也能知道每个源有什么。
+        遍历实例而非类：feeds 是配置合成后的视图，rss 的流来自用户订阅表
+        （类默认为空）。文案带上各源的信息流名（超 3 个截成计数，几十个
+        订阅不至于刷屏）；无可选信息流的源不列出——勾上也只能得到空 tab，
+        配置好订阅（/取消隐藏）自然会回到列表里。
         """
         entries: list[tuple[str, str]] = []
-        for cls in source_classes():
-            feeds = "、".join(cls.feed_labels.get(f, f) for f in cls.feeds) or "无信息流"
-            entries.append((cls.source_id, f"{cls.label} [dim]{feeds}[/dim]"))
+        for source in all_sources():
+            labels = [source.feed_labels.get(f, f) for f in source.feeds]
+            if not labels:
+                continue
+            feeds = "、".join(labels[:3]) + (f" 等 {len(labels)} 个流" if len(labels) > 3 else "")
+            entries.append((source.source_id, f"{source.label} [dim]{feeds}[/dim]"))
         return entries
 
     def _rebuild_enabled(self, ids: list[str]) -> None:
@@ -401,7 +411,8 @@ class FeedScopeApp(App[None]):
         chosen = set(ids)
         classes = {cls.source_id: cls for cls in source_classes()}
         prev_id = self.sources[self.source_idx].source_id if self.sources else None
-        self.sources = [classes[sid]() for sid in ids if sid in classes]
+        made = [classes[sid]() for sid in ids if sid in classes]
+        self.sources = [s for s in made if s.feeds]  # 空源不进 Tab（同 _enabled_sources）
         self._feed_memory = {k: v for k, v in self._feed_memory.items() if k in chosen}
         if prev_id is not None and prev_id in chosen:
             self.source_idx = next(i for i, s in enumerate(self.sources) if s.source_id == prev_id)

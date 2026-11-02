@@ -1,13 +1,13 @@
 [project]
 name = "feedscope"
 version = "0.1.0"
-description = "观流（FeedScope）：终端信息流聚合阅读器——知乎 / X（Twitter）一个终端全看"
+description = "观流（FeedScope）：终端信息流聚合阅读器——知乎 / X（Twitter） / RSS 订阅一个终端全看"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "howardli" }]
-keywords = ["tui", "textual", "cli", "reader", "zhihu", "twitter", "terminal"]
+keywords = ["tui", "textual", "cli", "reader", "zhihu", "twitter", "rss", "terminal"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
@@ -25,6 +25,7 @@ dependencies = [
     "platformdirs>=4.0",
     "html2text>=2024.2.26",
     "httpx>=0.27",
+    "feedparser>=6",
 ]
 
 [project.urls]

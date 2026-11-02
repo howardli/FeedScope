@@ -38,15 +38,19 @@ async def get(
     source: str,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    allow_304: bool = False,
 ) -> httpx.Response:
     """GET 并校验状态码；httpx 异常统一包成 SourceError。
 
     source 是展示标签（如 "X"），只进错误消息；params / headers 原样透传
-    （headers 供带鉴权头的源用，如 X 的 Bearer/Cookie）。
+    （headers 供带鉴权头的源用，如 X 的 Bearer/Cookie）。allow_304 给条件
+    请求的源用（rss 的 ETag/Last-Modified 协商）：304 是「内容没变」的正
+    常语义而非失败，放行给调用方自己回放缓存；其余状态码照常校验。
     """
     try:
         r = await get_client().get(url, params=params, headers=headers)
-        r.raise_for_status()
+        if not (allow_304 and r.status_code == 304):
+            r.raise_for_status()  # httpx 新版对 3xx 也抛，304 必须先放行
     except httpx.TimeoutException:
         raise SourceError(f"{source} 请求超时（{HTTP_TIMEOUT} 秒）：{url}") from None
     except httpx.HTTPStatusError as exc:
