@@ -3,15 +3,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> 终端里的信息流聚合阅读器——知乎、X（Twitter）、RSS 订阅一个终端全看。
+> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Hacker News、RSS 订阅一个终端全看。
 
-**English** — Terminal-first feed reader for Zhihu, X (Twitter) and RSS subscriptions: full in-terminal reading (feed → question → answers → comments), in-app Chrome login, auto-translation for foreign posts. UI is in Chinese.
+**语言**：中文 · [English](README.en.md)
 
 ## 特性
 
-- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，一个界面切换
+- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，HN 首页 / 最新 / Ask / Show，一个界面切换
 - **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
 - **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
+- **HN 讨论树**：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
 - **X 外文推自动附 Grok 译文**，媒体记号 `[图片]` / `[视频]` 可点击直达原图 / 视频直链
 - **登录闭环**：未登录自动弹 Chrome 扫码 / 输密码，`Ctrl+U` 一键登出换账号
 - **源按需启用**：首启勾选，`F2` 随时增删，站点顺序 = 勾选顺序
@@ -25,13 +26,25 @@
 
 ![知乎热榜列表](docs/screenshot-zhihu.png)
 
-X 推荐时间线（署名「名字 @handle」完整可见）：
+X 推荐时间线（署名「名字 @handle」完整可见，媒体记号可点击直达原图）：
 
 ![X 时间线列表](docs/screenshot-x.png)
 
-推文详情（媒体直链、译文块、引用块）：
+X 推文详情（媒体直链、译文块、引用块）：
 
 ![X 推文详情](docs/screenshot-detail.png)
+
+HN 首页（免登录即用，「N 点 · N 评 · 作者」就是讨论热度雷达）：
+
+![HN 首页列表](docs/screenshot-hn.png)
+
+HN story 详情（原文一行 + 顶层评论当楼层，楼层头带「N 条回复」引导）：
+
+![HN 详情](docs/screenshot-hn-detail.png)
+
+HN 评论的回复树（深层讨论拍平成两层，隔层回复带 `@父作者` 前缀保住对话指向）：
+
+![HN 回复树](docs/screenshot-hn-thread.png)
 
 ## 安装
 
@@ -59,10 +72,10 @@ feedscope
 | 按键 | 功能 |
 | --- | --- |
 | `Tab` / `Shift+Tab` | 切换站点 |
-| `←` / `→` | 列表切信息流；详情换上 / 下一篇；评论层换回答 |
+| `←` / `→` | 列表切信息流；详情换上 / 下一篇；回复层换楼层 |
 | `↑` / `↓` | 移动选中项 / 滚动正文 |
-| `Enter` | 进详情；详情屏内进「正在阅读」的那个回答的评论 |
-| `Ctrl+N` | 加载更多（列表 / 回答 / 评论，逐层各自生效） |
+| `Enter` | 进详情；详情屏内进「正在阅读」的那个楼层（回答 / 评论）的讨论层 |
+| `Ctrl+N` | 加载更多（列表 / 楼层 / 评论，逐层各自生效） |
 | `Ctrl+O` | 浏览器打开当前条目 |
 | `F5` | 刷新 |
 | `Ctrl+U` | 账号：登录 / 登出 |
@@ -74,7 +87,7 @@ feedscope
 
 ### 登录 / 登出
 
-知乎与 X 都需要登录（无匿名流）。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x]`。
+知乎与 X 需要登录（无匿名流）；HN 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x]`。
 
 ### 站点一览
 
@@ -82,6 +95,7 @@ feedscope
 | --- | --- | --- |
 | 知乎 | 热榜 / 推荐 / 关注 | ✅ |
 | X（Twitter） | 推荐 / 正在关注 | ✅ |
+| HN | 首页 / 最新 / Ask / Show | — |
 | RSS | 全部 / 每订阅一流 | — |
 
 ### 子命令
@@ -101,14 +115,14 @@ feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合
 首次启动先弹勾选引导；之后 `F2` 随时增删。勾选落盘到用户配置（Linux 为 `~/.config/feedscope/sources.toml`，`FEEDSCOPE_CONFIG` 可换路径），也可手动编辑，改完重启生效：
 
 ```toml
-enabled = ["zhihu", "x", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
+enabled = ["zhihu", "x", "hn", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
 
 [zhihu]
 hide = ["follow"]    # 隐藏不想看的内置流
 
 [rss.feeds]          # RSS 订阅表：key 即流名（避免与保留字 all 撞名）
 ruanyq = { label = "阮一峰周刊", url = "https://www.ruanyifeng.com/blog/atom.xml" }
-hn = { url = "https://hnrss.org/frontpage" }   # label 缺省用 key
+hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（关键字订阅仍可走 hnrss，HN 本站用内置源）
 
 [rss]
 hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
@@ -136,6 +150,14 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 详情读 feed 自带正文（`content` 全文优先，`summary` 兜底），图片转原图直链；摘要型源正文短，`Ctrl+O` 跳浏览器读全文
 - 刷新走条件请求（ETag / Last-Modified），源没变不重复传正文
 - RSS 无登录、无评论层
+
+### Hacker News
+
+免登录免 key，数据走 [Algolia 公开索引 API](https://hn.algolia.com/api)（HN 官网站内搜索同源）。行为要点：
+
+- 三层结构与知乎同形：story（链接帖正文 = 原文一行，Ask/Show 带自述全文）→ 顶层评论当楼层（Enter 进单条评论的回复树）
+- 元信息列「N 点 · N 评 · 作者」；深层嵌套讨论拍平成两层，隔层回复带 `@父作者` 前缀保住对话指向
+- 索引有分钟级延迟，列表按热度排序（非官方榜序）；无回复的楼层不预告 Enter
 
 ## 免责声明
 

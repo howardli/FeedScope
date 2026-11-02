@@ -26,9 +26,15 @@ from collections import Counter
 from pathlib import Path
 from typing import ClassVar
 
-from feedscope.core.models import Answer, DetailDoc, FeedItem
+from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.registry import _REGISTRY
-from feedscope.core.source import DetailLoader, FeedLoader, Source, StaticFeedLoader
+from feedscope.core.source import (
+    CommentLoader,
+    DetailLoader,
+    FeedLoader,
+    Source,
+    StaticFeedLoader,
+)
 from feedscope.core.text import display_width
 from feedscope.ui import app as app_mod
 
@@ -162,14 +168,14 @@ class DemoZhihuDetail(DetailLoader):
                 Answer(
                     author="老张写代码",
                     votes="赞 1482",
-                    content_md="三个字：**可组合**。\n\n终端工具的输入输出都是纯文本，任何工具之间都能用管道串起来——这是图形界面永远做不到的事。我在终端里看知乎、刷 X、查文档，`Alt+Tab` 都不用按。\n\n再者是**可脚本化**：所有操作都能写成一行情序自动执行，图形界面的按钮永远学不会。",
+                    content_md="三个字：**可组合**。\n\n终端工具的输入输出都是纯文本，任何工具之间都能用管道串起来——这是图形界面永远做不到的事。我在终端里看知乎、刷 X、查文档，`Alt+Tab` 都不用按。\n\n再者是**可脚本化**：所有操作都能写成一行情命令自动执行，图形界面的按钮永远学不会。",
                     time="2026-10-29 09:12",
                     comment_count="158 条评论",
                 ),
                 Answer(
                     author="终端原教旨主义者",
                     votes="赞 936",
-                    content_md="因为终端里一切皆文本：可搜索、可管道、可脚本化，键盘一双手就能完成全部操作。\n\n[图] https://pic.demo/zhihu/terminal-vs-gui.jpg",
+                    content_md="因为终端里一切皆文本：可搜索、可管道、可脚本化，键盘一双手就能完成全部操作。\n\n[图片](https://pic.demo/zhihu/terminal-vs-gui.jpg)",
                     time="2026-10-29 11:40",
                     comment_count="87 条评论",
                 ),
@@ -213,7 +219,7 @@ class DemoZhihu(Source):
 
 _TWEETS = [
     (
-        "_terminal.dev 2.0 发布：LSP 补全、内联图像预览、还有 GPU 加速滚动，终端党的春天 [图]",
+        "_terminal.dev 2.0 发布：LSP 补全、内联图像预览、还有 GPU 加速滚动，终端党的春天 [图片]",
         "小林 @terminalfan",
     ),
     (
@@ -225,7 +231,7 @@ _TWEETS = [
         "AI 观察员 @ai_notes",
     ),
     (
-        "周末用 Rust 重写了家里的 NAS 工具链，内存占用从 400MB 降到 38MB [图 2]",
+        "周末用 Rust 重写了家里的 NAS 工具链，内存占用从 400MB 降到 38MB [图片 2]",
         "造轮子工程师 @wheel_builder",
     ),
     (
@@ -233,7 +239,7 @@ _TWEETS = [
         "命令行老手 @cli_veteran",
     ),
     (
-        "气候变化让今年的樱桃季提前了两周，果园主说这是十年里最旱的一个春天 [图]",
+        "气候变化让今年的樱桃季提前了两周，果园主说这是十年里最旱的一个春天 [图片]",
         "田野记录者 @field_notes",
     ),
     (
@@ -266,11 +272,11 @@ class DemoXDetail(DetailLoader):
                 "Finally shipping what we've been working on for a year.\n\n"
                 "Textual 3.0 brings CSS grid layout, a command palette, and a rendering "
                 "pipeline that's twice as fast on long documents. Docs: docs.textual.io\n\n"
-                "[图] https://pbs.twimg.com/media/Example3.0.png\n\n"
+                "[图片](https://pbs.twimg.com/media/Example3.0.png)\n\n"
                 "> **译文**（英语）：终于发布了我们打磨一年的东西。Textual 3.0 带来 CSS grid "
                 "布局、命令面板，以及长文档下快一倍的渲染管线。文档：docs.textual.io\n\n"
                 "> **被引推文** · 小林 @terminalfan：终端 UI 框架的天花板又被抬高了，2.0 的 "
-                "DataTable 性能就已经很夸张 [图 2]"
+                "DataTable 性能就已经很夸张 [图片 2]"
             ),
             answers=[
                 Answer(
@@ -323,6 +329,149 @@ class DemoX(Source):
         return DemoXDetail()
 
 
+# ---- HN（编造的条目与讨论，形态对齐 sources/hn/parse 产物）----
+
+_HN = [
+    ("SQLite as an application file format", "942 点 · 213 评 · simonw", "story"),
+    ("Postgres 19 is late because so many more bugs are being found now", "769 点 · 456 评 · soheilpro", "story"),
+    ("Show HN: HackerTube – YouTube, but for tech talks mentioned on HN", "1771 点 · 289 评 · roansh", "show"),
+    ("Ask HN: What does your terminal setup look like in 2026?", "388 点 · 512 评 · catlover99", "ask"),
+    ("The case for slow software", "1204 点 · 331 评 · brocardo", "story"),
+    ("Rust in the Android platform", "656 点 · 98 评 · jfriby", "story"),
+    ("Ask HN: Who is hiring? (November 2026)", "212 点 · 641 评 · whoishiring", "ask"),
+    ("A deep dive into epoll", "534 点 · 87 评 · kernelsand", "story"),
+]
+
+
+def _hn_item(title: str, meta: str, kind: str) -> FeedItem:
+    return FeedItem(
+        source="hn",
+        id=str(abs(hash(title)) % 10**9),
+        title=title,
+        url="https://example.com/article",
+        kind=kind,
+        meta=meta,
+    )
+
+
+class DemoHnComments(CommentLoader):
+    """HN 楼层回复树 stub：顶层回复 + 拍平的深层回复（@ 直接父）。"""
+
+    def __init__(self, comments: list[Comment]) -> None:
+        self.comments = comments
+        self._done = True
+
+    @property
+    def done(self) -> bool:
+        return self._done
+
+    async def load_more(self) -> list[Comment]:
+        return []
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoHnDetail(DetailLoader):
+    """HN story 详情 stub：原文一行 + 顶层评论当楼层 + 各自回复树。"""
+
+    def __init__(self) -> None:
+        self.doc = DetailDoc(
+            title="SQLite as an application file format",
+            meta="942 点 · 213 评 · simonw",
+            time="2026-11-02 03:12",
+            description_md="[原文](https://sqlite.org/appfileformat.html)",
+            answers=[
+                Answer(
+                    author="catenary",
+                    votes="",
+                    content_md=(
+                        "Every few years I rediscover this document and every time it "
+                        "changes how I think about persistence. The section on "
+                        "transactional semantics for derived data alone is worth it."
+                    ),
+                    time="2026-11-02 04:03",
+                    url="https://news.ycombinator.com/item?id=42000001",
+                    comment_count="4 条回复",
+                ),
+                Answer(
+                    author="dang",
+                    votes="",
+                    content_md=(
+                        "We used an appfile for a CAD tool: undo history, thumbnails and "
+                        "the geometry in one file users can email each other. Zero exports, "
+                        "zero format drift between versions."
+                    ),
+                    time="2026-11-02 04:31",
+                    url="https://news.ycombinator.com/item?id=42000002",
+                    comment_count="2 条回复",
+                ),
+                Answer(
+                    author="rwmj",
+                    votes="",
+                    content_md="The format is fine; the real magic is that readers are forward-compatible by construction.",
+                    time="2026-11-02 05:07",
+                    url="https://news.ycombinator.com/item?id=42000003",
+                    comment_count="",
+                ),
+            ],
+        )
+
+    @property
+    def done(self) -> bool:
+        return True
+
+    async def load_more(self) -> list[Answer]:
+        return []
+
+    async def open_comments(self, index: int) -> DemoHnComments:
+        return DemoHnComments(
+            [
+                Comment(
+                    author="drewc",
+                    votes="",
+                    content_md="Derived data was the unlock for us — rebuild the index inside the file on open, no sidecar to lose.",
+                    time="2026-11-02 04:20",
+                ),
+                Comment(
+                    author="peterdshutt",
+                    votes="",
+                    content_md="Same trick works for full-text search: store the FTS index as a shadow table and it stays transactional.",
+                    time="2026-11-02 04:44",
+                    replies=[
+                        Comment(
+                            author="catenary",
+                            votes="",
+                            content_md="@peterdshutt：and because it's in the same transaction, a crashed write can never leave the index stale.",
+                            time="2026-11-02 04:52",
+                        ),
+                    ],
+                ),
+            ]
+        )
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoHn(Source):
+    source_id = "hn"
+    label = "HN"
+    supports_detail = True
+    supports_comments = True
+    feeds: ClassVar[list[str]] = ["front", "new", "ask", "show"]
+    feed_labels: ClassVar[dict[str, str]] = {"front": "首页", "new": "最新", "ask": "Ask", "show": "Show"}
+    detail_kinds: ClassVar[frozenset[str]] = frozenset({"story", "ask", "show"})
+    detail_unit_label = "评论"
+    comment_unit_label = "回复"
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        return StaticFeedLoader([_hn_item(t, m, k) for t, m, k in _HN])
+
+    async def open_detail(self, item: FeedItem) -> DetailLoader:
+        return DemoHnDetail()
+
+
 async def _shots() -> None:
     app = app_mod.FeedScopeApp()
     async with app.run_test(size=(120, 38)) as pilot:
@@ -338,6 +487,19 @@ async def _shots() -> None:
         for _ in range(8):
             await pilot.pause()
         _emit(app, "screenshot-detail")
+        await pilot.press("escape")  # 回 X 列表
+        await pilot.press("tab")  # Tab 切到 HN
+        for _ in range(6):
+            await pilot.pause()
+        _emit(app, "screenshot-hn")
+        await pilot.press("enter")  # 进 story 详情（原文一行 + 评论楼层）
+        for _ in range(8):
+            await pilot.pause()
+        _emit(app, "screenshot-hn-detail")
+        await pilot.press("enter")  # 进首条评论的回复树（@ 父作者拍平）
+        for _ in range(8):
+            await pilot.pause()
+        _emit(app, "screenshot-hn-thread")
 
 
 def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
@@ -352,13 +514,14 @@ def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
     # （引导是交互弹层，自动化流程过不去）；PREWARM 关掉不拉真 Chrome
     cfg = DOCS.parent / ".screenshot-sources.toml"
-    cfg.write_text('enabled = ["zhihu", "x"]\n', encoding="utf-8")
+    cfg.write_text('enabled = ["zhihu", "x", "hn"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
     app_mod.PREWARM = False
     saved = dict(_REGISTRY)
     _REGISTRY.clear()
     _REGISTRY[DemoZhihu.source_id] = DemoZhihu
     _REGISTRY[DemoX.source_id] = DemoX
+    _REGISTRY[DemoHn.source_id] = DemoHn
     try:
         asyncio.run(_shots())
     finally:
