@@ -885,7 +885,7 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
         await pilot.press("ctrl+u")
         assert await _settle(pilot, lambda: "无需登录" in _last_notification(app)), "Ctrl+U 账号"
 
-        # 中文落地 → 指路提示（键位已免疫，提示只点明 z/x 直达键仍需英文输入法）
+        # 中文落地 → 指路提示（键位已免疫，提示只点明 z/x/r 直达键仍需英文输入法）
         await pilot.press("你")
         assert await _settle(pilot, lambda: "输入法" in _last_notification(app)), "中文输入要指路"
 

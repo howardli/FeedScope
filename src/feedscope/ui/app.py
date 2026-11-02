@@ -32,7 +32,7 @@ from feedscope.ui.theme import FEEDSCOPE_THEME
 from feedscope.ui.wrap import display_width, wrap_display
 
 # 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
-# 中文输入法只拦字母/数字进候选框），字母键只留给站点直达键（z/x）
+# 中文输入法只拦字母/数字进候选框），字母键只留给站点直达键（z/x/r）
 PREWARM = True  # 启动即后台预热浏览器；测试环境置 False（见 tests/conftest.py）
 
 
@@ -194,8 +194,9 @@ class FeedScopeApp(App[None]):
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键：字母/数字会被中文输入法拦进候选框，一个动作只留
-        # 一个键，不给字母留别名（唯一例外：站点直达键 z/x，见 _bind_source_keys，
-        # 仍走字母因为 Tab 循环已可达、直达键是加速位）。Ctrl+C 连按退出是
+        # 一个键，不给字母留别名（唯一例外：站点直达键 z/x/r，见
+        # _bind_source_keys，仍走字母因为 Tab 循环已可达、直达键是加速位）。
+        # Ctrl+C 连按退出是
         # Textual 自带兜底，不占页脚。
         # ←/→ / Ctrl+N 放 App 级（非 FeedListView）：焦点不在列表上也必须生效
         # （切流是高频主操作，不能依赖焦点落位）；详情/评论屏的 ←/→ 换篇在
@@ -925,7 +926,7 @@ class FeedScopeApp(App[None]):
             return
         self._cjk_hint_at = now
         feedback.info(
-            self, "检测到中文输入：仅 z/x 站点直达键需英文输入法，其余快捷键不受影响"
+            self, "检测到中文输入：仅 z/x/r 站点直达键需英文输入法，其余快捷键不受影响"
         )
 
     # ---- 清理 ----

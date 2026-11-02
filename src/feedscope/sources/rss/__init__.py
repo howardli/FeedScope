@@ -6,9 +6,9 @@
 - __init__.py 编排层：Source 能力声明与 open_* 分派
 
 与 zhihu/x 的本质差异：feeds 不是代码写死的内置流，而是用户在 sources.toml
-[rss.feeds] 里的订阅表（数据驱动的加法合成），因此不声明 source_key（字母
-键留给 z/x 直达键体系，Tab 循环可达）、无登录、无评论层；详情读 feed 自带
-正文（content 优先、summary 兜底），摘要型源正文短，Ctrl+O 跳浏览器补全。
+[rss.feeds] 里的订阅表（数据驱动的加法合成）；无登录、无评论层；详情读
+feed 自带正文（content 优先、summary 兜底），摘要型源正文短，Ctrl+O 跳浏
+览器补全。
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class RssDetailLoader(DetailLoader):
 class RssSource(Source):
     source_id = SOURCE_ID
     label = "RSS"
-    # source_key 留 None：字母键整个让给 z/x 直达键，本源 Tab 循环可达
+    source_key = "r"  # 一键直达键，与 z（知乎）/ x（X）同体系
     supports_detail = True
     subscribable = True  # feeds 来自用户订阅：F2 里 Enter 进订阅管理屏
     detail_kinds = frozenset({""})  # 全部条目（kind 空）Enter 都进终端详情
