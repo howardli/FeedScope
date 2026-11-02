@@ -54,6 +54,15 @@ def test_rss_source_declaration() -> None:
     assert not r.login_url and not r.logout_cookies  # 无登录生态
 
 
+def test_comments_capability_declared() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    # 评论层（DetailLoader.open_comments，详情屏 Enter）只有知乎有：
+    # X 的详情到回复为止、RSS 全文无楼层——UI 按此声明决定是否预告 Enter
+    assert by_id["zhihu"].supports_comments
+    assert not by_id["x"].supports_comments
+    assert not by_id["rss"].supports_comments
+
+
 def test_registry_order_is_tab_order() -> None:
     # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前）
     assert [s.source_id for s in all_sources()] == ["zhihu", "x", "rss"]

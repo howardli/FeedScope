@@ -200,6 +200,15 @@ class StubSourceBadKey(StubSource):
     source_key = "n"
 
 
+class StubSourceNoComments(StubSource):
+    """无评论层源（同 X/RSS 形态，supports_comments=False）：详情屏不该预告
+    Enter 进评论——键位与尾行动线都按源能力声明退场。"""
+
+    source_id = "stub_nc"
+    label = "存根无评论"
+    supports_comments = False
+
+
 @pytest.fixture()
 def stub_registry():
     """只留 stub 源（仅影响本测试进程），结束后恢复真实注册表。"""
@@ -281,6 +290,17 @@ def bad_key_registry():
     _REGISTRY.clear()
     _REGISTRY[StubSource.source_id] = StubSource
     _REGISTRY[StubSourceBadKey.source_id] = StubSourceBadKey
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(saved)
+
+
+@pytest.fixture()
+def no_comments_registry():
+    """只留无评论层的 stub 源：驱动详情屏对 supports_comments=False 的退场。"""
+    saved = dict(_REGISTRY)
+    _REGISTRY.clear()
+    _REGISTRY[StubSourceNoComments.source_id] = StubSourceNoComments
     yield
     _REGISTRY.clear()
     _REGISTRY.update(saved)
@@ -834,6 +854,40 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
 
 def test_answer_layer_flow(stub_registry, opened) -> None:
     asyncio.run(_run_answer_layer_flow(opened))
+
+
+async def _run_no_comments_flow() -> None:
+    """无评论层的源（X/RSS 形态）：详情屏不预告 Enter 评论（Footer 键位 + 尾行），
+    误按给反馈不无声；翻页/换篇动线不受影响。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await _settle(pilot, lambda: detail._rendered)
+
+        # Footer 不列 enter「评论」（有评论层的源才列，对照见 _run_answer_layer_flow）
+        shown = [ab.binding.key for ab in detail.active_bindings.values() if ab.binding.show]
+        assert "enter" not in shown, f"无评论层的源不预告 Enter，实际 Footer 键位 {shown}"
+        # 尾行同样不列 Enter 评论段；翻页/换篇预告保留
+        hint = str(detail.query_one("#more-hint").content)
+        assert "Enter 看" not in hint, f"尾行不该预告 Enter 评论，实际 {hint.strip()!r}"
+        assert "Ctrl+N 加载更多" in hint and "Esc 返回" in hint, f"其余动线预告保留，实际 {hint.strip()!r}"
+
+        # 键位隐藏但保留：误按给一句反馈（不无声），不进第三层
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not isinstance(app.screen, AnswerScreen), "无评论层：Enter 不进回答屏"
+        assert "暂不支持" in _last_notification(app), "误按有反馈"
+
+        # 其余动线不受影响：Ctrl+N 翻页照常
+        await pilot.press("ctrl+n")
+        assert await _settle(pilot, lambda: len(detail.loader.doc.answers) == 5), "Ctrl+N 加载更多照常"
+
+
+def test_no_comments_source_hides_enter(no_comments_registry) -> None:
+    asyncio.run(_run_no_comments_flow())
 
 # ---- 非打印键位：中文输入法开启也不受影响；字母/数字键已废弃 ----
 

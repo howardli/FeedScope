@@ -7,6 +7,7 @@ Enter 进「视口正在阅读」的那个回答（读到哪进哪）；评论�
 
 from __future__ import annotations
 
+import dataclasses
 import webbrowser
 from collections.abc import Callable
 from typing import ClassVar
@@ -37,7 +38,7 @@ class DetailScreen(Screen[None]):
         # 原生键，无需声明
         Binding("escape", "back", "返回"),
         Binding("ctrl+n", "more", "更多"),
-        Binding("enter", "pick_answer", "评论"),
+        Binding("enter", "pick_answer", "评论"),  # 无评论层的源在 __init__ 隐藏此键位（不上 Footer）
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_article", "下一篇"),
         Binding("left", "prev_article", "上一篇"),
@@ -57,6 +58,14 @@ class DetailScreen(Screen[None]):
         super().__init__()
         self.item = item
         self.source = source
+        if not source.supports_comments:
+            # 无评论层的源（supports_comments=False，如 X/RSS）：Footer 不预告
+            # Enter「评论」——键位隐藏但保留，误按仍走 action_pick_answer 的
+            # 「暂不支持」反馈，不无声（与尾行预告同一能力判定，词汇表归源）。
+            self._bindings.key_to_bindings["enter"] = [
+                dataclasses.replace(b, show=False)
+                for b in self._bindings.key_to_bindings.get("enter", [])
+            ]
         self._step_item = step_item  # 向 App 要相邻的可读条目（[/] 换篇，同步推进列表选中）
         self.loader: DetailLoader | None = None
         self._hint: Static | None = None
@@ -136,10 +145,11 @@ class DetailScreen(Screen[None]):
         await self.query_one("#detail-body", VerticalScroll).mount(*widgets)
 
     def _hint_widget(self) -> Static:
-        return Static(
-            f"[dim]── Enter 看{self._unit}的评论 · Ctrl+N 加载更多{self._unit} · ← → 换上一篇/下一篇 · Esc 返回 ──[/dim]",
-            id="more-hint",
-        )
+        """尾行动线预告：Enter 评论段只在源有评论层时列出（Footer 键位同判定）。"""
+        segs = [f"Ctrl+N 加载更多{self._unit}", "← → 换上一篇/下一篇", "Esc 返回"]
+        if self.source.supports_comments:
+            segs.insert(0, f"Enter 看{self._unit}的评论")
+        return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", id="more-hint")
 
     def _answer_widgets(self, ans: Answer) -> list[Widget]:
         """一个楼层的完整部件（分隔线 + 头部 + 正文）；楼层序号在此推进。
@@ -169,7 +179,8 @@ class DetailScreen(Screen[None]):
             feedback.info(self.app, "内容还在加载")
             return
         if not self.source.supports_comments:
-            feedback.info(self.app, f"{self.source.label} 暂不支持进入单条回答")
+            # 键位已隐藏，这里只剩误按兜底：给一句反馈而不是无声（X/RSS 的详情没有评论层）
+            feedback.info(self.app, f"{self.source.label} 暂不支持进入单条{self._unit}")
             return
         if not self.loader.doc.answers:
             feedback.info(self.app, "还没有可进入的回答")
