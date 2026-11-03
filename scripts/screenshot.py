@@ -744,6 +744,9 @@ async def _shots() -> None:
         await pilot.press("tab")  # Tab 切到 X
         for _ in range(6):
             await pilot.pause()
+        await pilot.press("enter")  # 切站落边栏：Enter 回列表
+        for _ in range(2):
+            await pilot.pause()
         _emit(app, "screenshot-x")
         await pilot.press("enter")  # 进首条推文详情（外文 + 译文 + 引用块）
         for _ in range(8):
@@ -753,6 +756,9 @@ async def _shots() -> None:
         await pilot.press("tab")  # Tab 切到 Reddit
         for _ in range(6):
             await pilot.pause()
+        await pilot.press("enter")  # 切站落边栏：Enter 回列表
+        for _ in range(2):
+            await pilot.pause()
         _emit(app, "screenshot-reddit")
         await pilot.press("enter")  # 进帖子详情（markdown 自述 + 置顶/赞数评论楼层）
         for _ in range(8):
@@ -761,6 +767,9 @@ async def _shots() -> None:
         await pilot.press("escape")  # 回 Reddit 列表
         await pilot.press("tab")  # Tab 切到 HN
         for _ in range(6):
+            await pilot.pause()
+        await pilot.press("enter")  # 切站落边栏：Enter 回列表
+        for _ in range(2):
             await pilot.pause()
         _emit(app, "screenshot-hn")
         await pilot.press("enter")  # 进 story 详情（原文一行 + 评论楼层）
@@ -775,6 +784,9 @@ async def _shots() -> None:
         await pilot.press("escape")  # 回 HN 列表
         await pilot.press("tab")  # Tab 切到 V2EX
         for _ in range(6):
+            await pilot.pause()
+        await pilot.press("enter")  # 切站落边栏：Enter 回列表
+        for _ in range(2):
             await pilot.pause()
         _emit(app, "screenshot-v2ex")
         await pilot.press("enter")  # 进主题详情（markdown 正文 + 回复楼层）

@@ -87,7 +87,7 @@ feedscope
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | Switch site |
+| `Tab` / `Shift+Tab` | Switch site (afterwards the keyboard lands in the left sidebar to pick a feed; `Enter` returns to the list) |
 | `←` / `→` | Switch feed in lists (`←` on the first feed focuses the sidebar); prev / next article in details; prev / next floor in reply layers |
 | `↑` / `↓` | Move selection / scroll body (`↑` on the first item focuses the top source bar) |
 | `Enter` | Open detail; inside a detail, open the discussion layer of the floor you are reading; return to the list from the sidebar / source bar |

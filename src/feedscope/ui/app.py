@@ -129,22 +129,13 @@ class FeedListView(ListView):
         # 切站进页脚（与 ←/→ 切流同款）：Tab 是切站唯一键位，页脚要给出来路
         Binding("tab", "app.next_source", "切站"),
         Binding("shift+tab", "app.prev_source", "切站"),
-        # ↑ 在首条上不再是空按：继续往上走到顶部源栏（全屏导航的列表侧入口）。
-        # 子类同键绑定整体替换 ListView 原生 ↑，未跃迁时回落到原生 cursor_up
-        Binding("up", "pane_or_cursor_up", show=False),
+        # ↑/↓/Enter 同键改派 App 级导航动作（压过 ListView 原生选中/移动）：
+        # 焦点在列表上是主屏常态（唯一可聚焦控件），区域焦点 _pane 决定这组
+        # 键到哪——逻辑集中在 App 层，这里只负责把键活着送过去
+        Binding("up", "app.nav_up", show=False),
+        Binding("down", "app.nav_down", show=False),
+        Binding("enter", "app.nav_enter", show=False),
     ]
-
-    def action_pane_or_cursor_up(self) -> None:
-        if self.index in (None, 0):
-            self.app._enter_pane("tabs")  # 单源时 _enter_pane 自行静默不跃迁
-            return
-        self.action_cursor_up()
-
-    def on_focus(self) -> None:
-        # 列表重新拿到焦点（Tab 原生 focus_next / 鼠标点列表）即回列表态：
-        # 焦点与 pane 错位会让「高亮 visuals」与「键位去向」分裂，这里自愈
-        if self.app._pane != "list":
-            self.app._enter_pane("list")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -214,9 +205,10 @@ class FeedScopeApp(App[None]):
         # ←/→ / Ctrl+N 放 App 级（非 FeedListView）：焦点不在列表上也必须生效
         # （切流是高频主操作，不能依赖焦点落位）；详情/评论屏的 ←/→ 换篇在
         # 各屏绑定，屏级先于 App 级命中，互不干扰。
-        # ↑/↓/Enter/Esc 同为 App 级但语义相反：只在边栏/源栏态（焦点为空，
-        # 无控件级绑定接键）或列表焦点丢失时可达；焦点在列表上时 ↑/↓/Enter
-        # 由 ListView 控件级绑定先接，Esc 无事——所以不与既有键位冲突。
+        # ↑/↓/Enter/Esc 是区域导航键，分派逻辑全在 App 级 nav_*：焦点在
+        # 列表上（主屏常态）时由 FeedListView 的同键改派送来（压过原生
+        # 选中/移动），焦点丢失时 App 级直达同一条动作；弹层/详情屏由
+        # _on_main_screen 守卫静默（方向键是随手按的导航键）。
         Binding("ctrl+q", "quit", "退出", priority=True),
         Binding("f5", "refresh", "刷新"),
         Binding("ctrl+o", "open_browser", "浏览器"),
@@ -253,9 +245,18 @@ class FeedScopeApp(App[None]):
 
     /* 全屏方向键导航的聚焦区域（pane-focus 挂容器，见 _enter_pane）：不给整
        个区域铺色块（克制主题，层级靠灰阶）——聚焦只把该区域的选中项升满编
-       辑器蓝，与列表光标同语言；非列表态的列表高亮自动转 blurred（自带） */
+       辑器蓝，与列表光标同语言 */
     #source-tabs.pane-focus .source-tab-active { background: $primary; }
     #feed-nav.pane-focus .feed-nav-active { background: $primary; }
+
+    /* 非列表态的列表（pane-aside）：焦点实际留在列表上（Tab 切站随时命中），
+       光标与 5% 聚焦提亮用 CSS 转成暗态——仿 ListView 自带的 unfocused 观感 */
+    #feed.pane-aside { background-tint: $foreground 0%; }
+    #feed.pane-aside > ListItem.-highlight {
+        color: $block-cursor-blurred-foreground;
+        background: $block-cursor-blurred-background;
+        text-style: $block-cursor-blurred-text-style;
+    }
 
     #empty-hint { display: none; padding: 1 2; }
 
@@ -694,6 +695,8 @@ class FeedScopeApp(App[None]):
         self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0  # 回到该站上次的信息流
         await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
         await self._render_feed_sidebar()
+        if self._pane != "tabs":
+            self._enter_pane("sidebar")  # 切站落边栏：先挑流再回列表（源栏态连切不被拽走）
         self.action_refresh()
 
     async def action_next_source(self) -> None:
@@ -756,11 +759,12 @@ class FeedScopeApp(App[None]):
     # ---- 全屏方向键导航：列表 ⇄ 左侧边栏 ⇄ 顶部源栏（边界跃迁）----
 
     def _enter_pane(self, pane: str) -> None:
-        """方向键在区域间移动：撞到边界继续往相邻区域走（键位表见 README）。
+        """区域焦点切换（撞到边界继续往相邻区域走，键位表见 README）。
 
-        非列表态把 Textual 焦点置空——App 级 ↑/↓/Enter/Esc 绑定才接得住键
-        （焦点在列表时控件级绑定优先），列表高亮同时自动转 blurred 暗态；
-        pane-focus class 挂在容器上，_render_* 全量重建子项不受影响。
+        pane 是纯逻辑层：Textual 焦点始终留在列表（主屏唯一可聚焦控件，
+        Tab 切站的 widget 绑定才能随时命中、连按不退化），非列表态给 #feed
+        挂 pane-aside 让列表光标转「暗」（仿 unfocused，见 CSS）；容器
+        pane-focus 标记聚焦区域，_render_* 全量重建子项不受影响。
         """
         if not self._on_main_screen():
             return
@@ -771,10 +775,8 @@ class FeedScopeApp(App[None]):
         self._pane = pane
         self.query_one("#source-tabs", Horizontal).set_class(pane == "tabs", "pane-focus")
         self.query_one("#feed-nav", Vertical).set_class(pane == "sidebar", "pane-focus")
-        if pane == "list":
-            self.query_one("#feed", FeedListView).focus()
-        else:
-            self.set_focus(None)
+        self.query_one("#feed", FeedListView).set_class(pane != "list", "pane-aside")
+        if pane != "list":
             feedback.info(
                 self,
                 "顶部源栏：←→ 切站，↓ 回列表"
@@ -783,45 +785,52 @@ class FeedScopeApp(App[None]):
             )
 
     async def action_nav_up(self) -> None:
-        """App 级 ↑：边栏态切上一个流（首个流再 ↑ 跃迁源栏，由 _step_feed 分派）。
-
-        列表内的 ↑ 由 FeedListView 控件级绑定处理（含首条跃迁源栏），这里
-        只在边栏/源栏态（焦点为空）或列表焦点丢失时可达；弹层/详情屏被
-        _on_main_screen 挡下静默（方向键是随手按的导航键）。
-        """
+        """↑ 的单点分派：边栏态切上一个流（首个流再 ↑ 由 _step_feed 上探源
+        栏）；源栏态抵屏幕上缘；列表态移文章选中（首条再 ↑ 跃迁源栏），焦
+        点丢了先找回。弹层/详情屏被 _on_main_screen 挡下静默。"""
         if not self._on_main_screen():
             return
         if self._pane == "sidebar":
             await self._step_feed(-1)
-        elif self._pane == "list":
-            self._regain_list_focus()
+            return
+        if self._pane == "tabs":
+            return
+        view = self.query_one("#feed", FeedListView)
+        if not view.has_focus:
+            view.focus()  # 焦点丢失（测试置空/竞态）：↑ 先把焦点找回来
+            return
+        if view.index in (None, 0):
+            self._enter_pane("tabs")  # 首条再往上 = 全屏导航的列表侧入口
+        else:
+            view.action_cursor_up()
 
     async def action_nav_down(self) -> None:
-        """App 级 ↓：源栏态回列表；边栏态切下一个流；列表态找回焦点。"""
+        """↓ 的单点分派：边栏态切下一个流；源栏态回列表；列表态移文章选中。"""
         if not self._on_main_screen():
             return
         if self._pane == "sidebar":
             await self._step_feed(1)
-        elif self._pane == "tabs":
+            return
+        if self._pane == "tabs":
             self._enter_pane("list")
-        elif self._pane == "list":
-            self._regain_list_focus()
-
-    def _regain_list_focus(self) -> None:
-        """pane 仍是列表但焦点丢了（边缘竞态/测试置空）：↑/↓ 把焦点找回来。"""
+            return
         view = self.query_one("#feed", FeedListView)
         if not view.has_focus:
             view.focus()
+            return
+        view.action_cursor_down()
 
-    async def action_nav_enter(self) -> None:
-        """App 级 Enter：边栏/源栏态回列表（流/站已随行走就地切换）。
+    def action_nav_enter(self) -> None:
+        """Enter 的单点分派：边栏/源栏态回列表（流/站已随行走就地切换）；
+        列表态 = 原生选中（进详情/开浏览器，与改派前同一条路径）。
 
-        列表上 Enter 进详情是 ListView 控件级绑定（先命中）；详情屏 Enter
-        进评论层是屏级绑定（先命中）——都到不了这。
+        详情屏 Enter 进评论层是屏级绑定（先命中），到不了这。
         """
         if not self._on_main_screen():
             return
-        if self._pane != "list":
+        if self._pane == "list":
+            self.query_one("#feed", FeedListView).action_select_cursor()
+        else:
             self._enter_pane("list")
 
     def action_nav_back(self) -> None:

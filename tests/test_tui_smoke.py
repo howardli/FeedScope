@@ -948,8 +948,9 @@ def test_keys_focus_free(stub_registry) -> None:
 
 async def _run_pane_navigation_flow() -> None:
     """方向键撞到边界跃迁到相邻区域：↑ 首条上探源栏、← 首个流进边栏；
-    源栏/边栏内 ←→/↑↓ 就地移动，Enter/Esc/↓ 回列表。列表态的既有键位
-    （↑↓ 移文章、←→ 切流、Tab 切站）在非边界处语义完全不变。"""
+    源栏/边栏内 ←→/↑↓ 就地移动，Enter/Esc/↓ 回列表；切站后键盘先落边栏
+    （先挑流再回列表）。列表态的既有键位（↑↓ 移文章、←→ 切流）非边界处
+    语义完全不变，Tab 连按仍一次一键地连续切站。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
@@ -964,17 +965,19 @@ async def _run_pane_navigation_flow() -> None:
         await pilot.press("up", "up")  # 回首条 + 再越界
         assert app._pane == "tabs", "↑ 首条越界 → 顶部源栏"
         assert tabs.has_class("pane-focus"), "源栏聚焦高亮"
-        assert app.focused is None, "非列表态焦点为空（App 级导航键接管）"
+        assert app.query_one("#feed").has_focus, "焦点留在列表（Tab 切站随时命中）"
+        assert app.query_one("#feed").has_class("pane-aside"), "非列表态列表光标转暗"
         assert await _settle(pilot, lambda: "源栏" in _last_notification(app)), "跃迁带指路"
 
-        # 源栏态 ←/→ = 切站（与 Tab 同路径）；↓ 回列表
+        # 源栏态 ←/→ = 切站（与 Tab 同路径，连切不拽走）；↓ 回列表
         await pilot.press("right")
         assert await _settle(pilot, lambda: app.source_idx == 1 and app._pane == "tabs"), "源栏态 → 切站"
         await pilot.press("left")
         assert await _settle(pilot, lambda: app.source_idx == 0), "源栏态 ← 切回"
         await pilot.press("down")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "↓ 回列表（焦点回来）"
+        assert app._pane == "list" and app.query_one("#feed").has_focus, "↓ 回列表"
         assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus"), "聚焦高亮随返回摘除"
+        assert not app.query_one("#feed").has_class("pane-aside"), "列表光标恢复亮态"
 
         # ← 在首个流上越界 → 左侧边栏；↑/↓ 就地切流，侧栏高亮跟随
         await pilot.press("left")
@@ -996,12 +999,24 @@ async def _run_pane_navigation_flow() -> None:
         await pilot.press("enter")
         assert app._pane == "list" and app.query_one("#feed").has_focus, "Enter 回列表"
 
+        # 切站落边栏：Tab/Shift+Tab 切完键盘先停在边栏（先挑流），连按一次一
+        # 键地切站（焦点留在列表，不退化成焦点轮换），边栏 Enter 回列表
+        await pilot.press("tab")
+        assert await _settle(pilot, lambda: app.source_idx == 1 and app._pane == "sidebar"), "Tab 切站落边栏"
+        assert nav.has_class("pane-focus"), "落边栏高亮"
+        await pilot.press("tab")
+        assert await _settle(pilot, lambda: app.source_idx == 0 and app._pane == "sidebar"), "Tab 连切不退化"
+        await pilot.press("shift+tab", "shift+tab")
+        assert await _settle(pilot, lambda: app.source_idx == 0 and app._pane == "sidebar"), "Shift+Tab 同款"
+        await pilot.press("enter")
+        assert app._pane == "list", "边栏 Enter 回列表"
+
         # 列表态非边界 ←/→ 仍切流，pane 稳在 list（高频主操作不被导航劫持）
         await pilot.press("right")
         assert await _settle(pilot, lambda: app.feed_idx == 1 and app._pane == "list"), "←/→ 切流不变"
 
-        # 弹层无扰动：边栏态开 F2，屏内 ↑↓ 走 SelectionList 原生键；关层后焦点
-        # 落回列表，pane 随焦点自愈（焦点即事实源，视觉与键位永不错位）
+        # 弹层无扰动：边栏态开 F2，屏内 ↑↓ 走 SelectionList 原生键；关层后
+        # 焦点回列表、pane 保持（逻辑层与焦点解耦，不因弹层漂移）
         await pilot.press("left", "left")  # 切回首流 + 越界进边栏
         assert app._pane == "sidebar"
         await pilot.press("f2")
@@ -1010,7 +1025,7 @@ async def _run_pane_navigation_flow() -> None:
         assert app._pane == "sidebar", "弹层内 ↑↓ 不经 App 导航（屏内原生）"
         await pilot.press("escape")
         assert await _settle(pilot, lambda: app._on_main_screen()), "Esc 关弹层"
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "关层后焦点落回列表"
+        assert app._pane == "sidebar" and app.query_one("#feed").has_focus, "关层后 pane 保持、焦点回列表"
 
 
 def test_pane_navigation_flow(two_source_registry) -> None:
