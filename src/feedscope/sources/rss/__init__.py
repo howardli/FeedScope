@@ -82,6 +82,10 @@ class RssSource(Source):
 
     async def open_feed(self, name: str) -> FeedLoader:
         if name == self.ALL_FEED:
+            if not self._by_key:
+                # 订阅刚被删光的过渡窗口（同 Telegram）：空表别走 0 条守卫
+                # 误报「可能改版」，给指引才是实话
+                raise SourceError("RSS 还没有订阅——F2 里选中 RSS 按 → 添加订阅")
             items, errors = await fetch_merged(list(self._by_key.values()))
             if errors and items:  # 部分失败降级：时间线照出，失败原因进日志
                 logger.warning(

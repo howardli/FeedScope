@@ -392,7 +392,9 @@ class FeedScopeApp(App[None]):
         """按启用列表重建源列表与选中位（纯状态，不碰 DOM）。
 
         展示顺序 = ids 顺序（弹屏按勾选顺序产出，落盘 enabled 同序）；尽量停
-        在原来的源（没被停用的话）。
+        在原来的源——前提是它还在 self.sources 里（勾了但零订阅的源会被
+        feeds 过滤出局，「停在原源」按过滤后的实际名单找，找不到回 0 位，
+        不能按 chosen 找：否则 next() 落空直接崩，保存后的重建全断）。
         """
         chosen = set(ids)
         classes = {cls.source_id: cls for cls in source_classes()}
@@ -400,7 +402,7 @@ class FeedScopeApp(App[None]):
         made = [classes[sid]() for sid in ids if sid in classes]
         self.sources = [s for s in made if s.feeds]  # 空源不进 Tab（同 _enabled_sources）
         self._feed_memory = {k: v for k, v in self._feed_memory.items() if k in chosen}
-        if prev_id is not None and prev_id in chosen:
+        if prev_id is not None and any(s.source_id == prev_id for s in self.sources):
             self.source_idx = next(i for i, s in enumerate(self.sources) if s.source_id == prev_id)
         else:
             self.source_idx = 0

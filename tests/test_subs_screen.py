@@ -197,3 +197,67 @@ async def _run_empty_telegram_flow(cfg, monkeypatch) -> None:
 
 def test_empty_subscribable_hint_on_save(rss_env, monkeypatch) -> None:
     asyncio.run(_run_empty_telegram_flow(rss_env, monkeypatch))
+
+
+# ---- 删光订阅后仍勾选保存：停在原源的重建不能崩，空表不能误报改版 ----
+
+
+async def _run_delete_all_flow(monkeypatch, tmp_path) -> None:
+    """当前源停在 Telegram、订阅删光、又在 F2 勾上 Telegram 保存：
+    prev_id 在 chosen 里但被 feeds 过滤出局——_rebuild_enabled 的
+    「停在原源」按过滤后名单找，不能 StopIteration 崩掉保存链路。"""
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text(
+        'enabled = ["v2ex", "telegram"]\n[telegram.feeds]\ndurov = { url = "https://t.me/durov/" }\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>普通页面</body></html>", request=request)
+
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.press("tab")  # 切到 Telegram（当前源停在这）
+        for _ in range(6):
+            await pilot.pause()
+
+        await pilot.press("f2")  # → Telegram 行（第七行）→ → 进订阅管理 → Delete 删光
+        await pilot.press("down", "down", "down", "down", "down", "down")
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
+        await pilot.press("delete")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        await pilot.click("#confirm-ok")
+
+        await pilot.press("escape")  # 回 F2；_sync_row 已取消勾选，空格再勾上（复现用户操作）
+        await pilot.press("space")
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: not isinstance(app.screen, ManageSourcesScreen))
+
+        # 保存链路完整走完：worker 不崩（崩溃会让 setup-confirm 后屏幕卡死）、
+        # telegram 零订阅不进 Tab、当前源回退到 v2ex
+        assert [s.source_id for s in app.sources] == ["v2ex"]
+        assert app.current_source.source_id == "v2ex"
+        notes = [str(n.message) for n in getattr(app, "_notifications", [])]
+        assert any("还没有订阅" in m for m in notes), "给下一步指引"
+
+
+def test_delete_all_then_keep_checked_rebuilds_without_crash(monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_delete_all_flow(monkeypatch, tmp_path))
+
+
+def test_open_feed_all_with_empty_table_gives_guidance(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """空订阅表对「全部」流：给指引，不误报「站点可能已改版」（telegram 与 rss 同修）。"""
+    from feedscope.core.source import SourceError
+    from feedscope.sources.rss import RssSource
+    from feedscope.sources.telegram import TelegramSource
+
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(tmp_path / "sources.toml"))
+    for src, label in ((TelegramSource(), "Telegram"), (RssSource(), "RSS")):
+        assert src.feeds == []  # 零订阅时「全部」本不该出现在 feeds；防的是删光过渡期的旧实例
+        src.feeds = [src.ALL_FEED]  # 模拟旧实例残留的流视图
+        with pytest.raises(SourceError, match="还没有订阅"):
+            asyncio.run(src.open_feed(src.ALL_FEED))
