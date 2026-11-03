@@ -7,9 +7,9 @@
 屏不读写配置：选择生效路径（保存 + 重建站点栏）集中在 App（_start /
 action_manage_sources）。
 
-可订阅源（Source.subscribable，目前 rss 与 reddit）在此层还有二级入口：
-→ 进订阅管理屏（SubsStore 按源分派），改动即时落盘；返回后这里只同步
-该源勾选（有订阅 = 勾上，空 = 取消）并回调 App 标脏。
+可订阅源（Source.subscribable，目前 rss、reddit 与 telegram）在此层还有
+二级入口：→ 进订阅管理屏（SubsStore 按源分派），改动即时落盘；返回后
+这里只同步该源勾选（有订阅 = 勾上，空 = 取消）并回调 App 标脏。
 """
 
 from __future__ import annotations

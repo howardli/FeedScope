@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> Terminal-first feed reader — Zhihu, X (Twitter), Reddit, Hacker News, V2EX and RSS subscriptions, all in one terminal.
+> Terminal-first feed reader — Zhihu, X (Twitter), Reddit, Hacker News, V2EX, RSS and Telegram channels, all in one terminal.
 
 **Language**: English · [中文](README.md)
 
 ## Features
 
-- **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, Reddit Home / Popular / custom subreddits, HN Front / New / Ask / Show, V2EX Hot / Latest — one UI, `Tab` to switch
+- **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, Reddit Home / Popular / custom subreddits, HN Front / New / Ask / Show, V2EX Hot / Latest, Telegram channel subscriptions — one UI, `Tab` to switch
 - **RSS subscriptions**: any RSS / Atom feed; the "All" stream merges by publish time (cross-feed dedup, a dead feed never drags others down); read feed-provided full text in-terminal; conditional requests keep refreshes polite to sources
 - **Full in-terminal reading**: feed → question → answers → comments, loaded per layer on demand
 - **HN discussion tree**: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads are flattened to two levels with `@parent` prefixes preserving who-replies-to-whom
@@ -95,7 +95,7 @@ feedscope
 | `Ctrl+O` | Open current item in browser |
 | `F5` | Refresh |
 | `Ctrl+U` | Account: login / logout |
-| `F2` | Manage sources: toggle enable / disable, saved on confirm; `→` opens subscription manager (RSS / Reddit) |
+| `F2` | Manage sources: toggle enable / disable, saved on confirm; `→` opens subscription manager (RSS / Reddit / Telegram) |
 | `Esc` | Go back one layer |
 | `Ctrl+Q` | Quit (double `Ctrl+C` as fallback) |
 
@@ -103,7 +103,7 @@ All keys are non-printing — they work while a Chinese IME is active; typing pr
 
 ### Login / Logout
 
-Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX and RSS work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`.
+Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`.
 
 ### Sources
 
@@ -115,6 +115,7 @@ Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX and RSS work ou
 | HN | Front / New / Ask / Show | — |
 | V2EX | Hot / Latest | — |
 | RSS | All / one per subscription | — |
+| Telegram | All / one per channel | — |
 
 ### Subcommands
 
@@ -141,6 +142,9 @@ hide = ["follow"]    # hide built-in feeds you don't want
 [reddit.feeds]       # subreddit table: key = feed name (names colliding with built-in home/popular are rejected)
 rust = { label = "Rust", url = "https://www.reddit.com/r/rust/" }
 
+[telegram.feeds]     # channel table: key = feed name (avoid the aggregate name all)
+durov = { url = "https://t.me/durov/" }
+
 [rss.feeds]          # RSS subscription table: key = feed name (avoid the reserved key all)
 ruanyq = { label = "Ruanyifeng Weekly", url = "https://www.ruanyifeng.com/blog/atom.xml" }
 hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label defaults to key (keyword alerts still fit hnrss; for HN itself use the built-in source)
@@ -149,7 +153,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label defaults to key (k
 hide = ["all"]       # hide the "All" aggregate, or a subscription key to hide one feed
 ```
 
-Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]`). To reorder sites: untick then re-tick in `F2` (moves to the end).
+Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`). To reorder sites: untick then re-tick in `F2` (moves to the end).
 
 ### RSS Subscriptions
 
@@ -196,6 +200,15 @@ Login required (anonymous endpoints have been 403-only since 2026); data comes f
 - Meta column shows "N pts · N comments · r/sub"; floors carry scores, moderator stickies are flagged `[置顶]`; deep threads flatten to two levels with `@parent` prefixes (same as HN)
 - "Home" aggregates the subreddits your Reddit account follows on the site (empty for a fresh account that follows nothing — expected); subscribe to what you want instead: `F2` → Reddit row → `→`, type a subreddit name or URL (`rust`, `r/rust`, a site link all work) and it becomes its own feed — no need to follow it on reddit.com
 - The comment tree arrives in one request (huge threads are truncated) with "N more collapsed" hints where cut; floor / reply paging is all in-memory, zero extra requests
+
+### Telegram Channels
+
+No login; data comes from each channel's public web preview (`t.me/s/<channel>`, server-rendered HTML readable as long as the owner keeps preview on). Behavior notes:
+
+- Pure subscription source shaped exactly like RSS: `F2` → Telegram row → `→` opens the manager; type a channel name or link (`durov`, `@durov`, `t.me/durov`, even a post link); label defaults to the channel's own name
+- The "All" stream merges every channel by publish time (newest first), one dead channel only loses its own items; each channel is also its own feed (individually hideable)
+- Meta column "N views" is the channel-post heat radar; the "All" stream prefixes the channel name; inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
+- Details read list-carried content (zero requests); `Ctrl+N` in a single-channel feed pages back through history via the `?before=` cursor; no comment layer (channel discussion groups aren't in the preview)
 
 ## Disclaimer
 

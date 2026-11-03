@@ -61,13 +61,14 @@ def test_rss_source_declaration() -> None:
 def test_comments_capability_declared() -> None:
     by_id = {s.source_id: s for s in all_sources()}
     # 评论层（DetailLoader.open_comments，详情屏 Enter）知乎/HN/Reddit 有：
-    # X/V2EX 的详情到回复为止、RSS 全文无楼层——UI 按此声明决定是否预告 Enter
+    # X/V2EX 的详情到回复为止、RSS/Telegram 全文无楼层——UI 按此声明决定是否预告 Enter
     assert by_id["zhihu"].supports_comments
     assert by_id["hn"].supports_comments
     assert by_id["reddit"].supports_comments
     assert not by_id["x"].supports_comments
     assert not by_id["v2ex"].supports_comments
     assert not by_id["rss"].supports_comments
+    assert not by_id["telegram"].supports_comments
 
 
 def test_reddit_source_declaration() -> None:
@@ -111,6 +112,19 @@ def test_v2ex_source_declaration() -> None:
     assert v.detail_unit_label == "回复"
 
 
+def test_telegram_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    t = by_id["telegram"]
+    assert t.feeds == []  # 测试配置零订阅：feeds 完全来自用户配置（同 rss）
+    assert not t.feed_labels
+    assert t.supports_detail and t.detail_kinds == frozenset({""})  # 全部条目进终端详情
+    assert t.subscribable  # [telegram.feeds] 订阅表：F2 里 → 进订阅管理
+    assert not t.login_url and not t.logout_cookies  # 免登录（公开预览页）
+    assert t.detail_unit_label == "正文"  # 无楼层（同 rss）
+
+
 def test_registry_order_is_tab_order() -> None:
-    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，登录源聚堆，rss 聚合器殿后）
-    assert [s.source_id for s in all_sources()] == ["zhihu", "x", "reddit", "hn", "v2ex", "rss"]
+    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，登录源聚堆，订阅型源殿后）
+    assert [s.source_id for s in all_sources()] == [
+        "zhihu", "x", "reddit", "hn", "v2ex", "rss", "telegram",
+    ]

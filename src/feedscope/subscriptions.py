@@ -1,11 +1,13 @@
-"""订阅管理业务：rss 的增删查 + OPML 进出，reddit 的 subreddit 增删查。
+"""订阅管理业务：rss 的增删查 + OPML 进出，reddit 的 subreddit 与 telegram
+的频道增删查。
 
 只做管理编排：读改写 sources.toml（写路径统一走 config.update_feeds，
 enabled/hide 联动在那里）、rss add 拉一次 feed 取标题当默认显示名、
-reddit add 拉一次 r/{name}/about 校验存在性并取 display_name。TUI 订阅
-管理屏不直接调这里的函数，走 SubsStore 适配器（屏保持源无关）；CLI 的
-rss 子命令直接调 rss 函数。OPML 用 stdlib ElementTree 解析（嵌套目录
-拍平），导出手写模板——结构固定，不值得引库。
+reddit add 拉一次 r/{name}/about 校验存在性并取 display_name、telegram
+add 拉一次 t.me/s 预览页校验可读并取频道名。TUI 订阅管理屏不直接调这里
+的函数，走 SubsStore 适配器（屏保持源无关）；CLI 的 rss 子命令直接调
+rss 函数。OPML 用 stdlib ElementTree 解析（嵌套目录拍平），导出手写
+模板——结构固定，不值得引库。
 """
 
 from __future__ import annotations
@@ -131,19 +133,23 @@ async def add_from_input(text: str) -> tuple[list[RssFeed], str]:
     return added, f"导入 {len(added)} 条订阅{detail}"
 
 
-def _remove(source_id: str, key: str) -> RssFeed | None:
-    """删一条订阅（rss / reddit 共用），返回被删的；key 不存在返回 None（不动配置）。"""
+def _remove(source_id: str, key: str, *, drop_when_empty: bool) -> RssFeed | None:
+    """删一条订阅（各源共用），返回被删的；key 不存在返回 None（不动配置）。
+
+    drop_when_empty：删到空是否从 enabled 摘掉该源——rss/telegram 的 feeds
+    全来自订阅（删空 = 没有任何流）摘；reddit 有内置流不摘。
+    """
     feeds = config.feeds_for(source_id)
     kept = [f for f in feeds if f.key != key]
     if len(kept) == len(feeds):
         return None
-    config.update_feeds(source_id, kept, drop_enabled_when_empty=source_id == "rss")
+    config.update_feeds(source_id, kept, drop_enabled_when_empty=drop_when_empty)
     return next(f for f in feeds if f.key == key)
 
 
 def remove_feed(key: str) -> RssFeed | None:
     """删一条 rss 订阅。"""
-    return _remove("rss", key)
+    return _remove("rss", key, drop_when_empty=True)
 
 
 # ---- OPML 进出 ----
@@ -217,6 +223,12 @@ def export_opml(feeds: list[RssFeed]) -> str:
 _REDDIT_BUILTIN = ("home", "popular")
 
 
+# ---- Telegram 频道订阅 ----
+
+# 与「全部」聚合流撞名的频道名不能当订阅 key（同 rss 的 all 保留字）
+_TELEGRAM_RESERVED = ("all",)
+
+
 async def add_subreddit(text: str, *, label: str | None = None) -> RssFeed:
     """加一个 subreddit 订阅并落盘；显示名缺省拉一次 r/{name}/about 的 display_name。
 
@@ -254,12 +266,60 @@ async def add_subreddit_from_input(text: str) -> tuple[list[RssFeed], str]:
 
 def remove_subreddit(key: str) -> RssFeed | None:
     """删一个 subreddit 订阅；key 不存在返回 None（不动配置）。"""
-    return _remove("reddit", key)
+    return _remove("reddit", key, drop_when_empty=False)
 
 
 def rename_subreddit(key: str, new_label: str) -> RssFeed | None:
     """改 subreddit 订阅的显示名；名字清空 / key 不存在返回 None（不动配置）。"""
     return _rename("reddit", key, new_label)
+
+
+async def add_channel(text: str, *, label: str | None = None) -> RssFeed:
+    """加一个 Telegram 频道订阅并落盘；显示名缺省拉一次预览页的频道名。
+
+    输入形态见 parse_telegram_input（durov / @durov / t.me/durov / 帖子直链）；
+    重复 / 撞保留字 all / 预览页拉不到任何消息（不存在、为空、站长关了 Web
+    预览）→ SubscriptionError（不动配置）。
+    """
+    from feedscope.sources.telegram.fetch import fetch_channel_html
+    from feedscope.sources.telegram.parse import (
+        channel_title,
+        parse_channel_html,
+        parse_telegram_input,
+    )
+
+    name = parse_telegram_input(text)
+    if not name:
+        raise SubscriptionError("没认出频道名（支持：durov、@durov、t.me/durov 或帖子链接）")
+    if name in _TELEGRAM_RESERVED:
+        raise SubscriptionError("all 是聚合流保留字，不能用作订阅名")
+    feeds = config.feeds_for("telegram")
+    if any(f.key == name for f in feeds):
+        raise SubscriptionError(f"@{name} 已经订阅过了")
+    html = await fetch_channel_html(name)  # SourceError 顺势上抛（HTTP 层的中文消息够用）
+    items = parse_channel_html(html, channel=name, label=name)
+    if not items:
+        raise SubscriptionError(f"@{name} 拉不到任何帖子：频道可能不存在、为空，或关闭了 Web 预览")
+    display = channel_title(html) or name
+    feed = RssFeed(key=name, label=label or display, url=f"https://t.me/{name}/")
+    config.update_feeds("telegram", [*feeds, feed])
+    return feed
+
+
+async def add_channel_from_input(text: str) -> tuple[list[RssFeed], str]:
+    """订阅管理屏的 Telegram 添加入口（与 rss 的 add_from_input 同形，store 注入用）。"""
+    feed = await add_channel(text)
+    return [feed], f"已订阅 @{feed.key}：{feed.label}"
+
+
+def remove_channel(key: str) -> RssFeed | None:
+    """删一个频道订阅；key 不存在返回 None（不动配置）。"""
+    return _remove("telegram", key, drop_when_empty=True)
+
+
+def rename_channel(key: str, new_label: str) -> RssFeed | None:
+    """改频道订阅的显示名；名字清空 / key 不存在返回 None（不动配置）。"""
+    return _rename("telegram", key, new_label)
 
 
 # ---- 订阅管理屏的源适配器 ----
@@ -310,8 +370,25 @@ def reddit_store() -> SubsStore:
     )
 
 
+def telegram_store() -> SubsStore:
+    return SubsStore(
+        label="Telegram",
+        add_placeholder="频道名或链接（如 durov、@durov、t.me/durov）",
+        hint="↑↓ 选择 · Enter 改名 · Insert 添加 · Delete 删除",
+        empty="还没有订阅 · Insert 添加（输入频道名或链接即可）",
+        feeds=lambda: config.feeds_for("telegram"),
+        add=add_channel_from_input,
+        remove=remove_channel,
+        rename=rename_channel,
+    )
+
+
 # 源 id -> store 工厂：新增 subscribable 源在这里登记一个（订阅屏的入口分派）
-_STORES: dict[str, Callable[[], SubsStore]] = {"rss": rss_store, "reddit": reddit_store}
+_STORES: dict[str, Callable[[], SubsStore]] = {
+    "rss": rss_store,
+    "reddit": reddit_store,
+    "telegram": telegram_store,
+}
 
 
 def store_for(source_id: str) -> SubsStore:

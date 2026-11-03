@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Reddit、Hacker News、V2EX、RSS 订阅一个终端全看。
+> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Reddit、Hacker News、V2EX、RSS 与 Telegram 频道，一个终端全看。
 
 **语言**：中文 · [English](README.en.md)
 
 ## 特性
 
-- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，Reddit 首页 / 热门 / 自选 subreddit，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，一个界面切换
+- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，Reddit 首页 / 热门 / 自选 subreddit，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，Telegram 频道订阅，一个界面切换
 - **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
 - **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
 - **HN 讨论树**：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
@@ -95,7 +95,7 @@ feedscope
 | `Ctrl+O` | 浏览器打开当前条目 |
 | `F5` | 刷新 |
 | `Ctrl+U` | 账号：登录 / 登出 |
-| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS / Reddit） |
+| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS / Reddit / Telegram） |
 | `Esc` | 逐层返回 |
 | `Ctrl+Q` | 退出（`Ctrl+C` 连按两次兜底） |
 
@@ -103,7 +103,7 @@ feedscope
 
 ### 登录 / 登出
 
-知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。
+知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。
 
 ### 站点一览
 
@@ -115,6 +115,7 @@ feedscope
 | HN | 首页 / 最新 / Ask / Show | — |
 | V2EX | 热门 / 最新 | — |
 | RSS | 全部 / 每订阅一流 | — |
+| Telegram | 全部 / 每频道一流 | — |
 
 ### 子命令
 
@@ -141,6 +142,9 @@ hide = ["follow"]    # 隐藏不想看的内置流
 [reddit.feeds]       # subreddit 订阅表：key 即流名（r/home、r/popular 与内置流撞名的拒收）
 rust = { label = "Rust", url = "https://www.reddit.com/r/rust/" }
 
+[telegram.feeds]     # 频道订阅表：key 即流名（避免与聚合流名 all 撞名）
+durov = { url = "https://t.me/durov/" }
+
 [rss.feeds]          # RSS 订阅表：key 即流名（避免与保留字 all 撞名）
 ruanyq = { label = "阮一峰周刊", url = "https://www.ruanyifeng.com/blog/atom.xml" }
 hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（关键字订阅仍可走 hnrss，HN 本站用内置源）
@@ -149,7 +153,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（�
 hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
 ```
 
-`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]`）。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
+`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`）。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
 
 ### RSS 订阅
 
@@ -196,6 +200,15 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 元信息列「N 点 · N 评 · r/版块」；楼层带赞数、版务置顶评论带 `[置顶]` 前缀；深层讨论拍平两层、`@父作者` 标出指向（同 HN）
 - 「首页」是账号在 Reddit 站内关注版块的聚合（新账号没关注过版块时为空，属正常）；想看的版块用订阅：`F2` → Reddit 行按 `→`，输入 subreddit 名或地址（`rust`、`r/rust`、站点链接都认）即成单独的流，不必去 Reddit 网站关注
 - 评论树单请求拉全（超大帖截断），截断处显示「另有 N 条未展开」；楼层 / 评论翻页全内存切片零请求
+
+### Telegram 频道
+
+免登录，数据走频道公开 Web 预览页（`t.me/s/<频道>`，服务端渲染 HTML，站长开启预览即可读）。行为要点：
+
+- 与 RSS 同形的纯订阅源：`F2` → Telegram 行按 `→` 进订阅管理，输入频道名或链接（`durov`、`@durov`、`t.me/durov`、帖子直链都认），显示名缺省拉频道名
+- 「全部」流 = 全部频道按发布时间倒序合并，单频道失败只损失自己的条目；每频道也各自成流（可 `hide` 单藏）
+- 元信息列「N 观看」是频道帖的热度雷达；「全部」流里前缀频道名；正文行内 HTML 转 markdown、图片/视频换 `[图片]` / `[视频]` 记号（视频无直链，记号指向帖子页）
+- 详情读列表自带正文（零请求）；单频道流 `Ctrl+N` 走 `?before=` 游标往回翻历史帖；无评论层（频道讨论组在预览页拿不到）
 
 ## 免责声明
 
