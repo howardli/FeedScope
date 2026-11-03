@@ -38,5 +38,8 @@ FEEDSCOPE_THEME = Theme(
         # 链接：缺省取前景灰（灰底灰字认不出可点），编辑器蓝只留给这里
         # （Markdown 标题的统一格式见 app.py CSS，不占强调色）
         "link-color": "#569cd6",
+        # 侧栏未聚焦选中带（VS Code 未聚焦选中同款灰）：boost 字段在 CSS 变量
+        # $boost 里是 4% 半透明悬浮层（铺了看不见），实底只能走 variables
+        "nav-sel-background": "#37373d",
     },
 )

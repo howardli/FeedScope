@@ -88,8 +88,8 @@ feedscope
 | Key | Action |
 | --- | --- |
 | `Tab` / `Shift+Tab` | Switch site (afterwards the keyboard lands in the left sidebar to pick a feed; `Enter` returns to the list) |
-| `←` / `→` | Switch feed in lists (`←` on the first feed focuses the sidebar); prev / next article in details; prev / next floor in reply layers |
-| `↑` / `↓` | Move selection / scroll body (`↑` on the first item focuses the top source bar) |
+| `←` / `→` | Region moves: from the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; from the sidebar `→` returns to the list and `←` goes to the source bar; in the source bar switches site in place; prev / next article in details; prev / next floor in reply layers |
+| `↑` / `↓` | Move selection / scroll body (strictly within the current list; stops at the edges) |
 | `Enter` | Open detail; inside a detail, open the discussion layer of the floor you are reading; return to the list from the sidebar / source bar |
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
@@ -99,7 +99,7 @@ feedscope
 | `Esc` | Go back one layer (from the sidebar / source bar, back to the list first) |
 | `Ctrl+Q` | Quit (double `Ctrl+C` as fallback) |
 
-All keys are non-printing — they work while a Chinese IME is active; typing printable characters by mistake shows a hint. The top tab bar and the left sidebar are clickable and drive the same code path as the keyboard. Arrow keys move across the whole screen: hitting an edge jumps to the neighboring region (`↑` on the first item enters the top source bar, `←` on the first feed enters the sidebar); inside those, arrows switch site / feed in place, and `Enter` / `Esc` / `↓` return to the list at any time.
+All keys are non-printing — they work while a Chinese IME is active; typing printable characters by mistake shows a hint. The top tab bar and the left sidebar are clickable and drive the same code path as the keyboard. Arrow keys follow CLI conventions: `↑`/`↓` move the selection strictly within the current list and stop at the edges; region moves go horizontal (and `↓` from the top) — in the source bar `←`/`→` switches site in place and `↓` descends to the sidebar; in the sidebar `↑`/`↓` switches feed in place, `→` returns to the list and `←` goes to the source bar; in the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; `Enter` / `Esc` return to the list at any time.
 
 ### Login / Logout
 

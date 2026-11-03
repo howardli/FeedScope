@@ -202,21 +202,22 @@ class FeedScopeApp(App[None]):
         # 一个键，不给字母留别名。
         # Ctrl+C 连按退出是
         # Textual 自带兜底，不占页脚。
-        # ←/→ / Ctrl+N 放 App 级（非 FeedListView）：焦点不在列表上也必须生效
-        # （切流是高频主操作，不能依赖焦点落位）；详情/评论屏的 ←/→ 换篇在
-        # 各屏绑定，屏级先于 App 级命中，互不干扰。
-        # ↑/↓/Enter/Esc 是区域导航键，分派逻辑全在 App 级 nav_*：焦点在
-        # 列表上（主屏常态）时由 FeedListView 的同键改派送来（压过原生
-        # 选中/移动），焦点丢失时 App 级直达同一条动作；弹层/详情屏由
+        # ←/→/↑/↓/Enter/Esc 是区域导航键，分派逻辑全在 App 级 nav_*：焦点在
+        # 列表上（主屏常态）时由 FeedListView 的同键改派送来（压过原生选中/
+        # 移动），焦点丢失时 App 级直达同一条动作；弹层/详情屏由
         # _on_main_screen 守卫静默（方向键是随手按的导航键）。
+        # CLI 惯例的空间语义：↑/↓ 只在聚焦区域的纵向列表里移动选中、到边
+        # 即停（绝不跳出区域）；区域移动走横向与 ↓（列表 ← 进边栏、边栏
+        # → 回列表 / ← 去源栏、源栏 ↓ 下探边栏）；列表 → 抵屏幕右缘无事。
+        # 详情/评论屏的 ←/→ 换篇在各屏绑定，屏级先于 App 级命中，互不干扰。
         Binding("ctrl+q", "quit", "退出", priority=True),
         Binding("f5", "refresh", "刷新"),
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("f2", "manage_sources", "源管理"),
         Binding("ctrl+u", "account", "账号", show=False),
         Binding("ctrl+n", "more", "加载更多"),
-        Binding("left", "prev_feed", "切流"),
-        Binding("right", "next_feed", "切流"),
+        Binding("left", "nav_left", "边栏"),
+        Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
         Binding("enter", "nav_enter", show=False),
@@ -237,25 +238,26 @@ class FeedScopeApp(App[None]):
     .source-tab { width: auto; padding: 0 1; color: $text-muted; }
     .source-tab-active { color: $text; text-style: bold underline; }
 
-    /* 左侧信息流边栏：active 用编辑器蓝的暗化底（与 ListView 选中色同源） */
+    /* 左侧信息流边栏：选中与焦点分离——未聚焦的选中态是灰带（VS Code 同款：
+    未聚焦选中为灰、蓝只留给焦点，$boost=#37373d 悬浮灰），聚焦态见 pane-focus */
     #main { height: 1fr; }
     #feed-nav { width: 16; height: 1fr; background: $surface; padding: 0 1; }
-    .feed-nav-item { height: 1; }
-    .feed-nav-active { background: $primary-darken-2; color: $text; text-style: bold; }
+    .feed-nav-item { height: 1; width: 1fr; }  /* 撑满列宽：选中带是整行（Static 默认 auto 只铺到文字宽） */
+    .feed-nav-active { background: $nav-sel-background; color: $text; text-style: bold; }
 
     /* 全屏方向键导航的聚焦区域（pane-focus 挂容器，见 _enter_pane）：不给整
        个区域铺色块（克制主题，层级靠灰阶）——聚焦只把该区域的选中项升满编
-       辑器蓝，与列表光标同语言 */
+       辑器蓝，与列表光标同语言；全屏任何时刻蓝色标记只有聚焦这一处 */
     #source-tabs.pane-focus .source-tab-active { background: $primary; }
     #feed-nav.pane-focus .feed-nav-active { background: $primary; }
 
-    /* 非列表态的列表（pane-aside）：焦点实际留在列表上（Tab 切站随时命中），
-       光标与 5% 聚焦提亮用 CSS 转成暗态——仿 ListView 自带的 unfocused 观感 */
+    /* 非列表态的列表（pane-aside）：焦点标记只在聚焦区域亮一处——列表光标
+       整体隐去（选中位仍记在 index 上，回列表即恢复原位），不留第二个记号 */
     #feed.pane-aside { background-tint: $foreground 0%; }
     #feed.pane-aside > ListItem.-highlight {
-        color: $block-cursor-blurred-foreground;
-        background: $block-cursor-blurred-background;
-        text-style: $block-cursor-blurred-text-style;
+        background: transparent;
+        color: $foreground;
+        text-style: none;
     }
 
     #empty-hint { display: none; padding: 1 2; }
@@ -720,28 +722,33 @@ class FeedScopeApp(App[None]):
         await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）
         self.action_refresh()
 
-    async def action_prev_feed(self) -> None:
-        if self._on_main_screen() and self._pane == "tabs":
-            await self.action_prev_source()  # 源栏态 ←/→ = 切站（与 Tab 同一条路径）
-            return
-        await self._step_feed(-1)
+    async def action_nav_left(self) -> None:
+        """← 的单点分派：源栏态切上一个站；边栏态去源栏；列表态进边栏——
+        对齐当前流、不换流（空间语义：← 永远是向左的区域移动）。"""
+        if not self._on_main_screen():
+            return  # 弹层里静默（方向键是随手按的导航键，逐键弹 toast 只有噪音）
+        if self._pane == "tabs":
+            await self.action_prev_source()  # 与 Tab 同一条切站路径
+        elif self._pane == "sidebar":
+            self._enter_pane("tabs")
+        else:
+            self._enter_pane("sidebar")
 
-    async def action_next_feed(self) -> None:
-        if self._on_main_screen() and self._pane == "tabs":
-            await self.action_next_source()
+    async def action_nav_right(self) -> None:
+        """→ 的单点分派：源栏态切下一个站；边栏态回列表；列表态抵屏幕右缘，
+        静默无事（与源栏顶、列表底的同款边界行为）。"""
+        if not self._on_main_screen():
             return
-        await self._step_feed(1)
+        if self._pane == "tabs":
+            await self.action_next_source()
+        elif self._pane == "sidebar":
+            self._enter_pane("list")
 
     async def _step_feed(self, delta: int) -> None:
-        """←/→ 切流（与详情屏 [/] 换篇同一条相对移动语义）：到边界给反馈，不静默。
+        """边栏 ↑/↓ 切流：到边即停、给反馈不静默（CLI 惯例：↑/↓ 不跳出区域）。
 
-        绑定在 App 级（焦点无关），弹层里按下静默返回——方向键是随手按的
-        导航键，弹层里逐键弹 toast 只有噪音（详情屏不会到这：屏级 ←/→ 换篇
-        绑定先命中）。
-
-        反向边界是全屏导航的跃迁点：列表态继续往左 → 聚焦左侧边栏，边栏态
-        再越界 → 上探到顶部源栏（撞墙的方向键带用户去相邻区域，而不是原地
-        报错）；正向边界右侧就是列表自身（已是活动区域），保留 toast。
+        列表态不再切流——← 是区域移动（进边栏停当前流），切流只发生在
+        边栏的 ↑/↓（纵向列表的本职）。App 级焦点无关，弹层里按下静默返回。
         """
         if not self._on_main_screen():
             return
@@ -749,10 +756,7 @@ class FeedScopeApp(App[None]):
             return
         target = self.feed_idx + delta
         if not 0 <= target < len(self.current_source.feeds):
-            if delta < 0:
-                self._enter_pane("sidebar" if self._pane == "list" else "tabs")
-            else:
-                feedback.info(self, "已是最后一个流")
+            feedback.info(self, "已是第一个流" if delta < 0 else "已是最后一个流")
             return
         await self.action_select_feed(target)
 
@@ -779,15 +783,16 @@ class FeedScopeApp(App[None]):
         if pane != "list":
             feedback.info(
                 self,
-                "顶部源栏：←→ 切站，↓ 回列表"
+                "顶部源栏：←→ 切站，↓ 进边栏"
                 if pane == "tabs"
-                else "左侧边栏：↑↓ 切流，Enter 回列表",
+                else "左侧边栏：↑↓ 切流，→ 回列表",
             )
 
     async def action_nav_up(self) -> None:
-        """↑ 的单点分派：边栏态切上一个流（首个流再 ↑ 由 _step_feed 上探源
-        栏）；源栏态抵屏幕上缘；列表态移文章选中（首条再 ↑ 跃迁源栏），焦
-        点丢了先找回。弹层/详情屏被 _on_main_screen 挡下静默。"""
+        """↑ 的单点分派：边栏态切上一个流（首个流到边即停，给反馈）；源栏
+        态抵屏幕上缘；列表态移文章选中（首条到边即停，ListView 原生夹持）。
+        CLI 惯例：↑/↓ 只在当前列表移动、绝不跳出区域。焦点丢了先找回；
+        弹层/详情屏被 _on_main_screen 挡下静默。"""
         if not self._on_main_screen():
             return
         if self._pane == "sidebar":
@@ -799,20 +804,18 @@ class FeedScopeApp(App[None]):
         if not view.has_focus:
             view.focus()  # 焦点丢失（测试置空/竞态）：↑ 先把焦点找回来
             return
-        if view.index in (None, 0):
-            self._enter_pane("tabs")  # 首条再往上 = 全屏导航的列表侧入口
-        else:
-            view.action_cursor_up()
+        view.action_cursor_up()
 
     async def action_nav_down(self) -> None:
-        """↓ 的单点分派：边栏态切下一个流；源栏态回列表；列表态移文章选中。"""
+        """↓ 的单点分派：边栏态切下一个流（末流到边给反馈）；源栏态下探
+        边栏（唯一的纵向区域移动：顶部 → 边栏）；列表态移文章选中。"""
         if not self._on_main_screen():
             return
         if self._pane == "sidebar":
             await self._step_feed(1)
             return
         if self._pane == "tabs":
-            self._enter_pane("list")
+            self._enter_pane("sidebar")
             return
         view = self.query_one("#feed", FeedListView)
         if not view.has_focus:
