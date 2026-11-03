@@ -128,9 +128,10 @@ class AnswerScreen(Screen[None]):
         await body.mount(*widgets)
 
     def _hint_widget(self) -> Static:
-        # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重
+        # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重。
+        # 只留 Footer 没有的语义增量（加载什么）；换楼层/返回是 Footer 的键位职责
         return Static(
-            f"[dim]── Ctrl+N 加载更多{self._unit} · ← → 换{self._floor_unit} · Esc 返回 ──[/dim]",
+            f"[dim]── Ctrl+N 加载更多{self._unit} ──[/dim]",
             classes="cm-hint",
         )
 

@@ -822,10 +822,12 @@ async def _run_no_comments_flow() -> None:
         # Footer 不列 enter「评论」（有评论层的源才列，对照见 _run_answer_layer_flow）
         shown = [ab.binding.key for ab in detail.active_bindings.values() if ab.binding.show]
         assert "enter" not in shown, f"无评论层的源不预告 Enter，实际 Footer 键位 {shown}"
-        # 尾行同样不列 Enter 评论段；翻页/换篇预告保留
+        # 尾行同样不列 Enter 评论段；只留 Footer 没有的语义增量——键位复读
+        # （Esc 返回/← → 换篇）会让短帖读者把尾行当成正文的一部分
         hint = str(detail.query_one("#more-hint").content)
         assert "Enter 看" not in hint, f"尾行不该预告 Enter 评论，实际 {hint.strip()!r}"
-        assert "Ctrl+N 加载更多" in hint and "Esc 返回" in hint, f"其余动线预告保留，实际 {hint.strip()!r}"
+        assert "Ctrl+N 加载更多" in hint, f"加载动线保留，实际 {hint.strip()!r}"
+        assert "Esc" not in hint and "换上" not in hint, f"键位复读归 Footer，实际 {hint.strip()!r}"
 
         # 键位隐藏但保留：误按给一句反馈（不无声），不进第三层
         await pilot.press("enter")

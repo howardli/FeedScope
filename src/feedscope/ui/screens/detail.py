@@ -130,13 +130,12 @@ class DetailScreen(Screen[None]):
             for ans in doc.answers:
                 widgets.extend(self._answer_widgets(ans))
         if self.loader.done and not doc.answers:
-            # 天生无楼层的完整文档（RSS 全文进 description_md）：没有「更多」
-            # 也没有评论层，预告换篇/返回即可；置 exhausted 让 Ctrl+N 走
-            # 「没有更多」反馈而不是空跑一次 load_more
+            # 天生无楼层的完整文档（RSS 全文 / Telegram 帖）：没有「更多」
+            # 也没有评论层，末尾只放纯 EOF 标记「（完）」——键位预告是常驻
+            # Footer 的职责，尾行复读键位会被短帖读者当成正文的一部分；
+            # 置 exhausted 让 Ctrl+N 走「没有更多」反馈而不是空跑 load_more
             self._exhausted = True
-            widgets.append(
-                Static("[dim]（完 · ← → 换上一篇/下一篇 · Ctrl+O 浏览器 · Esc 返回）[/dim]", id="no-more")
-            )
+            widgets.append(Static("[dim]（完）[/dim]", id="no-more"))
         elif self._exhausted:
             widgets.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="no-more"))
         else:
@@ -145,10 +144,12 @@ class DetailScreen(Screen[None]):
         await self.query_one("#detail-body", VerticalScroll).mount(*widgets)
 
     def _hint_widget(self) -> Static:
-        """尾行动线预告：Enter 评论段只在源有评论层时列出（Footer 键位同判定）。"""
-        segs = [f"Ctrl+N 加载更多{self._unit}", "← → 换上一篇/下一篇", "Esc 返回"]
+        """尾行动线预告：只留 Footer 没有的语义增量（按了会加载/进入什么）；
+        纯键位复读（换篇/返回）是常驻 Footer 的职责——尾行复读会被短帖
+        读者当成正文的一部分。Enter 评论段只在源有评论层时列出。"""
+        segs = [f"Ctrl+N 加载更多{self._unit}"]
         if self.source.supports_comments:
-            segs.insert(0, f"Enter 看{self._unit}的{self.source.comment_unit_label}")
+            segs.append(f"Enter 看{self._unit}的{self.source.comment_unit_label}")
         return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", id="more-hint")
 
     def _answer_widgets(self, ans: Answer) -> list[Widget]:
