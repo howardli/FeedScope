@@ -51,10 +51,10 @@ async def _run_flow(cfg, monkeypatch) -> None:
     async with app.run_test(size=(100, 40)) as pilot:
         assert await _settle(pilot, lambda: app.query_one("#empty-hint").display)
 
-        # F2 → 选中 rss 行（第五行：知乎、X、HN、V2EX、RSS）→ → 进订阅管理
+        # F2 → 选中 rss 行（第六行：知乎、X、Reddit、HN、V2EX、RSS）→ → 进订阅管理
         await pilot.press("f2")
         assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down", "down", "down")
+        await pilot.press("down", "down", "down", "down", "down")
         await pilot.press("right")
         assert await _settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         assert _rows(app) == 0, "零订阅起步"
@@ -104,3 +104,68 @@ async def _run_flow(cfg, monkeypatch) -> None:
 
 def test_subs_screen_full_flow(rss_env, monkeypatch) -> None:
     asyncio.run(_run_flow(rss_env, monkeypatch))
+
+
+# ---- Reddit 订阅流：SubsStore 分派 + about 校验 + 落盘 + 勾选同步 ----
+
+
+@pytest.fixture()
+def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """零订阅起步 + about.json 走 Mock + 假浏览器会话（判登不弹真 Chrome）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/r/rust/about.json":
+            return httpx.Response(200, json={"kind": "t5", "data": {"display_name": "rust"}}, request=request)
+        return httpx.Response(404, text="gone", request=request)
+
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text("enabled = []\n", encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+
+    from feedscope.sources import reddit as reddit_mod
+
+    class _FakeBrowser:
+        ua = "Mozilla/5.0 Chrome/131.0.0.0"
+
+    async def fake_cookies(url: str) -> dict[str, str]:
+        return {"reddit_session": "s", "token_v2": "t"}
+
+    monkeypatch.setattr(reddit_mod, "profile_cookies", fake_cookies)
+    monkeypatch.setattr(reddit_mod, "get_session", lambda: _FakeBrowser())
+    return cfg
+
+
+async def _run_reddit_flow(cfg, monkeypatch) -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        assert await _settle(pilot, lambda: app.query_one("#empty-hint").display)
+
+        # F2 → reddit 行（第三行：知乎、X、Reddit）→ → 进订阅管理（store 分派）
+        await pilot.press("f2")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("down", "down")
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
+        assert _rows(app) == 0, "零订阅起步"
+
+        # Insert 添加：贴站点地址（四形态归一在 parse 层测，这里走 URL 形态）
+        await pilot.press("insert")
+        assert await _settle(pilot, lambda: isinstance(app.screen, InputScreen))
+        assert "subreddit" in app.screen.query_one(Input).placeholder  # 文案按源注入
+        app.screen.query_one(Input).value = "https://www.reddit.com/r/rust/"
+        await pilot.press("enter")
+        assert await _settle(pilot, lambda: _rows(app) == 1), "about 校验通过后落盘"
+        from feedscope.core import config as cfg_mod
+
+        assert [f.key for f in cfg_mod.feeds_for("reddit")] == ["rust"]
+
+        # Esc 返回：reddit 本就有内置流（首页/热门），勾选保持
+        await pilot.press("escape")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        sl = app.screen.query_one(SelectionList)
+        assert "reddit" in sl.selected, "订阅管理返回后 reddit 保持勾选"
+
+
+def test_subs_screen_reddit_flow(reddit_env, monkeypatch) -> None:
+    asyncio.run(_run_reddit_flow(reddit_env, monkeypatch))

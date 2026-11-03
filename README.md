@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
-> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Hacker News、V2EX、RSS 订阅一个终端全看。
+> 终端里的信息流聚合阅读器——知乎、X（Twitter）、Reddit、Hacker News、V2EX、RSS 订阅一个终端全看。
 
 **语言**：中文 · [English](README.en.md)
 
 ## 特性
 
-- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，一个界面切换
+- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，Reddit 首页 / 热门 / 自选 subreddit，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，一个界面切换
 - **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
 - **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
 - **HN 讨论树**：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
@@ -33,6 +33,14 @@ X 推荐时间线（署名「名字 @handle」完整可见，媒体记号可点�
 X 推文详情（媒体直链、译文块、引用块）：
 
 ![X 推文详情](docs/screenshot-detail.png)
+
+Reddit 热门（元信息列「N 点 · N 评 · r/版块」，subreddit 订阅在 F2 里加）：
+
+![Reddit 热门列表](docs/screenshot-reddit.png)
+
+Reddit 帖子详情（markdown 自述正文 + 评论楼层带赞数，「[置顶]」标出版务帖）：
+
+![Reddit 详情](docs/screenshot-reddit-detail.png)
 
 HN 首页（免登录即用，「N 点 · N 评 · 作者」就是讨论热度雷达）：
 
@@ -87,7 +95,7 @@ feedscope
 | `Ctrl+O` | 浏览器打开当前条目 |
 | `F5` | 刷新 |
 | `Ctrl+U` | 账号：登录 / 登出 |
-| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS） |
+| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS / Reddit） |
 | `Esc` | 逐层返回 |
 | `Ctrl+Q` | 退出（`Ctrl+C` 连按两次兜底） |
 
@@ -95,7 +103,7 @@ feedscope
 
 ### 登录 / 登出
 
-知乎与 X 需要登录（无匿名流）；HN、V2EX 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x]`。
+知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX 与 RSS 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。
 
 ### 站点一览
 
@@ -103,6 +111,7 @@ feedscope
 | --- | --- | --- |
 | 知乎 | 热榜 / 推荐 / 关注 | ✅ |
 | X（Twitter） | 推荐 / 正在关注 | ✅ |
+| Reddit | 首页 / 热门 / 自选 subreddit | ✅ |
 | HN | 首页 / 最新 / Ask / Show | — |
 | V2EX | 热门 / 最新 | — |
 | RSS | 全部 / 每订阅一流 | — |
@@ -111,7 +120,7 @@ feedscope
 
 ```bash
 feedscope [tui]           # 启动 TUI（默认）
-feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x）
+feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x、reddit）
 feedscope probe [源 id…]  # 全源巡检：定位改版，原始样本落盘
 feedscope doctor          # 环境自检（Chrome / profile / 配置）
 feedscope rss add <url> [--key k --label 名]  # 加订阅：feed 直链 / 站点首页（自动发现）/ OPML 路径
@@ -124,10 +133,13 @@ feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合
 首次启动先弹勾选引导；之后 `F2` 随时增删。勾选落盘到用户配置（Linux 为 `~/.config/feedscope/sources.toml`，`FEEDSCOPE_CONFIG` 可换路径），也可手动编辑，改完重启生效：
 
 ```toml
-enabled = ["zhihu", "x", "hn", "v2ex", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
+enabled = ["zhihu", "x", "reddit", "hn", "v2ex", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
 
 [zhihu]
 hide = ["follow"]    # 隐藏不想看的内置流
+
+[reddit.feeds]       # subreddit 订阅表：key 即流名（r/home、r/popular 与内置流撞名的拒收）
+rust = { label = "Rust", url = "https://www.reddit.com/r/rust/" }
 
 [rss.feeds]          # RSS 订阅表：key 即流名（避免与保留字 all 撞名）
 ruanyq = { label = "阮一峰周刊", url = "https://www.ruanyifeng.com/blog/atom.xml" }
@@ -137,7 +149,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（�
 hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
 ```
 
-`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `[rss.feeds]` 订阅表。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
+`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]`）。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
 
 ### RSS 订阅
 
@@ -176,11 +188,20 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 元信息列「节点 · N 回复 · 用户名」；楼层号对齐站内楼层文化，楼层直达链接是原帖页的 `#reply` 锚点
 - 官方接口一次给全量（列表一页、回复不分页），楼层翻页零请求；正文随列表透传，打开一篇详情只花 1 个请求
 
+### Reddit
+
+需要登录（2026 年起匿名接口全线 403），数据走登录态网页 JSON 通道（`www.reddit.com` 的 `.json` 端点，与登录会话同形的请求）。行为要点：
+
+- 三层结构与 HN 同形：帖子（自述帖 markdown 直传、链接帖原文一行、媒体帖 `[图片]` / `[视频]` 记号直达原图）→ 顶层评论当楼层（`Enter` 进单条评论的回复树）
+- 元信息列「N 点 · N 评 · r/版块」；楼层带赞数、版务置顶评论带 `[置顶]` 前缀；深层讨论拍平两层、`@父作者` 标出指向（同 HN）
+- 「首页」是账号在 Reddit 站内关注版块的聚合（新账号没关注过版块时为空，属正常）；想看的版块用订阅：`F2` → Reddit 行按 `→`，输入 subreddit 名或地址（`rust`、`r/rust`、站点链接都认）即成单独的流，不必去 Reddit 网站关注
+- 评论树单请求拉全（超大帖截断），截断处显示「另有 N 条未展开」；楼层 / 评论翻页全内存切片零请求
+
 ## 免责声明
 
-本项目通过本机浏览器会话访问知乎与 X 的网页接口，仅供个人学习与研究：
+本项目通过本机浏览器会话访问知乎、X 与 Reddit 的网页接口，仅供个人学习与研究：
 
-- 请遵守所在地区法律法规及两站用户协议，账号风控风险自担
+- 请遵守所在地区法律法规及各站用户协议，账号风控风险自担
 - 不带任何内置凭据，登录态只存于本机浏览器 profile，不与第三方共享
 - 站点改版导致失效属正常损耗（`feedscope probe` 可巡检定位）；请勿用于批量抓取或商业用途
 

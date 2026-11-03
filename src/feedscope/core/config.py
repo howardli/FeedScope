@@ -1,12 +1,13 @@
-"""用户配置：sources.toml 选启用的源 + 隐藏不想看的内置信息流 + RSS 订阅表。
+"""用户配置：sources.toml 选启用的源 + 隐藏不想看的内置信息流 + 各源订阅表。
 
 - 路径：FEEDSCOPE_CONFIG 环境变量（测试、多套配置切换），缺省用户配置目录下
   sources.toml（platformdirs，Linux 为 ~/.config/feedscope/sources.toml）
 - 容错哲学：配置问题绝不挡启动——文件不存在 = 全默认；TOML 语法错 / 结构
   不符 = 警告日志 + 当作不存在（feedscope doctor 可诊断）。
 - 写入只走 save_enabled（首启引导 / F2 管理界面）：保留各源 hide 段与
-  feeds 订阅表（rss 的订阅是用户数据，覆写丢段 = 丢订阅），无法识别的键
-  丢弃；原子落盘（临时文件 + os.replace），不留半截文件。
+  feeds 订阅表（订阅是用户数据，覆写丢段 = 丢订阅；rss 的 feed 地址、
+  reddit 的 subreddit 同款），无法识别的键丢弃；原子落盘（临时文件 +
+  os.replace），不留半截文件。
 """
 
 from __future__ import annotations
@@ -75,8 +76,8 @@ def hidden_feeds(source_id: str) -> list[str]:
     return list(hidden or [])
 
 
-def rss_feeds() -> list[RssFeed]:
-    """读 rss 源的订阅表（书写顺序即侧栏顺序），结构与坏条目逐条容错。
+def feeds_for(source_id: str) -> list[RssFeed]:
+    """读某源的订阅表（书写顺序即侧栏顺序），结构与坏条目逐条容错。
 
     期望结构（label 缺省用 key；url 必填）：
 
@@ -84,19 +85,24 @@ def rss_feeds() -> list[RssFeed]:
         ruanyq = { label = "阮一峰周刊", url = "https://….com/atom.xml" }
         hn = { url = "https://hnrss.org/frontpage" }
 
-    条目不是表 / 缺 url / 与保留字 all 撞名 = 警告并跳过该条，不波及其他订阅
-    （同一容错粒度：文件级坏 = 全默认已在上层 _read，这里是条目级）。
+        [reddit.feeds]            # url 存 subreddit 站内地址，自解释
+        rust = { url = "https://www.reddit.com/r/rust/" }
+
+    条目不是表 / 缺 url = 警告并跳过该条，不波及其他订阅（同一容错粒度：
+    文件级坏 = 全默认已在上层 _read，这里是条目级）。rss 另有保留字 all
+    （聚合流名，订阅 key 撞它 = 跳过）；其他源的保留字在各源的添加入口拦
+    （reddit 的 home/popular 与内置流撞名，见 subscriptions.add_subreddit）。
     """
-    section = _read()[0].get("rss")
+    section = _read()[0].get(source_id)
     feeds_raw = section.get("feeds") if isinstance(section, dict) else None
     if feeds_raw is None:
         return []
     if not isinstance(feeds_raw, dict):
-        logger.warning("配置 [rss] feeds 应为订阅表，已忽略")
+        logger.warning("配置 [%s] feeds 应为订阅表，已忽略", source_id)
         return []
     feeds: list[RssFeed] = []
     for key, entry in feeds_raw.items():
-        if key == RSS_ALL_FEED:
+        if source_id == "rss" and key == RSS_ALL_FEED:
             logger.warning("订阅 key %r 与聚合流名 all 撞名，已跳过", key)
             continue
         if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not entry["url"]:
@@ -108,6 +114,11 @@ def rss_feeds() -> list[RssFeed]:
             label = None
         feeds.append(RssFeed(key=key, label=label or key, url=entry["url"]))
     return feeds
+
+
+def rss_feeds() -> list[RssFeed]:
+    """rss 源的订阅表（feeds_for 的 rss 特例，保留既有调用名）。"""
+    return feeds_for("rss")
 
 
 def enabled_ids() -> list[str] | None:
@@ -186,7 +197,7 @@ def _render_config(ids: list[str] | None, data: dict) -> list[str]:
     """
     lines = [
         "# FeedScope 源配置：enabled = 启用的源；各源 hide = 隐藏的信息流",
-        "# rss.feeds = RSS 订阅表（key = { label, url }）；[rss] hide 可隐藏流",
+        "# feeds = 订阅表（key = { label, url }）：rss 订 feed 地址、reddit 订 subreddit",
         "# 由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），也可手动编辑",
     ]
     if ids is not None:
@@ -231,16 +242,17 @@ def save_enabled(ids: list[str]) -> None:
     _write_config(_render_config(list(ids), _read()[0]))
 
 
-def update_rss_feeds(feeds: list[RssFeed]) -> None:
-    """整体替换 RSS 订阅表（rss 子命令的落盘路径）；enabled / hide 原样保留。
+def update_feeds(source_id: str, feeds: list[RssFeed], *, drop_enabled_when_empty: bool = False) -> None:
+    """整体替换某源的订阅表（订阅管理屏 / rss 子命令的落盘路径）；enabled / hide 原样保留。
 
-    enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺 rss
-    → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）；删到空 → 从
-    enabled 移除（空源留在启用列表只剩噪音）。enabled 未配置不动——缺省
-    本就是全启用，写了反而丢失「未配置」语义。
+    enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺该源
+    → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）。删到空是否摘
+    enabled 由 drop_enabled_when_empty 决定：rss 摘（feeds 全来自订阅，
+    没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。enabled
+    未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
     """
     data = _read()[0]
-    section = data.get("rss")
+    section = data.get(source_id)
     if not isinstance(section, dict):
         section = {}
     if feeds:
@@ -248,16 +260,21 @@ def update_rss_feeds(feeds: list[RssFeed]) -> None:
     else:
         section.pop("feeds", None)
     if section:
-        data["rss"] = section
-    elif "rss" in data:
-        del data["rss"]
+        data[source_id] = section
+    elif source_id in data:
+        del data[source_id]
     enabled = data.get("enabled")
     if isinstance(enabled, list):
-        if feeds and "rss" not in enabled:
-            enabled.append("rss")
-        if not feeds and "rss" in enabled:
-            enabled.remove("rss")
+        if feeds and source_id not in enabled:
+            enabled.append(source_id)
+        if not feeds and drop_enabled_when_empty and source_id in enabled:
+            enabled.remove(source_id)
     _write_config(_render_config(enabled, data))
+
+
+def update_rss_feeds(feeds: list[RssFeed]) -> None:
+    """整体替换 rss 订阅表（update_feeds 的 rss 特例，保留既有调用名）。"""
+    update_feeds("rss", feeds, drop_enabled_when_empty=True)
 
 
 def describe() -> str:
@@ -282,5 +299,5 @@ def describe() -> str:
     if n_sources:
         parts.append(f"{n_sources} 源覆写：{n_hidden} 隐藏")
     if n_feeds:
-        parts.append(f"RSS {n_feeds} 订阅")
+        parts.append(f"{n_feeds} 订阅")
     return " · ".join(parts) if parts else "未创建（全部用内置默认）"

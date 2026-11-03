@@ -7,9 +7,9 @@
 屏不读写配置：选择生效路径（保存 + 重建站点栏）集中在 App（_start /
 action_manage_sources）。
 
-可订阅源（Source.subscribable，目前 rss）在此层还有二级入口：→ 进
-订阅管理屏，改动即时落盘；返回后这里只同步该源勾选（有订阅 = 勾上，
-空 = 取消）并回调 App 标脏。
+可订阅源（Source.subscribable，目前 rss 与 reddit）在此层还有二级入口：
+→ 进订阅管理屏（SubsStore 按源分派），改动即时落盘；返回后这里只同步
+该源勾选（有订阅 = 勾上，空 = 取消）并回调 App 标脏。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
 from feedscope.core.registry import source_classes
+from feedscope.subscriptions import store_for
 from feedscope.ui import feedback
 from feedscope.ui.screens.subscriptions import SubscriptionsScreen
 
@@ -143,7 +144,7 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
         self.run_worker(self._manage_feeds(sid, cls))
 
     async def _manage_feeds(self, sid: str, cls: type) -> None:
-        changed = await self.app.push_screen(SubscriptionsScreen(cls.label), wait_for_dismiss=True)
+        changed = await self.app.push_screen(SubscriptionsScreen(store_for(sid)), wait_for_dismiss=True)
         if not changed:
             return
         self._sync_row(sid)
@@ -181,5 +182,5 @@ class ManageSourcesScreen(SourceSetupScreen):
     """F2 源管理：勾选 = 启用、取消勾选 = 停用，保存后立即生效。"""
 
     title_text = "源管理"
-    prompt_text = "空格/Enter 勾选；序号即站点顺序，取消再勾选 = 移到末尾；→ 管理订阅（RSS）"
+    prompt_text = "空格/Enter 勾选；序号即站点顺序，取消再勾选 = 移到末尾；→ 管理订阅"
     confirm_label = "保存"

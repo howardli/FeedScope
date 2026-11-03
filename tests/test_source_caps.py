@@ -6,16 +6,18 @@ from feedscope.core.registry import all_sources
 
 def test_login_capability_declared() -> None:
     by_id = {s.source_id: s for s in all_sources()}
-    # 需要登录的源：知乎（扫码）、X（账号密码）
-    for sid in ("zhihu", "x"):
+    # 需要登录的源：知乎（扫码）、X（账号密码）、Reddit（账号密码 + 2FA）
+    for sid in ("zhihu", "x", "reddit"):
         assert by_id[sid].login_url and by_id[sid].login_cookie
 
 
 def test_logout_cookies_declared() -> None:
     by_id = {s.source_id: s for s in all_sources()}
-    # 登出要清掉判登 cookie：知乎是 z_c0，X 是 auth_token+ct0 成对
+    # 登出要清掉判登 cookie：知乎是 z_c0，X 是 auth_token+ct0 成对；
+    # Reddit 两枚都清（token_v2 是部分账号的迁移形态）
     assert by_id["zhihu"].logout_cookies == ["z_c0"]
     assert by_id["x"].logout_cookies == ["auth_token", "ct0"]
+    assert by_id["reddit"].logout_cookies == ["reddit_session", "token_v2"]
 
 
 def test_zhihu_feed_declaration() -> None:
@@ -41,6 +43,7 @@ def test_detail_unit_label_per_source() -> None:
     by_id = {s.source_id: s for s in all_sources()}
     assert by_id["zhihu"].detail_unit_label == "回答"
     assert by_id["x"].detail_unit_label == "回复"
+    assert by_id["reddit"].detail_unit_label == "评论"
     assert by_id["hn"].detail_unit_label == "评论"
     assert by_id["v2ex"].detail_unit_label == "回复"
     assert by_id["rss"].detail_unit_label == "正文"
@@ -57,13 +60,28 @@ def test_rss_source_declaration() -> None:
 
 def test_comments_capability_declared() -> None:
     by_id = {s.source_id: s for s in all_sources()}
-    # 评论层（DetailLoader.open_comments，详情屏 Enter）知乎与 HN 有：
+    # 评论层（DetailLoader.open_comments，详情屏 Enter）知乎/HN/Reddit 有：
     # X/V2EX 的详情到回复为止、RSS 全文无楼层——UI 按此声明决定是否预告 Enter
     assert by_id["zhihu"].supports_comments
     assert by_id["hn"].supports_comments
+    assert by_id["reddit"].supports_comments
     assert not by_id["x"].supports_comments
     assert not by_id["v2ex"].supports_comments
     assert not by_id["rss"].supports_comments
+
+
+def test_reddit_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    r = by_id["reddit"]
+    # 测试配置零订阅：内置流兜底（与 RSS 的纯订阅合成不同）
+    assert r.feeds == ["home", "popular"]
+    assert r.feed_labels == {"home": "首页", "popular": "热门"}
+    assert r.supports_detail and r.detail_kinds == frozenset({"link", "self"})  # 全部条目进终端详情
+    assert r.subscribable  # [reddit.feeds] 订阅表：F2 里 → 进订阅管理
+    assert r.login_url == "https://www.reddit.com/login"
+    assert r.login_cookie == "reddit_session"
+    # HN 式三层词汇：楼层叫「评论」（顶层讨论串）、楼层内叫「回复」
+    assert r.detail_unit_label == "评论" and r.comment_unit_label == "回复"
 
 
 def test_hn_source_declaration() -> None:
@@ -94,5 +112,5 @@ def test_v2ex_source_declaration() -> None:
 
 
 def test_registry_order_is_tab_order() -> None:
-    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，rss 聚合器殿后）
-    assert [s.source_id for s in all_sources()] == ["zhihu", "x", "hn", "v2ex", "rss"]
+    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，登录源聚堆，rss 聚合器殿后）
+    assert [s.source_id for s in all_sources()] == ["zhihu", "x", "reddit", "hn", "v2ex", "rss"]

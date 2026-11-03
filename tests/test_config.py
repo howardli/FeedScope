@@ -190,8 +190,9 @@ def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_describe_reports_rss_subscriptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_describe_reports_subscriptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _use_config(
-        monkeypatch, tmp_path, '[rss.feeds]\na = { url = "https://a.test/f" }\nb = { url = "https://b.test/f" }\n'
+        monkeypatch, tmp_path, '[rss.feeds]\na = { url = "https://a.test/f" }\n[reddit.feeds]\nb = { url = "https://www.reddit.com/r/rust/" }\n'
     )
-    assert "RSS 2 订阅" in describe()
+    d = describe()
+    assert "2 订阅" in d  # 各源订阅合计（rss 与 reddit 的 feeds 段都算）

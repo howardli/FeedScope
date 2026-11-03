@@ -1,14 +1,14 @@
-"""RSS 订阅管理屏：F2 里 → 进入，列表 + 增删改名，改动即时落盘。
+"""订阅管理屏：F2 里 → 进入，列表 + 增删改名，改动即时落盘（源无关）。
 
 - 键位全非打印：↑↓ 选择、Enter 改名（走 ListView 的 Selected，与主列表
   同一条路径）、Insert 添加、Delete 删除、Esc 返回
-- 添加框是全应用唯一的文本输入：一个入口两用——http(s) 地址单条添加
-  （站点首页自动发现 feed），本地路径当 OPML 批量导入（从 Finder 拖进
-  终端即得路径）；分流逻辑在 subscriptions.add_from_input，与 CLI 同源
-- 改动即时落盘（update_rss_feeds 原子写）：订阅是数据不是待确认的草稿，
-  Esc 只退出不回滚；删除有轻确认，误删可重新添加（标题会再拉一次）
-- 业务编排全部复用顶层 subscriptions 模块，本屏只做展示与键位；订阅概念
-  目前只有 rss 一个实现（Source.subscribable 门控入口）
+- 添加框是全应用唯一的文本输入：可输入的形态因源而异（rss 收 feed 地址 /
+  站点首页 / OPML 路径，reddit 收 subreddit 名或地址），文案与分流都在
+  各源的 SubsStore 里，本屏零源特判
+- 改动即时落盘（config.update_feeds 原子写）：订阅是数据不是待确认的草稿，
+  Esc 只退出不回滚；删除有轻确认，误删可重新添加（显示名会再拉一次）
+- 业务编排全部复用顶层 subscriptions 模块，本屏只做展示与键位；源的差异
+  收在 SubsStore 适配器（Source.subscribable 门控入口 + store_for 分派）
 """
 
 from __future__ import annotations
@@ -22,14 +22,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
-from feedscope.core import config
-from feedscope.core.config import RssFeed
-from feedscope.subscriptions import (
-    SubscriptionError,
-    add_from_input,
-    remove_feed,
-    rename_feed,
-)
+from feedscope.core.config import RssFeed  # 仅类型注解用（列表行的 key/label/url 三段）
+from feedscope.subscriptions import SubscriptionError, SubsStore
 from feedscope.ui import feedback
 
 
@@ -140,20 +134,17 @@ class SubscriptionsScreen(ModalScreen[bool]):
     #subs-actions Button { margin-right: 1; }
     """
 
-    def __init__(self, source_label: str) -> None:
+    def __init__(self, store: SubsStore) -> None:
         super().__init__()
-        self._label = source_label
+        self._store = store
         self._changed = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="subs-dialog"):
-            yield Label(f"{self._label} 订阅管理", id="subs-title")
+            yield Label(f"{self._store.label} 订阅管理", id="subs-title")
             yield ListView(id="subs-list")
             yield Label("", id="subs-empty")
-            yield Label(
-                "↑↓ 选择 · Enter 改名 · Insert 添加（地址 / 首页 / OPML 路径）· Delete 删除",
-                id="subs-hint",
-            )
+            yield Label(self._store.hint, id="subs-hint")
             with Horizontal(id="subs-actions"):
                 yield Button("添加", id="subs-add", variant="primary")
                 yield Button("改名", id="subs-rename")
@@ -169,7 +160,7 @@ class SubscriptionsScreen(ModalScreen[bool]):
         view = self.query_one("#subs-list", ListView)
         idx = view.index
         await view.remove_children()
-        feeds = config.rss_feeds()
+        feeds = self._store.feeds()
         if feeds:
             await view.mount(
                 *[
@@ -186,13 +177,13 @@ class SubscriptionsScreen(ModalScreen[bool]):
             self.query_one("#subs-empty", Label).update("")
         else:
             view.display = False
-            self.query_one("#subs-empty", Label).update("还没有订阅 · Insert 添加（可粘贴 OPML 路径）")
+            self.query_one("#subs-empty", Label).update(self._store.empty)
         view.focus()
 
     def _current(self) -> RssFeed | None:
         """当前选中的订阅（列表顺序 = 配置顺序，索引即位）。"""
         view = self.query_one("#subs-list", ListView)
-        feeds = config.rss_feeds()
+        feeds = self._store.feeds()
         if view.index is None or not feeds or view.index >= len(feeds):
             return None
         return feeds[view.index]
@@ -204,16 +195,13 @@ class SubscriptionsScreen(ModalScreen[bool]):
 
     async def _add_flow(self) -> None:
         text = await self.app.push_screen(
-            InputScreen(
-                "添加订阅",
-                placeholder="RSS/Atom 地址、站点首页或 OPML 文件路径（可从 Finder 拖入终端）",
-            ),
+            InputScreen("添加订阅", placeholder=self._store.add_placeholder),
             wait_for_dismiss=True,
         )
         if not text:
             return
         try:
-            _added, summary = await add_from_input(text)
+            _added, summary = await self._store.add(text)
         except SubscriptionError as exc:
             feedback.warn(self.app, str(exc), title="添加失败")
             return
@@ -236,7 +224,7 @@ class SubscriptionsScreen(ModalScreen[bool]):
             ConfirmModal(f"删除订阅「{label}」？", confirm_label="删除"), wait_for_dismiss=True
         ):
             return
-        if remove_feed(key) is not None:
+        if self._store.remove(key) is not None:
             self._changed = True
             await self._rebuild()
             feedback.info(self.app, f"已删除 {label}（想看回来可重新添加）")
@@ -254,7 +242,7 @@ class SubscriptionsScreen(ModalScreen[bool]):
         )
         if not text:
             return
-        if rename_feed(key, text) is None:
+        if self._store.rename(key, text) is None:
             feedback.info(self.app, "名字没变（空名或订阅已不存在）")
             return
         self._changed = True

@@ -454,6 +454,168 @@ class DemoHnDetail(DetailLoader):
         pass
 
 
+# ---- Reddit（编造的帖子与评论树，形态对齐 sources/reddit/parse 产物）----
+
+_REDDIT = [
+    ("Rust 1.85 released: let chains and 2024 edition goodies", "1.2 万 点 · 892 评 · r/rust"),
+    ("Ask r/vim: how do you read feeds without leaving the editor?", "1.5 万 点 · 762 评 · r/vim"),
+    ("SQLite 3.50 shipped — small but dense release notes as always", "8341 点 · 412 评 · r/sqlite"),
+    ("I ported my blog off Next.js to 40 lines of shell script", "2947 点 · 187 评 · r/webdev"),
+    ("Postgres 19 delay explained by core team member", "8943 点 · 764 评 · r/PostgreSQL"),
+    ("Show r/rust: a TUI that aggregates every feed I read in one terminal", "1204 点 · 96 评 · r/rust"),
+    ("The best keyboard for programming is the one already on your laptop", "7643 点 · 892 评 · r/keyboards"),
+    ("Why is every CLI tool rewriting itself in Rust — and should I care?", "6720 点 · 531 评 · r/unix"),
+]
+
+
+def _reddit_item(title: str, meta: str, kind: str = "link") -> FeedItem:
+    return FeedItem(
+        source="reddit",
+        id=str(abs(hash(title)) % 10**7),
+        title=title,
+        url="https://www.reddit.com/r/rust/comments/demo/x/",
+        kind=kind,
+        meta=meta,
+    )
+
+
+class _DemoCommentsLoader(CommentLoader):
+    """楼层回复树 stub：内存切片（形态对齐 RedditCommentsLoader）。"""
+
+    def __init__(self, comments: list[Comment]) -> None:
+        self.comments = comments
+        self._rest: list[Comment] = []
+
+    @property
+    def done(self) -> bool:
+        return True
+
+    async def load_more(self) -> list[Comment]:
+        return []
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoRedditDetail(DetailLoader):
+    """Reddit 帖子详情 stub：markdown 自述正文 + 评论楼层（赞数/回复数/置顶）。"""
+
+    def __init__(self) -> None:
+        self._floors = [
+            (
+                Answer(
+                    author="rust-mod-team",
+                    votes="赞 156",
+                    content_md="[置顶] 1.85 discussion megathread — keep release questions here.",
+                    time="2026-11-03 09:02",
+                    url="https://www.reddit.com/r/rust/comments/demo/x/c_mod/",
+                    comment_count="4 条回复",
+                ),
+                [
+                    Comment(
+                        author="orbiting_atom",
+                        votes="赞 22",
+                        content_md="Megathread appreciated, my upgrade went smooth on macOS.",
+                        time="2026-11-03 09:11",
+                    ),
+                ],
+            ),
+            (
+                Answer(
+                    author="borrowchk_survivor",
+                    votes="赞 1842",
+                    content_md=(
+                        "Let chains finally land and suddenly half my `let else` ladders read "
+                        "like prose. The edition cleanup is the quiet star here."
+                    ),
+                    time="2026-11-03 09:20",
+                    url="https://www.reddit.com/r/rust/comments/demo/x/c_let/",
+                    comment_count="12 条回复",
+                ),
+                [
+                    Comment(
+                        author="async_wizard",
+                        votes="赞 341",
+                        content_md="Same. Combined with `if let` chains our parser shed 200 lines.",
+                        time="2026-11-03 09:33",
+                        replies=[
+                            Comment(
+                                author="borrowchk_survivor",
+                                votes="赞 88",
+                                content_md="@async_wizard：careful with chains in `#[async_recursion]`, hit a borrow checker wall there.",
+                                time="2026-11-03 09:41",
+                            ),
+                        ],
+                    ),
+                    Comment(
+                        author="edition_migrator",
+                        votes="赞 129",
+                        content_md="cargo fix --edition migrated a 40k-line workspace with 6 manual touches. Wild.",
+                        time="2026-11-03 10:05",
+                    ),
+                ],
+            ),
+            (
+                Answer(
+                    author="c_curious",
+                    votes="赞 47",
+                    content_md="Serious question from a C dev: does let chains change codegen at all, or is it purely sugar?",
+                    time="2026-11-03 10:12",
+                    url="https://www.reddit.com/r/rust/comments/demo/x/c_q/",
+                    comment_count="",
+                ),
+                [],
+            ),
+        ]
+        self.doc = DetailDoc(
+            title="Rust 1.85 released: let chains and 2024 edition goodies",
+            meta="1.2 万 点 · 892 评 · r/rust · u/rust_release_bot",
+            time="2026-11-03 08:55",
+            description_md=(
+                "Highlights from the announcement:\n\n"
+                "- `let` chains stabilized — `if let Some(x) = a && let Some(y) = b` now just works\n"
+                "- 2024 edition migration: `cargo fix --edition`\n"
+                "- `#[expect]` attribute lands alongside `#[allow]`\n\n"
+                "Discussion megathread below, blog post: [原文](https://blog.rust-lang.org/2026/11/03/Rust-1.85.html)"
+            ),
+            answers=[f for f, _ in self._floors],
+        )
+
+    @property
+    def done(self) -> bool:
+        return True
+
+    async def load_more(self) -> list[Answer]:
+        return []
+
+    async def open_comments(self, index: int) -> CommentLoader:
+        return _DemoCommentsLoader(self._floors[index][1])
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoReddit(Source):
+    source_id = "reddit"
+    label = "Reddit"
+    supports_detail = True
+    supports_comments = True
+    subscribable = True
+    feeds: ClassVar[list[str]] = ["home", "popular"]
+    feed_labels: ClassVar[dict[str, str]] = {"home": "首页", "popular": "热门"}
+    detail_kinds: ClassVar[frozenset[str]] = frozenset({"link", "self"})
+    detail_unit_label = "评论"
+    comment_unit_label = "回复"
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        return StaticFeedLoader(
+            [_reddit_item(t, m, "self" if i == 0 else "link") for i, (t, m) in enumerate(_REDDIT)]
+        )
+
+    async def open_detail(self, item: FeedItem) -> DetailLoader:
+        return DemoRedditDetail()
+
+
 class DemoHn(Source):
     source_id = "hn"
     label = "HN"
@@ -588,6 +750,15 @@ async def _shots() -> None:
             await pilot.pause()
         _emit(app, "screenshot-detail")
         await pilot.press("escape")  # 回 X 列表
+        await pilot.press("tab")  # Tab 切到 Reddit
+        for _ in range(6):
+            await pilot.pause()
+        _emit(app, "screenshot-reddit")
+        await pilot.press("enter")  # 进帖子详情（markdown 自述 + 置顶/赞数评论楼层）
+        for _ in range(8):
+            await pilot.pause()
+        _emit(app, "screenshot-reddit-detail")
+        await pilot.press("escape")  # 回 Reddit 列表
         await pilot.press("tab")  # Tab 切到 HN
         for _ in range(6):
             await pilot.pause()
@@ -624,13 +795,14 @@ def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
     # （引导是交互弹层，自动化流程过不去）；PREWARM 关掉不拉真 Chrome
     cfg = DOCS.parent / ".screenshot-sources.toml"
-    cfg.write_text('enabled = ["zhihu", "x", "hn", "v2ex"]\n', encoding="utf-8")
+    cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
     app_mod.PREWARM = False
     saved = dict(_REGISTRY)
     _REGISTRY.clear()
     _REGISTRY[DemoZhihu.source_id] = DemoZhihu
     _REGISTRY[DemoX.source_id] = DemoX
+    _REGISTRY[DemoReddit.source_id] = DemoReddit
     _REGISTRY[DemoHn.source_id] = DemoHn
     _REGISTRY[DemoV2ex.source_id] = DemoV2ex
     try:
