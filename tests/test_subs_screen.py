@@ -169,3 +169,31 @@ async def _run_reddit_flow(cfg, monkeypatch) -> None:
 
 def test_subs_screen_reddit_flow(reddit_env, monkeypatch) -> None:
     asyncio.run(_run_reddit_flow(reddit_env, monkeypatch))
+
+
+# ---- 勾选零订阅的可订阅源：保存成功但空源不进 Tab，必须有下一步指引 ----
+
+
+async def _run_empty_telegram_flow(cfg, monkeypatch) -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        assert await _settle(pilot, lambda: app.query_one("#empty-hint").display)
+
+        # F2 → 第七行（Telegram，零订阅）→ 空格勾选 → 保存
+        await pilot.press("f2")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("down", "down", "down", "down", "down", "down")
+        await pilot.press("space")
+        await pilot.click("#setup-confirm")
+        assert await _settle(pilot, lambda: not isinstance(app.screen, ManageSourcesScreen))
+
+        from feedscope.core import config as cfg_mod
+
+        assert cfg_mod.enabled_ids() and "telegram" in cfg_mod.enabled_ids()  # 勾选确实落盘
+        assert "telegram" not in [s.source_id for s in app.sources]  # 零订阅不进 Tab（既有语义）
+        notes = list(getattr(app, "_notifications", []))
+        assert any("还没有订阅" in str(n.message) for n in notes), "给下一步指引，而不是看起来没生效"
+
+
+def test_empty_subscribable_hint_on_save(rss_env, monkeypatch) -> None:
+    asyncio.run(_run_empty_telegram_flow(rss_env, monkeypatch))

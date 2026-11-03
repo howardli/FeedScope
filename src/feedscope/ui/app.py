@@ -358,6 +358,7 @@ class FeedScopeApp(App[None]):
             # 若此处走 _apply_enabled 的 action_refresh（default 组 exclusive），
             # 会把还在 await 的自己取消在「旧子项已摘、新子项未挂」的中间态
             self._rebuild_enabled(chosen)
+            self._hint_empty_subscribables(chosen)
         await self._bootstrap()
 
     async def _bootstrap(self) -> None:
@@ -414,9 +415,19 @@ class FeedScopeApp(App[None]):
         取消，见 action_manage_sources）。
         """
         self._rebuild_enabled(ids)
+        self._hint_empty_subscribables(ids)
         await self._render_source_tabs()
         await self._render_feed_sidebar()
         self.action_refresh()
+
+    def _hint_empty_subscribables(self, ids: list[str]) -> None:
+        """勾了零订阅的可订阅源：给下一步指引（rss/telegram 的 feeds 全来自
+        订阅表，零订阅 = 保存成功也不进 Tab——没有这条提示用户只看到「没生效」）。"""
+        classes = {cls.source_id: cls for cls in source_classes()}
+        for sid in ids:
+            cls = classes.get(sid)
+            if cls is not None and cls.subscribable and not cls().feeds:
+                feedback.info(self, f"{cls.label} 已启用但还没有订阅——F2 里选中它按 → 添加")
 
     # ---- 顶部 tab 条 / 左侧信息流边栏（点击与键盘共用同一条动作路径）----
 
