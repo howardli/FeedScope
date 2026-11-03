@@ -89,7 +89,7 @@ def test_hn_source_declaration() -> None:
     by_id = {s.source_id: s for s in all_sources()}
     h = by_id["hn"]
     assert h.feeds == ["front", "new", "ask", "show"]
-    assert h.feed_labels == {"front": "首页", "new": "最新", "ask": "Ask", "show": "Show"}
+    assert h.feed_labels == {"front": "首页", "new": "最新", "ask": "提问", "show": "展示"}
     assert h.supports_detail
     assert h.detail_kinds == frozenset({"story", "ask", "show"})  # 全部条目进终端详情
     assert not h.login_url and not h.logout_cookies  # 无登录生态（公开索引 API）
