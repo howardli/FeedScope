@@ -12,7 +12,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key, Resize
 from textual.message import Message
-from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Static
@@ -25,6 +24,7 @@ from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources, source_classes
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.ui import feedback
+from feedscope.ui.focus_nav import ArrowModalScreen
 from feedscope.ui.layout import META_COL_MAX, META_COL_SPARE, RESIZE_DEBOUNCE, list_title_width
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
@@ -135,6 +135,12 @@ class FeedListView(ListView):
         Binding("up", "app.nav_up", show=False),
         Binding("down", "app.nav_down", show=False),
         Binding("enter", "app.nav_enter", show=False),
+        # home/end/pageup/pagedown 原生是列表视口滚动：键盘在边栏/源栏时
+        # 滚一个看不见的列表违反「焦点在哪键就作用在哪」，一并改派分派
+        Binding("home", 'app.nav_scroll("home")', show=False),
+        Binding("end", 'app.nav_scroll("end")', show=False),
+        Binding("pageup", 'app.nav_scroll("pageup")', show=False),
+        Binding("pagedown", 'app.nav_scroll("pagedown")', show=False),
     ]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -160,7 +166,7 @@ class FeedListView(ListView):
             self._resize_timer = None
 
 
-class AccountScreen(ModalScreen[bool]):
+class AccountScreen(ArrowModalScreen[bool]):
     """账号操作弹框：登录 / 登出一个源。返回 True=确认、False=取消。
 
     只在「选择」阶段可见；确认后即 dismiss，真正的有头登录 / 清 cookie 由
@@ -206,9 +212,10 @@ class FeedScopeApp(App[None]):
         # 列表上（主屏常态）时由 FeedListView 的同键改派送来（压过原生选中/
         # 移动），焦点丢失时 App 级直达同一条动作；弹层/详情屏由
         # _on_main_screen 守卫静默（方向键是随手按的导航键）。
-        # CLI 惯例的空间语义：↑/↓ 只在聚焦区域的纵向列表里移动选中、到边
-        # 即停（绝不跳出区域）；区域移动走横向与 ↓（列表 ← 进边栏、边栏
-        # → 回列表 / ← 去源栏、源栏 ↓ 下探边栏）；列表 → 抵屏幕右缘无事。
+        # CLI 惯例的空间语义：↑/↓ 在纵向列表里移动选中；首行再 ↑ 上探源栏
+        # （顶部区域在所有内容之上；源栏 ↓ 下探边栏，与边栏首流 ↑ 互逆）；
+        # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
+        # 列表 → 抵屏幕右缘无事。
         # 详情/评论屏的 ←/→ 换篇在各屏绑定，屏级先于 App 级命中，互不干扰。
         Binding("ctrl+q", "quit", "退出", priority=True),
         Binding("f5", "refresh", "刷新"),
@@ -745,7 +752,8 @@ class FeedScopeApp(App[None]):
             self._enter_pane("list")
 
     async def _step_feed(self, delta: int) -> None:
-        """边栏 ↑/↓ 切流：到边即停、给反馈不静默（CLI 惯例：↑/↓ 不跳出区域）。
+        """边栏 ↑/↓ 切流：末流到边给反馈；首个流再 ↑ 上探源栏（与列表首条
+        ↑ 同规——顶部区域在所有内容之上；源栏 ↓ 下探与之互逆）。
 
         列表态不再切流——← 是区域移动（进边栏停当前流），切流只发生在
         边栏的 ↑/↓（纵向列表的本职）。App 级焦点无关，弹层里按下静默返回。
@@ -756,7 +764,10 @@ class FeedScopeApp(App[None]):
             return
         target = self.feed_idx + delta
         if not 0 <= target < len(self.current_source.feeds):
-            feedback.info(self, "已是第一个流" if delta < 0 else "已是最后一个流")
+            if delta < 0:
+                self._enter_pane("tabs")  # 首个流再 ↑：上探源栏
+            else:
+                feedback.info(self, "已是最后一个流")
             return
         await self.action_select_feed(target)
 
@@ -789,10 +800,10 @@ class FeedScopeApp(App[None]):
             )
 
     async def action_nav_up(self) -> None:
-        """↑ 的单点分派：边栏态切上一个流（首个流到边即停，给反馈）；源栏
-        态抵屏幕上缘；列表态移文章选中（首条到边即停，ListView 原生夹持）。
-        CLI 惯例：↑/↓ 只在当前列表移动、绝不跳出区域。焦点丢了先找回；
-        弹层/详情屏被 _on_main_screen 挡下静默。"""
+        """↑ 的单点分派：边栏态切上一个流（首个流再 ↑ 上探源栏，由
+        _step_feed 分派）；源栏态抵屏幕上缘；列表态移文章选中（首条再
+        ↑ 上探源栏——顶部区域在所有内容之上）。焦点丢了先找回；弹层/
+        详情屏被 _on_main_screen 挡下静默。"""
         if not self._on_main_screen():
             return
         if self._pane == "sidebar":
@@ -804,7 +815,10 @@ class FeedScopeApp(App[None]):
         if not view.has_focus:
             view.focus()  # 焦点丢失（测试置空/竞态）：↑ 先把焦点找回来
             return
-        view.action_cursor_up()
+        if view.index in (None, 0):
+            self._enter_pane("tabs")  # 首条再 ↑：上探源栏
+        else:
+            view.action_cursor_up()
 
     async def action_nav_down(self) -> None:
         """↓ 的单点分派：边栏态切下一个流（末流到边给反馈）；源栏态下探
@@ -845,6 +859,23 @@ class FeedScopeApp(App[None]):
             return
         if self._pane != "list":
             self._enter_pane("list")
+
+    async def action_nav_scroll(self, key: str) -> None:
+        """home/end/pageup/pagedown：列表视口滚动，只在列表态生效——键盘
+        在边栏/源栏时去滚一个看不见的列表，违反「焦点在哪键就作用在哪」。
+        """
+        if not self._on_main_screen() or self._pane != "list":
+            return
+        view = self.query_one("#feed", FeedListView)
+        fn = {
+            "home": view.action_scroll_home,
+            "end": view.action_scroll_end,
+            "pageup": view.action_page_up,
+            "pagedown": view.action_page_down,
+        }[key]
+        maybe = fn()  # 新版 Textual 的滚动动作返回 AwaitComplete，可等可不等
+        if maybe is not None and hasattr(maybe, "__await__"):
+            await maybe
 
     def action_open_browser(self) -> None:
         item = self.current_item()

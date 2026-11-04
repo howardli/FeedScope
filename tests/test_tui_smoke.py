@@ -954,11 +954,11 @@ def test_keys_focus_free(stub_registry) -> None:
 
 
 async def _run_pane_navigation_flow() -> None:
-    """方向键的 CLI 惯例语义：↑/↓ 只在聚焦区域的纵向列表里移动选中、到边
-    即停给反馈（绝不跳出区域）；区域移动走横向与 ↓——列表 ← 进边栏（停当
-    前流）、→ 抵右缘无事，边栏 → 回列表、← 去源栏，源栏 ←→ 就地切站、↓
-    下探边栏；Enter/Esc 随时回列表；切站后键盘先落边栏；Tab 连按仍一次一
-    键地连续切站。"""
+    """方向键的 CLI 惯例语义：↑/↓ 在当前列表里移动选中，任何区域的首行
+    再 ↑ 都上探源栏（顶部区域在所有内容之上；源栏 ↓ 下探边栏与之互逆）；
+    其余区域移动走横向——列表 ← 进边栏（停当前流）、→ 抵右缘无事，边栏
+    → 回列表、← 去源栏，源栏 ←→ 就地切站；Enter/Esc 随时回列表；切站后
+    键盘先落边栏；Tab 连按仍一次一键地连续切站。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         assert await _settle(pilot, lambda: len(app.items) == 3)
@@ -967,19 +967,17 @@ async def _run_pane_navigation_flow() -> None:
         nav = app.query_one("#feed-nav")
         assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus")
 
-        # 列表态 ↑/↓ 移文章、到边即停（CLI 惯例：不跳出区域）；→ 抵右缘无事
+        # 列表态 ↑/↓ 移文章；首条再 ↑ 上探源栏；→ 抵右缘无事
         await pilot.press("down")
         assert app.query_one("#feed").index == 1, "↓ 移文章"
-        await pilot.press("up", "up")  # 回首条 + 首条上再按
+        await pilot.press("up")  # 回首条
         await pilot.pause()
-        assert app.query_one("#feed").index == 0 and app._pane == "list", "↑ 首条到边即停"
+        assert app.query_one("#feed").index == 0 and app._pane == "list", "↑ 移文章"
         await pilot.press("right")
         await pilot.pause()
         assert app._pane == "list" and app.feed_idx == 0, "列表 → 抵右缘无事"
-
-        # 区域移动走横向：列表 ←← 经边栏到源栏（每步有指路、焦点留在列表）
-        await pilot.press("left", "left")
-        assert app._pane == "tabs", "列表 ←← → 源栏（经边栏）"
+        await pilot.press("up")  # 首条再 ↑ → 上探源栏
+        assert app._pane == "tabs", "列表首条 ↑ → 源栏"
         assert tabs.has_class("pane-focus"), "源栏聚焦高亮"
         assert app.query_one("#feed").has_focus, "焦点留在列表（Tab 切站随时命中）"
         assert app.query_one("#feed").has_class("pane-aside"), "非列表态列表光标隐去"
@@ -1004,11 +1002,10 @@ async def _run_pane_navigation_flow() -> None:
         await pilot.press("down")
         assert await _settle(pilot, lambda: app.feed_idx == 1 and app._pane == "sidebar"), "边栏态 ↓ 切流"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
-        await pilot.press("up", "up")  # 回首流 + 首流上再按
-        assert await _settle(
-            pilot,
-            lambda: "已是第一个流" in _last_notification(app) and app.feed_idx == 0 and app._pane == "sidebar",
-        ), "边栏 ↑ 首流到边即停（给反馈不跳区域）"
+        await pilot.press("up")  # 回首流
+        assert await _settle(pilot, lambda: app.feed_idx == 0 and app._pane == "sidebar"), "边栏 ↑ 切回流"
+        await pilot.press("up")  # 首流再 ↑ → 上探源栏（边栏正上方，与源栏 ↓ 互逆）
+        assert app._pane == "tabs", "边栏首流 ↑ → 源栏"
         await pilot.press("escape")
         assert app._pane == "list" and app.query_one("#feed").has_focus, "Esc 逐层返回：先回列表"
 
@@ -1027,6 +1024,19 @@ async def _run_pane_navigation_flow() -> None:
         assert app._pane == "tabs", "边栏态 ← → 源栏（空间移动，不切流）"
         await pilot.press("escape")
         assert app._pane == "list" and app.query_one("#feed").has_focus, "Esc 回列表"
+
+        # home/end/pageup/pagedown 是列表视口滚动键：键盘在边栏时不滚看不见的
+        # 列表（键只作用在聚焦区域），回列表后照常滚动不报错
+        await pilot.press("left")
+        assert app._pane == "sidebar"
+        await pilot.press("pageup", "home", "end", "pagedown")
+        await pilot.pause()
+        assert app._pane == "sidebar" and app.feed_idx == 0, "边栏态翻页键不碰列表也不动流"
+        await pilot.press("enter")
+        assert app._pane == "list"
+        await pilot.press("pageup", "home", "pagedown")
+        await pilot.pause()
+        assert app._pane == "list" and len(app.items) == 3, "列表态翻页键照常（视口滚动不炸）"
 
         # 切站落边栏：Tab/Shift+Tab 切完键盘先停在边栏（先挑流），连按一次一
         # 键地切站（焦点留在列表，不退化成焦点轮换），边栏 Enter 回列表
@@ -1066,3 +1076,56 @@ async def _run_pane_navigation_flow() -> None:
 
 def test_pane_navigation_flow(two_source_registry) -> None:
     asyncio.run(_run_pane_navigation_flow())
+
+
+# ---- 弹层方向键焦点移动：列表到底 ↓ 进按钮行，←/→ 平移，↑ 回列表 ----
+
+
+async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
+    """全弹层与主屏同一套空间语义：F2 里列表末行再 ↓ 移交按钮行、按钮上
+    ↑ 回列表、←/→ 在按钮间平移、Enter 按下聚焦的按钮（等价点击）。"""
+    cfg = tmp_path / "d1" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await _settle(pilot, lambda: len(app.items) == 3)
+
+        await pilot.press("f2")
+        assert await _settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        sl = app.screen.query_one(SelectionList)
+        focused = lambda: app.screen.focused  # 测试内简写
+        assert focused() is sl, "弹层焦点默认在列表"
+
+        # 列表内 ↓ 照常；末行（第 2 行）再 ↓ 移交按钮行的第一个按钮
+        await pilot.press("down")
+        assert focused() is sl and sl.highlighted == 1, "列表内 ↓ 移动高亮"
+        await pilot.press("down")
+        assert focused() is not None and focused().id == "setup-confirm", "末行再 ↓ → 保存按钮"
+
+        # 按钮行内 ←/→ 平移；↑ 回列表（高亮位不动）
+        await pilot.press("right")
+        assert focused().id == "setup-cancel", "→ 平移到取消"
+        await pilot.press("left")
+        assert focused().id == "setup-confirm", "← 平移回保存"
+        await pilot.press("up")
+        assert focused() is sl and sl.highlighted == 1, "↑ 回列表（高亮位保留）"
+
+        # → 在列表上仍是订阅管理入口（非可订阅源给反馈，焦点不出列表）
+        await pilot.press("right")
+        assert await _settle(pilot, lambda: "没有可管理的订阅" in _last_notification(app)), (
+            "列表上 → = 管理订阅（原语义）"
+        )
+        assert focused() is sl
+
+        # ↓ 再进按钮行：聚焦「取消」后 Enter = 点击取消（不落盘关闭弹层）
+        await pilot.press("down")
+        assert focused().id == "setup-confirm"
+        await pilot.press("right")
+        await pilot.press("enter")
+        assert await _settle(pilot, lambda: app._on_main_screen()), "Enter 按下聚焦的按钮"
+
+
+def test_dialog_arrow_focus(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_dialog_focus_flow(monkeypatch, tmp_path))

@@ -19,20 +19,20 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
 from feedscope.core.config import RssFeed  # 仅类型注解用（列表行的 key/label/url 三段）
 from feedscope.subscriptions import SubscriptionError, SubsStore
 from feedscope.ui import feedback
+from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
 
 
-class InputScreen(ModalScreen[str | None]):
+class InputScreen(ArrowModalScreen[str | None]):
     """单行输入弹层：Enter 确定 / Esc 取消，返回文本（空 = None）。
 
     全应用唯一的文本输入（粘贴走终端原生 bracketed paste，从 Finder 拖
-    文件进终端即得路径）；Input 自己消费字符键，不会冒泡触发 App 的
-    「中文输入指路」逻辑。
+    文件进终端即得路径）；Input 自己消费字符键（←/→ 是文本光标），↑/↓
+    在输入行与按钮行间移动焦点（ArrowModalScreen）。
     """
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
@@ -78,7 +78,7 @@ class InputScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class ConfirmModal(ModalScreen[bool]):
+class ConfirmModal(ArrowModalScreen[bool]):
     """轻确认弹层（删除订阅用）：True=确认，Esc/取消 = False。"""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
@@ -112,7 +112,7 @@ class ConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class SubscriptionsScreen(ModalScreen[bool]):
+class SubscriptionsScreen(ArrowModalScreen[bool]):
     """订阅管理：dismiss(True) = 本次有过改动（调用方据此同步勾选与刷新）。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -142,7 +142,7 @@ class SubscriptionsScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="subs-dialog"):
             yield Label(f"{self._store.label} 订阅管理", id="subs-title")
-            yield ListView(id="subs-list")
+            yield FocusNavListView(id="subs-list")
             yield Label("", id="subs-empty")
             yield Label(self._store.hint, id="subs-hint")
             with Horizontal(id="subs-actions"):

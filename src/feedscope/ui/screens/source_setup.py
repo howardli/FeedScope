@@ -20,17 +20,17 @@ from typing import ClassVar
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
 from feedscope.core.registry import source_classes
 from feedscope.subscriptions import store_for
 from feedscope.ui import feedback
+from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavSelectionList
 from feedscope.ui.screens.subscriptions import SubscriptionsScreen
 
 
-class SourceSetupScreen(ModalScreen[list[str] | None]):
+class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     """源勾选弹层基类：样式与交互共用，标题/文案/确认键由子类给出。"""
 
     title_text: ClassVar[str] = ""
@@ -39,10 +39,10 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "cancel", "取消", show=False),
-        # → 深入下一层（与主屏 → 切流/换篇同构），Esc 返回。Enter 不能用：
+        # 二级入口走 →（与主屏 → 同构）：列表上按 = 高亮源的订阅管理，
+        # 按钮行上按 = 右移焦点（action_nav_right 分派）。Enter 不能用：
         # SelectionList 把它截停转成勾选切换（widget 内 event.stop()），
-        # 屏级绑定与事件路径都压不过——留给勾选，二级入口走 →
-        Binding("right", "manage_feeds", "管理订阅", show=False),
+        # 屏级绑定与事件路径都压不过——留给勾选
     ]
 
     CSS = """
@@ -76,7 +76,7 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
         with Vertical(id="setup-dialog"):
             yield Label(self.title_text, id="setup-title")
             yield Label(self.prompt_text, id="setup-prompt")
-            yield SelectionList(
+            yield FocusNavSelectionList(
                 # option id = source id：改行文案（编号）时按 id 定位
                 *[Selection(text, sid, sid in self._initial, id=sid) for sid, text in self._entries]
             )
@@ -129,6 +129,13 @@ class SourceSetupScreen(ModalScreen[list[str] | None]):
         self.dismiss(None)
 
     # ---- →：可订阅源的二级管理（订阅增删改名）----
+
+    def action_nav_right(self) -> None:
+        """→ 焦点感知分派：列表上 = 高亮源的订阅管理（原语义），按钮行 = 右移。"""
+        if isinstance(self.focused, SelectionList):
+            self.action_manage_feeds()
+            return
+        super().action_nav_right()
 
     def action_manage_feeds(self) -> None:
         """→：进高亮源的订阅管理屏；不可订阅的源按了要给反馈，不静默。"""
