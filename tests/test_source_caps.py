@@ -80,7 +80,8 @@ def test_reddit_source_declaration() -> None:
     assert r.supports_detail and r.detail_kinds == frozenset({"link", "self"})  # 全部条目进终端详情
     assert r.subscribable  # [reddit.feeds] 订阅表：F2 里 → 进订阅管理
     assert r.login_url == "https://www.reddit.com/login"
-    assert r.login_cookie == "reddit_session"
+    assert r.login_cookie == "token_v2"  # 显示用兜底；真实判据是 login_verify 的 JWT 解码
+    assert r.login_verify is not None  # cookie 出现不算数（reddit_session/token_v2 匿名流量也发）
     # HN 式三层词汇：楼层叫「评论」（顶层讨论串）、楼层内叫「回复」
     assert r.detail_unit_label == "评论" and r.comment_unit_label == "回复"
 

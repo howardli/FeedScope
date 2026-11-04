@@ -202,3 +202,18 @@ async def profile_cookies(url: str) -> dict[str, str]:
     """
     cookies = await get_session().run(lambda ctx: ctx.cookies(url))
     return {c["name"]: c["value"] for c in cookies}
+
+
+async def drop_profile_cookies(url: str, names: tuple[str, ...]) -> None:
+    """清掉持久 profile 里指定名字的 cookie（本地操作，与 logout 同一动作）。
+
+    登录态被服务端吊销后 cookie 只是「还躺在本地」——不清掉的话判登
+    （cookie 在即算已登录）与账号屏会一直被骗过，用户只能反复撞 401/403。
+    httpx 源（Reddit/X）在确认登录态失效后调这里再抛 LoginRequired。
+    url 只为对齐 profile_cookies 的形态：clear_cookies 按名字全域清。
+    """
+    async def _clear(ctx: Any) -> None:
+        for name in names:
+            await ctx.clear_cookies(name=name)
+
+    await get_session().run(_clear)

@@ -59,9 +59,17 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
         try:
             deadline = asyncio.get_running_loop().time() + LOGIN_TIMEOUT
             while asyncio.get_running_loop().time() < deadline:
-                cookies = await context.cookies(f"https://{domain}")
-                if any(c["name"] == source.login_cookie for c in cookies):
-                    _say(quiet, f"登录成功：{source.login_cookie} 已写入 profile，之后无头复用。")
+                if source.login_verify is not None:
+                    # 浏览器级判据（覆盖 login_verify 的源声明）：问服务端本尊，
+                    # 不看 cookie——有的源匿名访客也发判登 cookie（Reddit 的
+                    # token_v2 打开登录页即有），cookie 出现 ≠ 登录完成
+                    ok = bool(await source.login_verify(context))
+                else:
+                    cookies = await context.cookies(f"https://{domain}")
+                    ok = any(c["name"] == source.login_cookie for c in cookies)
+                if ok:
+                    how = "登录态已写入 profile" if source.login_verify is not None else f"{source.login_cookie} 已写入 profile"
+                    _say(quiet, f"登录成功：{how}，之后无头复用。")
                     return True
                 await asyncio.sleep(POLL_INTERVAL)
         finally:

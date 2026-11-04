@@ -105,6 +105,8 @@ All keys are non-printing — they work while a Chinese IME is active; typing pr
 
 Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`.
 
+A session revoked server-side (password change, logout elsewhere, periodic rotation) never leaves you guessing: X's 401 is unambiguous; Zhihu's real-browser channel is inherently stable. Reddit's criterion is a local JWT decode of token_v2 (logged-in `sub="user"`, anonymous `sub="loid"`) — its login cookies are issued to anonymous traffic too (merely opening the login page sets one, so a cookie appearing ≠ login complete), while a local decode is zero-network and unforgeable. Both "login success" and the login gate use it, making a re-login loop structurally impossible.
+
 ### Sources
 
 | Source | Feeds | Login |
@@ -194,9 +196,10 @@ No login; data comes from official public v1 endpoints (hot / latest / replies, 
 
 ### Reddit
 
-Login required (anonymous endpoints have been 403-only since 2026); data comes from logged-in web JSON endpoints (`www.reddit.com` `.json` paths, requests shaped exactly like your login session). Behavior notes:
+Login required; data comes from **the website's own HTML channel** — the legacy `.json` endpoints have been 403-only for third parties since 2026, so this source rides what the new frontend itself uses: listing pages as SSR HTML, pagination following the `faceplate-partial` load-after chain, fetched over httpx with frontend-shaped headers (`x-reddit-client-version` is harvested from pages automatically and self-heals on 403). Behavior notes:
 
-- Same three-layer shape as HN: post (self posts: markdown passed through as-is; link posts: one article link; media posts: `[图片]` / `[视频]` markers to originals) → top-level comments as floors → `Enter` opens a floor's reply tree
+- Same three-layer shape as HN: post (self posts: HTML converted to markdown; link posts: one article link; media posts: `[图片]` / `[视频]` markers to originals) → top-level comments as floors → `Enter` opens a floor's reply tree
+- Login criterion: a local JWT decode of token_v2 (logged-in `sub="user"`, anonymous `sub="loid"`) — the mere "presence" of reddit_session/token_v2 can be produced by anonymous traffic; the decode is the hard proof. Login polling and the gate share this one check: zero network, zero forgery
 - Meta column shows "N pts · N comments · r/sub"; floors carry scores, moderator stickies are flagged `[置顶]`; deep threads flatten to two levels with `@parent` prefixes (same as HN)
 - "Home" aggregates the subreddits your Reddit account follows on the site (empty for a fresh account that follows nothing — expected); subscribe to what you want instead: `F2` → Reddit row → `→`, type a subreddit name or URL (`rust`, `r/rust`, a site link all work) and it becomes its own feed — no need to follow it on reddit.com
 - The comment tree arrives in one request (huge threads are truncated) with "N more collapsed" hints where cut; floor / reply paging is all in-memory, zero extra requests

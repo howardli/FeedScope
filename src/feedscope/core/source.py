@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from feedscope.core.config import hidden_feeds
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
@@ -157,6 +157,9 @@ class Source(ABC):
     comment_unit_label: ClassVar[str] = "评论"  # 楼层内评论子区的单位词（无评论产出的源用不到）
     login_url: ClassVar[str] = ""               # 有登录需求的源声明登录页；空 = 无需登录
     login_cookie: ClassVar[str] = ""            # 登录成功写入 profile 的 cookie 名（feedscope login 判登依据）
+    login_verify: ClassVar[Any] | None = None   # async (browser_context) -> bool；登录成功的浏览器级判据
+    # （cookie 判登不可靠的源覆盖此钩子，如 Reddit：token_v2 匿名访客也发，
+    #   登录成功以 me.json 答出用户名为准；None = 沿用 login_cookie 轮询）
     logout_cookies: ClassVar[list[str]] = []    # 登出要清的 cookie 名（判登全集）；空 = 无需登出
 
     def __init__(self) -> None:

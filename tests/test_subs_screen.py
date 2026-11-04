@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -111,28 +112,31 @@ def test_subs_screen_full_flow(rss_env, monkeypatch) -> None:
 
 @pytest.fixture()
 def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
-    """零订阅起步 + about.json 走 Mock + 假浏览器会话（判登不弹真 Chrome）。"""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/r/rust/about.json":
-            return httpx.Response(200, json={"kind": "t5", "data": {"display_name": "rust"}}, request=request)
-        return httpx.Response(404, text="gone", request=request)
-
-    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    """零订阅起步 + 版块页走 Mock + 假判登 cookie（不弹真 Chrome）。"""
     cfg = tmp_path / "sources.toml"
     cfg.write_text("enabled = []\n", encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
 
+    from feedscope.core import http
     from feedscope.sources import reddit as reddit_mod
 
-    class _FakeBrowser:
-        ua = "Mozilla/5.0 Chrome/131.0.0.0"
-
     async def fake_cookies(url: str) -> dict[str, str]:
-        return {"reddit_session": "s", "token_v2": "t"}
+        import base64
+
+        def b64(d: bytes) -> str:
+            return base64.urlsafe_b64encode(d).rstrip(b"=").decode()
+
+        token = f"{b64(b'{}')}.{b64(json.dumps({'sub': 'user'}).encode())}.sig"
+        return {"reddit_session": "s", "token_v2": token}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/r/rust/":
+            return httpx.Response(200, text='<div subreddit-name="rust"></div>', request=request)
+        return httpx.Response(200, text="<html>壳页</html>", request=request)
 
     monkeypatch.setattr(reddit_mod, "profile_cookies", fake_cookies)
-    monkeypatch.setattr(reddit_mod, "get_session", lambda: _FakeBrowser())
+    monkeypatch.setattr(reddit_mod, "get_session", lambda: type("B", (), {"ua": "UA/1.0"})())
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     return cfg
 
 

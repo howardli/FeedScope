@@ -14,7 +14,9 @@ SearchTimeline 双重门禁——x-client-transaction-id（页面 fetch 缺它�
 后人想恢复搜索先读这段。
 
 登录墙在 cookie：auth_token/ct0 判登在 __init__.py 的 _x_session 读 cookie
-时做，本文件只负责取数。queryId / bearer 抠自网页（时间线 queryId 从 main.js
+时做，本文件只负责取数；cookie 只是「还在本地」，被服务端吊销后 401 由
+_graphql_json 自愈（清 cookie + LoginRequired，见其 docstring）。queryId /
+bearer 抠自网页（时间线 queryId 从 main.js
 grep，TweetDetail 的 queryId+features 从真实请求捕获重放——它的响应形状决定
 有没有内嵌 Grok 译文，见 _DETAIL_FEATURES 与 parse._grok_translation）。X 改版
 会变，失效时报「时间线/详情接口报错」，跑 scripts/x_probe.py 自救。
@@ -26,8 +28,9 @@ import json
 from dataclasses import dataclass
 
 from feedscope.core import http
+from feedscope.core.browser import drop_profile_cookies
 from feedscope.core.models import Answer, DetailDoc, FeedItem
-from feedscope.core.source import DetailLoader, FeedLoader, SourceError, dedup_append
+from feedscope.core.source import DetailLoader, FeedLoader, LoginRequired, SourceError, dedup_append
 from feedscope.sources.x.parse import (
     BASE,
     _detail_doc,
@@ -104,16 +107,29 @@ async def _graphql_json(url: str, variables: dict, session: XSession, features: 
 
     features 是 GraphQL 的功能开关集（与网页请求同形随调用传），时间线端点
     不校验可省，TweetDetail 的新持久化查询必带（见 _DETAIL_FEATURES）。
+
+    401/403 的鉴别：X 的 401 语义唯一（auth_token 被服务端吊销/不认，
+    ct0 同 jar 成对不存在错位问题），无需像 Reddit 那样探「我是谁」——
+    清掉失效 cookie（判登 cookie 在即算已登录会一直被骗）转 LoginRequired
+    走登录引导；403 则是风控/账号受限，重登救不了，提示里说清。
     """
     params = {"variables": json.dumps(variables)}
     if features is not None:
         params["features"] = json.dumps(features)
-    r = await http.get(
-        url,
-        source="X",
-        params=params,
-        headers=session.headers(),
-    )
+    try:
+        r = await http.get(
+            url,
+            source="X",
+            params=params,
+            headers=session.headers(),
+        )
+    except SourceError as exc:
+        if "（HTTP 401）" in str(exc):
+            await drop_profile_cookies("https://x.com", ("auth_token", "ct0"))
+            raise LoginRequired("X 登录已失效（服务端已不认本地登录态），Ctrl+U 重新登录") from None
+        if "（HTTP 403）" in str(exc):
+            raise SourceError(f"{exc}——可能被风控或账号受限，重新登录救不了，稍后再试或换网络") from None
+        raise
     return r.json()
 
 

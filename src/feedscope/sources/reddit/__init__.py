@@ -1,24 +1,27 @@
 """Reddit 源（reddit）：首页/热门两个内置流 + subreddit 订阅表 + 帖子详情（评论树）。
 
 包内分层（全项目统一的源模板）：
-- fetch.py  取数层：登录态网页 JSON 通道（www .json 端点，X 式 httpx cookie 会话）
-- parse.py  解析层：Reddit JSON -> FeedItem / 帖子与评论树，纯函数可测
+- fetch.py  取数层：网站自己的 HTML 通道（shreddit SSR 页面 + faceplate
+  partial 翻页），httpx 直调、头与 SPA 同形（.json 遗留端点已全线 403）
+- parse.py  解析层：shreddit HTML -> FeedItem / 帖子与评论树，纯函数可测
 - __init__.py 编排层：Source 能力声明与 open_* 分派 + 内存分页 Loader
 
-结构映射是 HN 式三层：帖子（自述帖 markdown 直传 / 链接帖原文一行 / 媒体
-记号）-> 顶层评论当楼层（unit「评论」）-> 楼层内回复树当评论层（unit「回
-复」）。comments 端点单请求给整树，楼层与评论翻页全在内存切片——详情打开
-后评论层零额外请求（同 HN）。
+结构映射是 HN 式三层：帖子（自述帖 HTML 转 markdown / 链接帖原文一行 /
+媒体记号）-> 顶层评论当楼层（unit「评论」）-> 楼层内回复树当评论层
+（unit「回复」）。permalink 页单请求 SSR 自带整树，楼层与评论翻页全在
+内存切片——详情打开后评论层零额外请求（同 HN）。
 
-feeds 是混形合成（介于知乎减法与 RSS 加法之间）：内置流 home=best /
-popular=r/popular 走 hide 减法，[reddit.feeds] 订阅表（subreddit 名即 key，
-url 存站内地址自解释）走加法——零订阅仍有内置流（与 RSS 的纯订阅合成不
-同）。subscribable=True：F2 里 → 进订阅管理屏（与 RSS 共用一屏，按源分派
-见 ui/screens/subscriptions.py 的 store）。
+feeds 是混形合成（介于知乎减法与 RSS 加法之间）：内置流 home=首页 /
+popular=r/popular 走 hide 减法，[reddit.feeds] 订阅表（subreddit 名即
+key，url 存站内地址自解释）走加法——零订阅仍有内置流（与 RSS 的纯订阅
+合成不同）。subscribable=True：F2 里 → 进订阅管理屏（与 RSS 共用一屏，
+按源分派见 ui/screens/subscriptions.py 的 store）。
 
-登录：2026 起匿名 .json 全线 403，本源必须登录。`feedscope login reddit`
-弹 Chrome 手动输账号密码（+2FA），轮询 reddit_session 判登；token_v2 是
-部分账号的迁移形态，判登与登出两枚都认（login.py 源无关零改动）。
+登录：本源必须登录。`feedscope login reddit` 弹 Chrome 手动输账号密码
+（+2FA）。判据一律是 token_v2 的 JWT 本地解码（登录态 sub="user"、
+匿名态 sub="loid"，见 _token_logged_in）——Reddit 的判登 cookie 全不可
+信：reddit_session 匿名流量也发、token_v2 光看在不在更不行；解码零网络
+零请求，匿名流量伪造不出。
 """
 
 from __future__ import annotations
@@ -39,8 +42,8 @@ from feedscope.core.source import (
     SourceError,
     require_feed_items,
 )
-from feedscope.sources.reddit.fetch import RedditFeedLoader, RedditSession, fetch_thread
-from feedscope.sources.reddit.parse import SOURCE_ID, ThreadDetail, parse_thread
+from feedscope.sources.reddit.fetch import RedditFeedLoader, RedditSession, fetch_thread_html
+from feedscope.sources.reddit.parse import SOURCE_ID, ThreadDetail, parse_thread_html
 
 # 详情一次拿全树后，楼层/评论每页给多少（内存切片，不是请求）：与 HN 同宽
 FLOOR_PAGE = 15
@@ -106,14 +109,46 @@ class RedditCommentsLoader(CommentLoader):
         pass
 
 
-async def _reddit_session(what: str) -> RedditSession:
-    """读 profile 全量 cookie 判登 + 本机 Chrome 真实 UA，打成 httpx 登录态。
+def _token_logged_in(token_v2: str | None) -> bool:
+    """token_v2 的 JWT claims 是登录的本地铁证：登录态 sub="user"（匿名态 sub="loid"）。
 
-    判登认两枚（账号迁移期 reddit_session / token_v2 互斥出现）：任一在即
-    算已登录——比 X 的成对检查宽，漏判会把已登录用户反复弹去登录。
+    Reddit 的判登 cookie 全都不可信：reddit_session 匿名流量也发（实测打开
+    登录页即出现）、token_v2 光看在不在更不行——但 token_v2 本体是 JWT，
+    登录后 Reddit 重签的版本 claims 里 sub 从 "loid"（Logged-Out ID）变成
+    "user" 且带 at=1/aid=账号id（2026-11 实测两种形态各解码一次）。本地
+    解码零请求、匿名流量伪造不出，是判登/登录轮询的地面真值。
     """
+    if not token_v2:
+        return False
+    import base64
+    import json as _json
+
+    try:
+        payload = token_v2.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = _json.loads(base64.urlsafe_b64decode(payload))
+        return claims.get("sub") == "user"
+    except (IndexError, ValueError):
+        return False
+
+
+async def _login_verified(ctx) -> bool:
+    """登录成功的浏览器级判据（login.py 轮询 login_verify）：token_v2 解码出登录态。
+
+    读登录窗口上下文的 cookie、本地解码 JWT（见 _token_logged_in）——零网络
+    （这台网络 www 的 me.json 连登录会话都 403，问不了服务端）、零页面
+    依赖（登录中途跳 accounts 域也不影响）。登录完成 Reddit 重签 token_v2
+    的瞬间即可检出。
+    """
+    cookies = await ctx.cookies("https://www.reddit.com")
+    jar = {c["name"]: c["value"] for c in cookies}
+    return _token_logged_in(jar.get("token_v2"))
+
+
+async def _reddit_session(what: str) -> RedditSession:
+    """判登门 + 打 httpx 登录态：token_v2 JWT 过门后读全量 cookie 与真 UA。"""
     cookies = await profile_cookies("https://www.reddit.com")
-    if not (cookies.get("reddit_session") or cookies.get("token_v2")):
+    if not _token_logged_in(cookies.get("token_v2")):
         raise LoginRequired(f"Reddit 需要登录后才能查看{what}")
     return RedditSession(cookies, get_session().ua or DESKTOP_UA)
 
@@ -129,11 +164,15 @@ class RedditSource(Source):
     detail_unit_label = "评论"  # 楼层单位词：顶层评论串（同 HN）
     comment_unit_label = "回复"  # 楼层内的讨论（同 HN）
     login_url = "https://www.reddit.com/login"
-    login_cookie = "reddit_session"  # feedscope login 轮询的判登 cookie（token_v2 是迁移形态）
+    login_cookie = "token_v2"  # 兜底显示用（真实判据是 login_verify 的 JWT 解码）
+    login_verify = staticmethod(_login_verified)  # 登录成功 = token_v2 解码出登录态（cookie 出现不算数）
     logout_cookies: ClassVar[list[str]] = ["reddit_session", "token_v2"]  # 登出两枚都清
 
-    # 内置流：流名 -> listing 路径（订阅流的路径是 r/{key}/hot，不在这张表里）
-    _BUILTIN: ClassVar[dict[str, str]] = {"home": "best", "popular": "r/popular/hot"}
+    # 内置流：流名 -> 列表页 URL（订阅流的页面是 https://www.reddit.com/r/{key}/）
+    _BUILTIN: ClassVar[dict[str, str]] = {
+        "home": "https://www.reddit.com/",
+        "popular": "https://www.reddit.com/r/popular/",
+    }
     _BUILTIN_LABELS: ClassVar[dict[str, str]] = {"home": "首页", "popular": "热门"}
 
     def __init__(self) -> None:
@@ -158,8 +197,8 @@ class RedditSource(Source):
         label = self.feed_labels.get(name)
         if label is None:
             raise ValueError(f"未知信息流：{name}")
-        path = self._BUILTIN.get(name) or f"r/{name}/hot"  # 订阅流按 key 即 subreddit 名
-        loader = RedditFeedLoader(await _reddit_session(f"「{label}」流"), path, label)
+        page = self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"  # 订阅 key 即 subreddit 名
+        loader = RedditFeedLoader(await _reddit_session(f"「{label}」流"), page, label)
         await loader.load_more()  # 首批（判登在此抛 LoginRequired）
         if name == "home" and not loader.items:
             # 首页是账号在 Reddit 站内「关注版块」的聚合：账号没关注任何版块
@@ -172,5 +211,6 @@ class RedditSource(Source):
         return loader
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
-        data = await fetch_thread(await _reddit_session("帖子详情"), item.id)
-        return RedditDetailLoader(parse_thread(data, fallback_title=item.title))
+        session = await _reddit_session("帖子详情")
+        html = await fetch_thread_html(session, item.url)  # 列表给的绝对 permalink（slug 全）
+        return RedditDetailLoader(parse_thread_html(html, fallback_title=item.title))
