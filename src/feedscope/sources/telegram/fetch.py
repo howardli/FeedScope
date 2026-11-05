@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from feedscope.core import http
-from feedscope.core.config import RssFeed
+from feedscope.core.config import Subscription
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, dedup_append, merge_feeds
 from feedscope.sources.telegram.parse import parse_channel_html
@@ -26,7 +26,12 @@ async def fetch_channel_html(name: str, before: int | None = None) -> str:
 
 
 class TelegramFeedLoader(FeedLoader):
-    """单频道翻页：下一页游标 = 本页解析出的最小消息号；翻空即到头。"""
+    """单频道翻页：下一页游标 = 本页解析出的最小消息号；翻空即到头。
+
+    每页倒排追加（预览页是聊天式旧→新，阅读器时间线要新→旧）：翻页后
+    更旧的整页缀在更旧的位置上，全局严格最新在前——与「全部」聚合流
+    及所有源的时间线方向一致。
+    """
 
     def __init__(self, channel: str, label: str) -> None:
         self._channel = channel
@@ -41,7 +46,7 @@ class TelegramFeedLoader(FeedLoader):
             return []
         html = await fetch_channel_html(self._channel, self._before)
         items = parse_channel_html(html, channel=self._channel, label=self._label)
-        new = dedup_append(self.items, self._seen, items)
+        new = dedup_append(self.items, self._seen, items[::-1])
         if not new:
             self.done = True  # 翻到头（或该 before 段空页）：真到头不再打扰
             return []
@@ -52,14 +57,14 @@ class TelegramFeedLoader(FeedLoader):
         pass  # 连接池由 core/http 进程级持有，无源内资源
 
 
-async def _fetch_one(feed: RssFeed) -> list[FeedItem]:
+async def _fetch_one(feed: Subscription) -> list[FeedItem]:
     """拉一个频道的首页并解析；时间倒序（最新在前）。"""
     html = await fetch_channel_html(feed.key)
     items = parse_channel_html(html, channel=feed.key, label=feed.label, all_view=True)
     return items[::-1]
 
 
-async def fetch_merged(feeds: list[RssFeed]) -> tuple[list[FeedItem], list[str]]:
+async def fetch_merged(feeds: list[Subscription]) -> tuple[list[FeedItem], list[str]]:
     """并发拉全部频道 ->「全部」聚合：(条目, 失败原因列表)。
 
     编排见 core.source.merge_feeds；Telegram 的差异：按发布时间（ISO 字符串）

@@ -129,3 +129,15 @@ def test_registry_order_is_tab_order() -> None:
     assert [s.source_id for s in all_sources()] == [
         "zhihu", "x", "reddit", "hn", "v2ex", "rss", "telegram",
     ]
+
+
+def test_reserved_feed_keys_declared() -> None:
+    """订阅 key 的保留字从源声明读（subscriptions._reserved 的单一出处）：
+    聚合流名（SubscribedSource）与内置流名（reddit）——源新增流后忘了
+    同步声明，订阅 key 就能遮住它，这条断言负责抓住漂移。"""
+    by_id = {s.source_id: type(s) for s in all_sources()}
+    assert by_id["rss"].reserved_feed_keys == ("all",)
+    assert by_id["telegram"].reserved_feed_keys == ("all",)
+    assert set(by_id["reddit"].reserved_feed_keys) == {"home", "popular"}
+    for sid in ("zhihu", "x", "hn", "v2ex"):  # 非 subscribable：没有订阅入口，无保留字
+        assert by_id[sid].reserved_feed_keys == ()

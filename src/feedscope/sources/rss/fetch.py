@@ -12,13 +12,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from feedscope.core import http
-from feedscope.core.config import RssFeed
+from feedscope.core.config import Subscription
 from feedscope.core.models import FeedItem
 from feedscope.core.source import SourceError, merge_feeds
 from feedscope.sources.rss.parse import parse_feed
 
 # RSS 专用 Accept：部分源对浏览器 UA + */* 的组合反而回 HTML 页，声明清楚要 feed
-_ACCEPT = "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*"
+_ACCEPT = (
+    "application/rss+xml, application/atom+xml, application/feed+json, "
+    "application/xml, text/xml, */*"
+)
 
 
 @dataclass
@@ -43,7 +46,7 @@ def _conditional_headers(cached: _CondEntry | None) -> dict[str, str]:
     return headers
 
 
-async def fetch_body(feed: RssFeed) -> bytes:
+async def fetch_body(feed: Subscription) -> bytes:
     """抓一个订阅的 XML 字节；304 回放缓存体，200 记验证器并更新缓存。"""
     cached = _CACHE.get(feed.url)
     r = await http.get(
@@ -65,7 +68,7 @@ async def fetch_body(feed: RssFeed) -> bytes:
     return r.content
 
 
-async def fetch_merged(feeds: list[RssFeed]) -> tuple[list[FeedItem], list[str]]:
+async def fetch_merged(feeds: list[Subscription]) -> tuple[list[FeedItem], list[str]]:
     """全部订阅并发拉取并聚合成一条时间线：(合并条目, 失败订阅的短消息列表)。
 
     编排（并发/失败隔离/倒序合并）见 core.source.merge_feeds；RSS 的差异：
@@ -73,7 +76,7 @@ async def fetch_merged(feeds: list[RssFeed]) -> tuple[list[FeedItem], list[str]]
     多源覆盖只留书写顺序靠前的一份）、按发布时间（unix 秒）倒序。
     """
 
-    async def one(feed: RssFeed) -> list[FeedItem]:
+    async def one(feed: Subscription) -> list[FeedItem]:
         body = await fetch_body(feed)
         return parse_feed(body, feed_key=feed.key, feed_label=feed.label, all_view=True)
 

@@ -14,31 +14,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from feedscope.core.const import new_h2t
-from feedscope.core.models import Answer, Comment, FeedItem
+from feedscope.core.const import new_h2t, safe_int
+from feedscope.core.display import fmt_count
+from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.text import strip_zwsp
 from feedscope.core.timefmt import fmt_iso
+from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, count_kept, floor_comments
 
 SOURCE_ID = "hn"
 
 # HN 原生条目页：自帖的兜底 url 与楼层直达链接（评论 permalink 也是 item 页）
 _ITEM_URL = "https://news.ycombinator.com/item?id="
 
-_DELETED = "[已删除]"  # Algolia 的删除态是 author/text 为 null
+
+_H2T = new_h2t()  # 模块级实例复用（handle 自带状态复位，见 zhihu/parse 同款）
 
 
 def _md(html: object) -> str:
     """HN 受限 HTML（p/a/i/code/pre）-> markdown；非 str / 空回空串。"""
     if not isinstance(html, str) or not html:
         return ""
-    return strip_zwsp(new_h2t().handle(html)).strip()
-
-
-def _int(value: object) -> int:
-    try:
-        return int(value or 0)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
+    return strip_zwsp(_H2T.handle(html)).strip()
 
 
 def _kids(node: dict) -> list[dict]:
@@ -52,12 +48,28 @@ def _keep(node: dict) -> bool:
 
 
 def _author(node: dict) -> str:
-    return str(node.get("author") or "") or _DELETED
+    return str(node.get("author") or "") or DELETED_AUTHOR
 
 
 def _time(node: dict) -> str:
     created = node.get("created_at")
     return fmt_iso(created if isinstance(created, str) else None)
+
+
+def _comment_of(node: dict) -> Comment:
+    """Algolia 节点 -> Comment 本体（@ 前缀由 core.tree 统一拼装）。"""
+    return Comment(
+        author=_author(node),
+        votes="",  # Algolia 树节点不带分值，HN 评论也无赞数语义
+        content_md=_md(node.get("text")) or DELETED_BODY,
+        time=_time(node),
+        raw_id=str(node.get("id") or ""),
+    )
+
+
+# 差异注入：HN 的树是 Algolia dict（结构见各 accessor）
+_ACC = {"keep": _keep, "kids_of": _kids, "author_of": _author, "comment_of": _comment_of}
+_COUNT = {"keep": _keep, "kids_of": _kids}  # count_kept 只要这两个
 
 
 def parse_search(hits: list[dict]) -> list[FeedItem]:
@@ -70,7 +82,8 @@ def parse_search(hits: list[dict]) -> list[FeedItem]:
         tags = hit.get("_tags")
         tags = tags if isinstance(tags, list) else []
         kind = "ask" if "ask_hn" in tags else "show" if "show_hn" in tags else "story"
-        parts = [f"{_int(hit.get('points'))} 点", f"{_int(hit.get('num_comments'))} 评"]
+        parts = [f"{fmt_count(safe_int(hit.get('points')))} 点",
+                 f"{fmt_count(safe_int(hit.get('num_comments')))} 评"]
         if author := str(hit.get("author") or ""):
             parts.append(author)
         items.append(
@@ -87,14 +100,6 @@ def parse_search(hits: list[dict]) -> list[FeedItem]:
 
 
 @dataclass
-class Floor:
-    """一个楼层（顶层评论）：本体 + 它的回复树（已是 Comment 列表）。"""
-
-    answer: Answer
-    comments: list[Comment] = field(default_factory=list)
-
-
-@dataclass
 class StoryDetail:
     """items/:id 的解析结果：story 本体 + 全部楼层（含各自的回复树）。"""
 
@@ -105,66 +110,9 @@ class StoryDetail:
     floors: list[Floor] = field(default_factory=list)
 
 
-def _flatten(node: dict, parent_author: str, *, direct: bool = False) -> list[Comment]:
-    """node 的全部后代拍平成一串 Comment（@ 前缀标出回复对象）。
-
-    direct=True 是「紧贴上一条」的第一层（回复的就是楼上那条，@ 冗余）；
-    更深层 @ 直接父——被拍平后父不一定视觉相邻，@ 是唯一指向。父已删
-    不给前缀（@ 不到人）；本尊已删有内容照常保留（作者栏是删除占位）。
-    """
-    flat: list[Comment] = []
-    for child in _kids(node):
-        if not _keep(child):
-            continue
-        author = _author(child)
-        md = _md(child.get("text")) or "（已删除）"
-        if not direct and parent_author and parent_author != _DELETED:
-            md = f"@{parent_author}：{md}"
-        flat.append(
-            Comment(
-                author=author,
-                votes="",  # Algolia 树节点不带分值，HN 评论也无赞数语义
-                content_md=md,
-                time=_time(child),
-                raw_id=str(child.get("id") or ""),
-            )
-        )
-        flat.extend(_flatten(child, author))
-    return flat
-
-
-def _floor_comments(node: dict) -> list[Comment]:
-    """楼层的直接子回复 -> 顶层 Comment；各自更深的后代拍平进 replies。
-
-    直接子回复不加 @：楼层作者就在屏首（与知乎「回答下的评论」同观感）；
-    replies 里第一层（紧贴楼上那条）也不加，@ 从隔层起才有指向价值。
-    """
-    comments: list[Comment] = []
-    for child in _kids(node):
-        if not _keep(child):
-            continue
-        author = _author(child)
-        comments.append(
-            Comment(
-                author=author,
-                votes="",
-                content_md=_md(child.get("text")) or "（已删除）",
-                time=_time(child),
-                replies=_flatten(child, author, direct=True),
-                raw_id=str(child.get("id") or ""),
-            )
-        )
-    return comments
-
-
-def _count_replies(node: dict) -> int:
-    """node 子树内保留下来的评论总数（楼层头「N 条回复」与 meta 评论数用）。"""
-    return sum(1 + _count_replies(c) for c in _kids(node) if _keep(c))
-
-
 def parse_story(root: dict) -> StoryDetail:
     """items/:id 根 -> StoryDetail（story 本体 + 顶层评论楼层与各自回复树）。"""
-    parts = [f"{_int(root.get('points'))} 点", f"{_count_replies(root)} 评"]
+    parts = [f"{fmt_count(safe_int(root.get('points')))} 点", f"{count_kept(root, **_COUNT)} 评"]
     if author := str(root.get("author") or ""):
         parts.append(author)
     blocks = []
@@ -176,19 +124,19 @@ def parse_story(root: dict) -> StoryDetail:
     for child in _kids(root):
         if not _keep(child):
             continue
-        n = _count_replies(child)
+        n = count_kept(child, **_COUNT)
         cid = str(child.get("id") or "")
         floors.append(
             Floor(
                 answer=Answer(
                     author=_author(child),
                     votes="",
-                    content_md=_md(child.get("text")) or "（已删除）",
+                    content_md=_md(child.get("text")) or DELETED_BODY,
                     time=_time(child),
                     url=f"{_ITEM_URL}{cid}" if cid else "",
                     comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
                 ),
-                comments=_floor_comments(child),
+                comments=floor_comments(_kids(child), **_ACC),
             )
         )
     return StoryDetail(

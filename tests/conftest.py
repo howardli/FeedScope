@@ -5,13 +5,21 @@
 既有 TUI 用例不触发首启引导；要测引导/配置本身，用 monkeypatch.setenv
 把 FEEDSCOPE_CONFIG 覆盖成 tmp_path 下的目标文件（不存在的路径即首启），
 样本落盘也只写进临时目录。
+
+通用测试 helper（配置覆写 / HTTP mock / TUI 轮询等待）也收在这里——
+之前是各测试文件各抄一份 + 跨模块互相 import，改一处会波及别处。
 """
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from urllib.parse import urlparse
 
+import httpx
 import pytest
+
+from feedscope.core import http
 
 
 @pytest.fixture(autouse=True)
@@ -26,11 +34,57 @@ def _isolated_user_env(
     monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(env_dir / "samples"))
 
 
+# ---- 通用 helper（测试模块 `from conftest import …` 直接用）----
+
+
+def use_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str) -> Path:
+    """按用例覆写 FEEDSCOPE_CONFIG 成 tmp_path 下的真实文件，返回文件路径。"""
+    p = tmp_path / "sources.toml"
+    p.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(p))
+    return p
+
+
+def mock_http(monkeypatch: pytest.MonkeyPatch, handler) -> httpx.AsyncClient:
+    """用 MockTransport 顶替 core/http 的模块级客户端：handler(request) -> Response。"""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http, "_client", client)
+    return client
+
+
+def recording_http(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
+    """mock_http 的记录版：包一层把每个请求收进活列表并返回（断言请求序用）。"""
+    calls: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return handler(request)
+
+    mock_http(monkeypatch, wrapped)
+    return calls
+
+
+async def settle(pilot, cond, timeout: float = 3.0) -> bool:
+    """轮询等条件成立：worker / 事件循环需要喘息。"""
+    for _ in range(int(timeout / 0.05)):
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        if cond():
+            return True
+    return cond()
+
+
+def last_notification(app) -> str:
+    """最近一条 notify 的正文（Textual 的通知面板在 _notifications）。"""
+    notes = list(getattr(app, "_notifications", []))
+    return str(notes[-1].message) if notes else ""
+
+
 @pytest.fixture(autouse=True)
 def _no_browser_prewarm(monkeypatch: pytest.MonkeyPatch) -> None:
     """TUI 冒烟测试里禁止启动即预热浏览器：测试源全是 stub，拉真 Chrome
-    既慢又可能挂起（POINT 预热闸门见 feedscope.ui.app）。"""
-    monkeypatch.setattr("feedscope.ui.app.PREWARM", False)
+    既慢又可能挂起（开关见 feedscope.ui.app._no_prewarm）。"""
+    monkeypatch.setenv("FEEDSCOPE_NO_PREWARM", "1")
 
 
 # ---- 敌意源（知乎/Reddit/X）共用的通道页签测试替身 ----

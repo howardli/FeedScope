@@ -4,16 +4,10 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import mock_http
 
 from feedscope.core import http
 from feedscope.core.source import SourceError
-
-
-def _patch(monkeypatch, handler) -> httpx.AsyncClient:
-    """把模块池换成 MockTransport 客户端；测试结束 monkeypatch 自动恢复。"""
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(http, "_client", client)
-    return client
 
 
 def test_client_is_process_singleton() -> None:
@@ -26,7 +20,7 @@ def test_get_passes_params_and_returns_body(monkeypatch) -> None:
             200, json={"path": request.url.path, "q": request.url.params.get("q")}, request=request
         )
 
-    _patch(monkeypatch, handler)
+    mock_http(monkeypatch, handler)
 
     async def go() -> dict:
         r = await http.get("https://x.test/api", source="测试源", params={"q": "1"})
@@ -42,7 +36,7 @@ def test_get_passes_headers(monkeypatch) -> None:
         seen["auth"] = request.headers.get("Authorization", "")
         return httpx.Response(200, text="ok", request=request)
 
-    _patch(monkeypatch, handler)
+    mock_http(monkeypatch, handler)
 
     async def go() -> str:
         r = await http.get(
@@ -58,7 +52,7 @@ def test_get_raises_source_error_on_http_status(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="boom", request=request)
 
-    _patch(monkeypatch, handler)
+    mock_http(monkeypatch, handler)
 
     with pytest.raises(SourceError) as ei:
         asyncio.run(http.get("https://x.test/boom", source="测试源"))
@@ -71,7 +65,7 @@ def test_get_raises_source_error_on_timeout(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("模拟超时", request=request)
 
-    _patch(monkeypatch, handler)
+    mock_http(monkeypatch, handler)
 
     with pytest.raises(SourceError) as ei:
         asyncio.run(http.get("https://x.test/slow", source="测试源"))
@@ -79,7 +73,7 @@ def test_get_raises_source_error_on_timeout(monkeypatch) -> None:
 
 
 def test_close_is_idempotent(monkeypatch) -> None:
-    _patch(monkeypatch, lambda request: httpx.Response(200, request=request))
+    mock_http(monkeypatch, lambda request: httpx.Response(200, request=request))
     asyncio.run(http.close())
     asyncio.run(http.close())  # 再关一次不炸
     assert http._client is None
@@ -87,13 +81,13 @@ def test_close_is_idempotent(monkeypatch) -> None:
 
 def test_get_json_validates_shape(monkeypatch) -> None:
     """get_json：形状对直通；非 JSON 与形状不符（改版信号）分开报。"""
-    _patch(monkeypatch, lambda r: httpx.Response(200, json=[{"id": 1}], request=r))
+    mock_http(monkeypatch, lambda r: httpx.Response(200, json=[{"id": 1}], request=r))
     assert asyncio.run(http.get_json("https://x/api", source="测试", expect=list)) == [{"id": 1}]
 
-    _patch(monkeypatch, lambda r: httpx.Response(200, text="not json", request=r))
+    mock_http(monkeypatch, lambda r: httpx.Response(200, text="not json", request=r))
     with pytest.raises(SourceError, match="不是 JSON"):
         asyncio.run(http.get_json("https://x/api", source="测试", expect=list))
 
-    _patch(monkeypatch, lambda r: httpx.Response(200, json={"data": 1}, request=r))
+    mock_http(monkeypatch, lambda r: httpx.Response(200, json={"data": 1}, request=r))
     with pytest.raises(SourceError, match="结构异常"):
         asyncio.run(http.get_json("https://x/api", source="测试", expect=list))

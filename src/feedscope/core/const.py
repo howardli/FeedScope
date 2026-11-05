@@ -1,4 +1,4 @@
-"""跨源共享常量与工厂：改这里即改全部源。
+"""跨源共享常量与小工具：改这里即改全部源。
 
 站点特有调参（滚动步长、选择器、httpx 之外的取数细节）仍留在各源文件--
 只有「多源复制粘贴且必须同步变」的值才收进来。
@@ -6,11 +6,33 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import html2text
 
-# 桌面 UA 与请求超时：core/http 共享客户端的默认头，X 显式传头时也用同一份
+# 桌面 UA 与请求超时：core/http 共享客户端的默认头（友好源的请求全走它）
 DESKTOP_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 HTTP_TIMEOUT = 20  # 秒
+
+# channel="chrome" 硬编码依赖的标准安装位置（macOS）与 PATH 候选名（Linux）
+CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+CHROME_BINS = ("google-chrome", "google-chrome-stable", "chrome", "google-chrome-beta")
+
+
+def find_chrome() -> str:
+    """Chrome 可执行文件路径；找不到回空串（doctor 自检与截图脚本共用的唯一实现）。"""
+    if CHROME_PATH.exists():
+        return str(CHROME_PATH)
+    return next((p for name in CHROME_BINS if (p := shutil.which(name))), "")
+
+
+def safe_int(value: object) -> int:
+    """野数据防御的整数化：None/空/非数字回 0（解析层对 API 野值的统一口径）。"""
+    try:
+        return int(value or 0)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 # Playwright 页面导航超时（毫秒）
 PAGE_TIMEOUT_MS = 30_000

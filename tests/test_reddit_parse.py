@@ -127,12 +127,15 @@ def test_parse_thread_html_post_and_floors() -> None:
 def test_parse_thread_html_flatten_and_at_prefixes() -> None:
     t = parse_thread_html(THREAD_HTML)
     alice = t.floors[1]
-    # bob（直接回复，无 @） + dave（隔层，@bob） + erin（更深，@dave）
-    assert [c.author for c in alice.comments] == ["bob", "dave", "erin"]
+    # 拍平成两层（同 HN，规则在 core.tree）：bob 直接回复 alice 做顶层；
+    # bob 的回复串里 dave 紧贴楼上不加 @、erin 隔层 @dave
+    assert [c.author for c in alice.comments] == ["bob"]
     assert alice.comments[0].content_md == "Reply to alice"
-    assert alice.comments[1].content_md == "@bob：Deeper e"
-    assert alice.comments[2].content_md == "@dave：Deepest"
     assert alice.comments[0].raw_id == "b1"
+    assert [(c.author, c.content_md) for c in alice.comments[0].replies] == [
+        ("dave", "Deeper e"),
+        ("erin", "@dave：Deepest"),
+    ]
 
 
 def test_parse_thread_html_truncation_hint() -> None:

@@ -27,5 +27,14 @@ def all_sources() -> list[Source]:
     return [cls() for cls in _REGISTRY.values()]
 
 
+def get_class(source_id: str) -> type[Source] | None:
+    """按 id 取源类（不实例化）；未注册返回 None。
+
+    供按声明分派的调用方（UI 的源重建、订阅入口的保留字检查）——它们只要
+    ClassVar，实例化反而会读配置做合成。取不到直接炸的路径用 get_source。
+    """
+    return _REGISTRY.get(source_id)
+
+
 def get_source(source_id: str) -> Source:
     return _REGISTRY[source_id]()

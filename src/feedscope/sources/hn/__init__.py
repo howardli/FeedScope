@@ -3,7 +3,8 @@
 包内分层（全项目统一的源模板）：
 - fetch.py  取数层：Algolia 公开索引 API（免 key 免登录、无登录态）
 - parse.py  解析层：Algolia JSON -> FeedItem / 楼层与评论树，纯函数可测
-- __init__.py 编排层：Source 能力声明与 open_* 分派 + 内存分页 Loader
+- __init__.py 编排层：Source 能力声明与 open_* 分派（楼层/评论翻页走
+  core 的内存切片基类）
 
 结构映射是知乎式三层：story 本体（正文 = 原文一行 + Ask/Show 自述）->
 顶层评论当楼层（unit「评论」）-> 楼层内回复树当评论层（unit「回复」）。
@@ -15,12 +16,11 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
-    CommentLoader,
-    DetailLoader,
     FeedLoader,
+    SliceDetailLoader,
     Source,
     SourceError,
     require_feed_items,
@@ -28,69 +28,27 @@ from feedscope.core.source import (
 from feedscope.sources.hn.fetch import HnFeedLoader, fetch_item
 from feedscope.sources.hn.parse import SOURCE_ID, StoryDetail, parse_story
 
-# 详情一次拿全树后，楼层/评论每页给多少（内存切片，不是请求）：首批给
-# 一屏上下的量，Ctrl+N 增量补，几百楼的线程不至于一次糊满屏
+# 详情一次拿全树后，楼层每页给多少（内存切片，不是请求）：首批给一屏
+# 上下的量，Ctrl+N 增量补，几百楼的线程不至于一次糊满屏；评论页宽
+# （20）用 core.SliceCommentsLoader 的默认值
 FLOOR_PAGE = 15
-COMMENT_PAGE = 20
 
 
-class HnDetailLoader(DetailLoader):
+class HnDetailLoader(SliceDetailLoader):
     """HN 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。"""
 
+    source_label = "HN"
+    floor_page = FLOOR_PAGE
+
     def __init__(self, story: StoryDetail, fallback_title: str = "") -> None:
-        self._floors = story.floors
-        first = self._floors[:FLOOR_PAGE]
-        self._given = len(first)
-        self.doc = DetailDoc(
+        super().__init__(
+            [f.answer for f in story.floors],
+            comment_trees=[f.comments for f in story.floors],
             title=story.title or fallback_title,
             meta=story.meta,
             time=story.time,
             description_md=story.description_md,
-            answers=[f.answer for f in first],
         )
-
-    @property
-    def done(self) -> bool:
-        return self._given >= len(self._floors)
-
-    async def load_more(self) -> list[Answer]:
-        if self.done:
-            return []
-        batch = self._floors[self._given : self._given + FLOOR_PAGE]
-        self._given += len(batch)
-        answers = [f.answer for f in batch]
-        self.doc.answers.extend(answers)  # 「doc = 已加载全部」不变量
-        return answers
-
-    async def open_comments(self, index: int) -> HnCommentsLoader:
-        if not 0 <= index < len(self.doc.answers):
-            raise SourceError("HN 该评论不在已加载范围内，先按 Ctrl+N 加载更多楼层")
-        return HnCommentsLoader(self._floors[index].comments)
-
-    async def close(self) -> None:
-        pass  # 树在内存，无资源
-
-
-class HnCommentsLoader(CommentLoader):
-    """楼层回复树加载器：整串已在内存，翻页是本地切片（Ctrl+N 零请求）。"""
-
-    def __init__(self, comments: list[Comment]) -> None:
-        self.comments = comments[:COMMENT_PAGE]
-        self._rest = comments[COMMENT_PAGE:]
-
-    @property
-    def done(self) -> bool:
-        return not self._rest
-
-    async def load_more(self) -> list[Comment]:
-        if self.done:
-            return []
-        batch, self._rest = self._rest[:COMMENT_PAGE], self._rest[COMMENT_PAGE:]
-        self.comments.extend(batch)  # 「comments = 已加载全部」不变量
-        return batch
-
-    async def close(self) -> None:
-        pass
 
 
 @register
@@ -118,7 +76,7 @@ class HnSource(Source):
         require_feed_items(loader.items, self.label, label)  # 0 条 = 接口可能已变
         return loader
 
-    async def open_detail(self, item: FeedItem) -> DetailLoader:
+    async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         root = await fetch_item(item.id)
         if not root.get("id"):
             raise SourceError("HN 详情返回里没有 id，接口可能已变")

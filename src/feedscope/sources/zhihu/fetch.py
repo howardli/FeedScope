@@ -39,6 +39,8 @@ from feedscope.sources.zhihu.parse import (
 # 区别对待（2026-11 实测矩阵）：v4/questions 元信息端点必须带（否则 403
 # 版本门禁 code 10003）；其余端点带上无害；唯独 feeds 无 cursor 入口反而
 # 拒绝它——故按调用方显式传入，不全局统一。x-zse-96 签名一律不需要。
+_X_ZSE_93 = "101_3_3.0"  # 知乎客户端版本声明（静态常量；三处使用：_headers 与两条复合 JS）
+
 # 「N 条评论」= 根评论 + 子回复总数：root_comment 只带每根的热门子回复
 # （1-2 条），其余靠 comment/{id}/child_comment 游标分页补全。
 _CM_FIRST_URL = "https://www.zhihu.com/api/v4/comment_v5/answers/{aid}/root_comment?order_by=score&limit=20&offset="
@@ -55,7 +57,10 @@ async (roots) => {
     let url = `https://www.zhihu.com/api/v4/comment_v5/comment/${r.id}/child_comment?limit=50&offset=${r.offset}`;
     for (let i = 0; i < 6; i++) {  // limit=50 一页基本到底；留翻页余地
       try {
-        const resp = await fetch(url, { headers: { "x-requested-with": "fetch", "x-zse-93": "101_3_3.0" }, credentials: "include" });
+        const resp = await fetch(url, {
+          headers: { "x-requested-with": "fetch", "x-zse-93": "__ZSE__" },
+          credentials: "include",
+        });
         if (!resp.ok) break;
         const d = await resp.json();
         kids.push(...(d.data || []).filter((k) => !k.is_delete && !seen.has(String(k.id))));
@@ -67,7 +72,7 @@ async (roots) => {
   }));
   return out;
 }
-"""
+""".replace("__ZSE__", _X_ZSE_93)
 
 
 def _raise_compound_error(data: Any) -> None:
@@ -88,7 +93,7 @@ def _headers(zse93: bool) -> dict[str, str]:
     """知乎 API 的手动头（浏览器不会自动带的）：x-zse-93 按端点区别对待，见上注释。"""
     h = {"x-requested-with": "fetch"}
     if zse93:
-        h["x-zse-93"] = "101_3_3.0"
+        h["x-zse-93"] = _X_ZSE_93
     return h
 
 
@@ -192,8 +197,8 @@ async def _fetch_hot_list(referer: str) -> list[FeedItem]:
 # ---- 问题详情（纯 API，全程不加载页面）----
 # 元信息：v4/questions/{qid}（include 把 detail/author/answer_count 等全带出，
 # 2026-11 实测）。该端点的 403 是客户端版本门禁（err code 10003「请升级
-# 客户端」），不是签名门禁：带 x-zse-93: 101_3_3.0（静态常量，页面每个
-# API 请求都带，已在 _FETCH_JSON_JS 统一注入）即放行，x-zse-96 不需要。
+# 客户端」），不是签名门禁：带 x-zse-93（_X_ZSE_93 静态常量，页面每个
+# API 请求都带，已在 _headers / 复合 JS 统一注入）即放行，x-zse-96 不需要。
 # 回答：questions/{qid}/feeds 无 cursor 从头拉（与 SSR 首批一致，实测），
 # 之后一路 paging.next；include 是页面请求原文（勿手改，改版失效时重新
 # 抓包替换）。
@@ -219,7 +224,7 @@ async ([metaUrl, feedsUrl, referer]) => {
   const go = async (u, with93) => {
     try {
       const headers = { "x-requested-with": "fetch" };
-      if (with93) headers["x-zse-93"] = "101_3_3.0";
+      if (with93) headers["x-zse-93"] = "__ZSE__";
       const r = await fetch(u, { headers, credentials: "include", referrer: referer });
       if (!r.ok) return { __status: r.status };
       return await r.json();
@@ -228,7 +233,7 @@ async ([metaUrl, feedsUrl, referer]) => {
   const [meta, feeds] = await Promise.all([go(metaUrl, true), go(feedsUrl, false)]);
   return { meta, feeds };
 }
-"""
+""".replace("__ZSE__", _X_ZSE_93)
 
 
 # ---- 页面操作 ----
@@ -319,6 +324,7 @@ class ZhihuQuestionLoader(DetailLoader):
             self._done = True
             return []
         data = await _api_json(self._next, self._referer)
+        # 借「Match 对象可下标取组」兜 None：无组 1 = 空串（列表 [None, ""] 的下标 1）
         qid = (re.search(r"questions/(\d+)/", self._next) or [None, ""])[1]
         new: list[Answer] = []
         for a in _feeds_answers(data, qid):
@@ -360,7 +366,7 @@ class ZhihuQuestionLoader(DetailLoader):
 
 class ZhihuCommentsLoader(CommentLoader):
     """单条回答的评论加载器：纯 comment_v5 API 游标翻页（root_comment 每页
-    10 条 + 子回复补全），n 一路按到 is_end。不持有页签（通道现取）。
+    limit=20 条 + 子回复补全），n 一路按到 is_end。不持有页签（通道现取）。
     """
 
     def __init__(self, comments: list[Comment], next_url: str) -> None:

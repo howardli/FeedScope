@@ -10,17 +10,12 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import use_config
 from test_rss_parse import RSS_XML
 
 from feedscope import subscriptions as subs
 from feedscope.cli import main
 from feedscope.core import config, http
-
-
-def _use_config(monkeypatch: pytest.MonkeyPatch, tmp_path, text: str) -> None:
-    p = tmp_path / "sources.toml"
-    p.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(p))
 
 
 def _mock_title_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,7 +47,7 @@ def test_derive_key_collision_numbered() -> None:
 
 
 def test_add_feed_fetches_title_and_writes_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _mock_title_fetch(monkeypatch)
     feed = asyncio.run(subs.add_feed("https://one.test/feed.xml"))
 
@@ -66,14 +61,14 @@ def test_add_feed_fetches_title_and_writes_config(monkeypatch: pytest.MonkeyPatc
 def test_add_feed_title_fetch_fails_falls_back_to_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _mock_title_fetch(monkeypatch)
     feed = asyncio.run(subs.add_feed("https://dead.test/feed.xml"))  # 404
     assert (feed.key, feed.label) == ("dead-test", "dead-test")  # 取不到标题回 key，不挡加订阅
 
 
 def test_add_feed_duplicate_url_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, '[rss.feeds]\nold = { url = "https://one.test/feed.xml" }\n')
+    use_config(monkeypatch, tmp_path, '[rss.feeds]\nold = { url = "https://one.test/feed.xml" }\n')
     with pytest.raises(subs.SubscriptionError, match="已经订阅过"):
         asyncio.run(subs.add_feed("https://one.test/feed.xml"))
     assert len(config.rss_feeds()) == 1  # 配置不动
@@ -82,7 +77,7 @@ def test_add_feed_duplicate_url_rejected(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_add_feed_explicit_key_conflicts_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    _use_config(monkeypatch, tmp_path, '[rss.feeds]\nold = { url = "https://a.test/f" }\n')
+    use_config(monkeypatch, tmp_path, '[rss.feeds]\nold = { url = "https://a.test/f" }\n')
     _mock_title_fetch(monkeypatch)
     with pytest.raises(subs.SubscriptionError, match="old"):
         asyncio.run(subs.add_feed("https://one.test/f", key="old"))
@@ -91,12 +86,12 @@ def test_add_feed_explicit_key_conflicts_rejected(
 
 
 def test_update_rss_feeds_syncs_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(
+    use_config(
         monkeypatch,
         tmp_path,
         'enabled = ["zhihu", "x"]\n[zhihu]\nhide = ["follow"]\n',
     )
-    config.update_rss_feeds([config.RssFeed(key="a", label="A", url="https://a.test/f")])
+    config.update_rss_feeds([config.Subscription(key="a", label="A", url="https://a.test/f")])
     assert config.enabled_ids() == ["zhihu", "x", "rss"]  # 加订阅 = 想用，自动补启用
     assert config.hidden_feeds("zhihu") == ["follow"]  # 其他源的 hide 原样保留
 
@@ -106,7 +101,7 @@ def test_update_rss_feeds_syncs_enabled(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_remove_feed_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(
+    use_config(
         monkeypatch,
         tmp_path,
         '[rss.feeds]\na = { label = "A", url = "https://a.test/f" }\nb = { url = "https://b.test/f" }\n',
@@ -144,7 +139,7 @@ def test_parse_opml_flattens_and_takes_label() -> None:
 
 
 def test_import_opml_merges_and_skips_known(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, '[rss.feeds]\nr-test = { url = "https://r.test/atom.xml" }\n')
+    use_config(monkeypatch, tmp_path, '[rss.feeds]\nr-test = { url = "https://r.test/atom.xml" }\n')
     added, skipped = subs.import_opml(_OPML)
 
     assert [(f.key, f.label) for f in added] == [("hnrss-org", "HN"), ("notitle-test", "notitle-test")]
@@ -153,7 +148,7 @@ def test_import_opml_merges_and_skips_known(monkeypatch: pytest.MonkeyPatch, tmp
 
 
 def test_import_opml_dedups_within_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     hn = '<outline type="rss" text="HN" xmlUrl="https://hnrss.org/frontpage"/>'
     dup = _OPML.replace(
         hn,
@@ -165,7 +160,7 @@ def test_import_opml_dedups_within_file(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_export_import_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(
+    use_config(
         monkeypatch,
         tmp_path,
         '[rss.feeds]\n'
@@ -175,7 +170,7 @@ def test_export_import_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> N
     opml = subs.export_opml(config.rss_feeds())
     assert 'text="阮一峰周刊 &amp; 博客"' in opml  # 特殊字符转义合法
 
-    _use_config(monkeypatch, tmp_path, "")  # 空配置再导回来
+    use_config(monkeypatch, tmp_path, "")  # 空配置再导回来
     added, _skipped = subs.import_opml(opml)
     assert {(f.key, f.label, f.url) for f in added} == {
         ("r-test", "阮一峰周刊 & 博客", "https://r.test/atom.xml"),
@@ -187,7 +182,7 @@ def test_export_import_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> N
 
 
 def test_cli_rss_list_add_remove_export(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _mock_title_fetch(monkeypatch)
 
     assert main(["rss", "list"]) == 0
@@ -213,13 +208,13 @@ def test_cli_rss_list_add_remove_export(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_cli_rss_export_stdout(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    _use_config(monkeypatch, tmp_path, '[rss.feeds]\na = { url = "https://a.test/f" }\n')
+    use_config(monkeypatch, tmp_path, '[rss.feeds]\na = { url = "https://a.test/f" }\n')
     assert main(["rss", "export"]) == 0
     assert "xmlUrl=" in capsys.readouterr().out  # 缺省打 stdout，可重定向
 
 
 def test_cli_rss_import_file(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     opml_file = tmp_path / "subs.opml"
     opml_file.write_text(_OPML, encoding="utf-8")
 
@@ -245,7 +240,7 @@ _HOME_HTML = (
 
 def test_add_feed_autodiscovers_from_homepage(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """粘博客首页：HTML 里的 <link rel=alternate> 自动发现 feed，改订真地址。"""
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/":
@@ -263,7 +258,7 @@ def test_add_feed_plain_page_without_link_still_adds(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """页面不是 feed 也没有声明链接：尊重用户给的地址照常添加（显示名回 key）。"""
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html><body>普通网页</body></html>", request=request)
@@ -274,7 +269,7 @@ def test_add_feed_plain_page_without_link_still_adds(
 
 
 def test_rename_feed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, '[rss.feeds]\na = { label = "旧名", url = "https://a.test/f" }\n')
+    use_config(monkeypatch, tmp_path, '[rss.feeds]\na = { label = "旧名", url = "https://a.test/f" }\n')
     renamed = subs.rename_feed("a", "  新名  ")  # 顺手 strip
     assert renamed is not None and renamed.label == "新名"
     assert config.rss_feeds()[0].label == "新名"
@@ -286,7 +281,7 @@ def test_rename_feed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 def test_add_from_input_dispatches_url_and_opml(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _mock_title_fetch(monkeypatch)
 
     added, summary = asyncio.run(subs.add_from_input("  https://one.test/feed.xml  "))
@@ -303,7 +298,7 @@ def test_add_from_input_dispatches_url_and_opml(
 
 
 def test_add_from_input_bad_input_raises(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     for text in ("", "   ", str(tmp_path / "absent.opml")):
         with pytest.raises(subs.SubscriptionError):
             asyncio.run(subs.add_from_input(text))
@@ -311,3 +306,32 @@ def test_add_from_input_bad_input_raises(monkeypatch: pytest.MonkeyPatch, tmp_pa
     bad.write_text("<broken", encoding="utf-8")
     with pytest.raises(subs.SubscriptionError, match="OPML"):
         asyncio.run(subs.add_from_input(str(bad)))
+
+
+# ---- OPML 文件出口统一（read_opml_file / BadSubscriptionFile）----
+
+
+def test_read_opml_file_missing_raises_bad_file(tmp_path) -> None:
+    with pytest.raises(subs.BadSubscriptionFile, match="读不了"):
+        subs.read_opml_file(tmp_path / "absent.opml")
+
+
+def test_import_opml_bad_xml_raises_bad_file() -> None:
+    with pytest.raises(subs.BadSubscriptionFile, match="不是合法的 OPML"):
+        subs.import_opml("<not-opml")
+
+
+def test_add_from_input_bad_opml_path_is_usage_error(tmp_path) -> None:
+    """坏 OPML 是用法级错误（CLI 退 2），不是业务冲突（退 1）——与 import 同规则。"""
+    with pytest.raises(subs.BadSubscriptionFile):
+        asyncio.run(subs.add_from_input(str(tmp_path / "absent.opml")))
+
+
+def test_cli_opml_exit_codes_consistent(tmp_path, capsys) -> None:
+    """同一坏文件：add 与 import 的退出码一致（都按用法级错误退 2）。"""
+    bad = tmp_path / "bad.opml"
+    bad.write_text("<not-opml", encoding="utf-8")
+    assert main(["rss", "add", str(bad)]) == 2
+    assert main(["rss", "import", str(bad)]) == 2
+    out = capsys.readouterr().out
+    assert "不是合法的 OPML" in out

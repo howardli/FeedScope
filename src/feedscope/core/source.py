@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, ClassVar
 
-from feedscope.core.config import hidden_feeds
+from feedscope.core.config import Subscription, feeds_for, hidden_feeds
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,113 @@ class CommentLoader(ABC):
         """释放资源，幂等，出错自己吞。"""
 
 
+class StaticDetailLoader(DetailLoader):
+    """一次性到头的详情加载器：doc 即全部内容，无楼层可翻、无资源可释。
+
+    正文已随列表带回的源（RSS / Telegram）用；feed 侧的对称物是
+    StaticFeedLoader。
+    """
+
+    def __init__(self, doc: DetailDoc) -> None:
+        self.doc = doc
+        self.done = True
+
+    async def load_more(self) -> list[Answer]:
+        return []
+
+    async def close(self) -> None:
+        pass
+
+
+class SliceCommentsLoader(CommentLoader):
+    """整串评论已在内存的评论层加载器：翻页是本地切片，零额外请求。
+
+    「详情一次拉全树」的源（HN / Reddit）的评论层共用；页宽
+    comment_page 控制首批与 Ctrl+N 增量。
+    """
+
+    comment_page: ClassVar[int] = 20
+
+    def __init__(self, comments: Sequence[Comment]) -> None:
+        self.comments = list(comments[: self.comment_page])
+        self._rest = list(comments[self.comment_page :])
+
+    @property
+    def done(self) -> bool:
+        return not self._rest
+
+    async def load_more(self) -> list[Comment]:
+        if self.done:
+            return []
+        batch, self._rest = self._rest[: self.comment_page], self._rest[self.comment_page :]
+        self.comments.extend(batch)  # 「comments = 已加载全部」不变量
+        return batch
+
+    async def close(self) -> None:
+        pass  # 树在内存，无资源
+
+
+class SliceDetailLoader(DetailLoader):
+    """楼层已全在内存的详情加载器：load_more 是本地切片，零额外请求。
+
+    「详情一次拉全树」的源（HN / Reddit / V2EX）共用：构造时给抽好的楼层
+    Answer 序列（首批 = 前 floor_page 条）；带评论层的源再给与楼层对齐的
+    comment_trees（open_comments 按下标切出对应树的 SliceCommentsLoader，
+    不给则与本类约定不支持评论层）。「doc = 已加载全部」的不变量由本类
+    保证（load_more 的新楼层 append 进 doc.answers）。子类只剩薄声明：
+    source_label（越界报错文案）与页宽。
+    """
+
+    source_label: ClassVar[str] = ""  # 报错文案里的源标签（如 "HN"）
+    floor_page: ClassVar[int] = 15  # 首批与每次 Ctrl+N 的楼层数（内存切片，不是请求）
+
+    def __init__(
+        self,
+        floors: Sequence[Answer],
+        *,
+        title: str,
+        meta: str = "",
+        time: str = "",
+        description_md: str = "",
+        comment_trees: Sequence[Sequence[Comment]] | None = None,
+    ) -> None:
+        self._floors = list(floors)
+        self._comments = list(comment_trees) if comment_trees is not None else None
+        first = self._floors[: self.floor_page]
+        self._given = len(first)
+        self.doc = DetailDoc(
+            title=title,
+            meta=meta,
+            time=time,
+            description_md=description_md,
+            answers=list(first),
+        )
+
+    @property
+    def done(self) -> bool:
+        return self._given >= len(self._floors)
+
+    async def load_more(self) -> list[Answer]:
+        if self.done:
+            return []
+        batch = self._floors[self._given : self._given + self.floor_page]
+        self._given += len(batch)
+        self.doc.answers.extend(batch)  # 「doc = 已加载全部」不变量
+        return batch
+
+    async def open_comments(self, index: int) -> SliceCommentsLoader:
+        if self._comments is None:
+            raise NotImplementedError(f"{self.source_label} 不支持评论层")
+        if not 0 <= index < len(self.doc.answers):
+            raise SourceError(
+                f"{self.source_label} 该评论不在已加载范围内，先按 Ctrl+N 加载更多楼层"
+            )
+        return SliceCommentsLoader(self._comments[index])
+
+    async def close(self) -> None:
+        pass  # 树在内存，无资源
+
+
 class Source(ABC):
     """源基类。子类用 @register 注册，由 TUI 装载。
 
@@ -209,8 +316,11 @@ class Source(ABC):
         None  # async (browser_context) -> bool；登录成功的浏览器级判据
     )
     # （cookie 判登不可靠的源覆盖此钩子，如 Reddit：token_v2 匿名访客也发，
-    #   登录成功以 me.json 答出用户名为准；None = 沿用 login_cookie 轮询）
+    #   登录成功以 JWT 解码出 sub="user" 为准；None = 沿用 login_cookie 轮询）
     logout_cookies: ClassVar[list[str]] = []  # 登出要清的 cookie 名（判登全集）；空 = 无需登出
+    reserved_feed_keys: ClassVar[tuple[str, ...]] = (
+        ()  # 订阅 key 的保留字（内置流名/聚合流名）：添加入口拒收撞名订阅的唯一依据
+    )
 
     def __init__(self) -> None:
         """按用户配置合成实例视图：feeds 在类默认之上剔除被隐藏的流。
@@ -239,3 +349,87 @@ class Source(ABC):
     async def open_detail(self, item: FeedItem) -> DetailLoader:
         """打开详情，返回加载器；不支持详情的源不用覆写。"""
         raise NotImplementedError(f"{self.label} 暂不支持终端内详情")
+
+
+class SubscribedSource(Source):
+    """纯订阅聚合源的共享骨架（RSS / Telegram 同形，第三个订阅型源继承即得）。
+
+    feeds 全部来自用户订阅表（数据驱动的加法合成，不走父类的 hide 减法，
+    故不调 super().__init__()）：非空时前置聚合流「全部」（hide 可分别隐藏
+    「全部」或单个订阅），零订阅 = 没有任何可选信息流。订阅 key 撞
+    all_feed（保留字）的条目在这里跳过并警告（手编配置漏网的兜底，添加
+    入口的拒收见 subscriptions）。
+
+    「全部」流的四级错误出口收在本类：空表给指引 → 部分失败降级（时间线
+    照出、原因进日志）→ 全失败报错 → 全空且无错才走 0 条改版守卫——单订阅
+    失败隔离的语义订阅型源之间一致，修复只打一份。子类注入两个差异：
+    _fetch_merged（怎么并发聚合）与 _open_one（单个订阅的流怎么开）。
+    """
+
+    all_feed: ClassVar[str]  # 聚合流名（「全部」），feeds 首位；订阅 key 的保留字
+    sub_noun: ClassVar[str]  # 订阅物名词（「订阅」/「频道」），错误与日志文案用
+
+    def __init__(self) -> None:
+        hidden = set(hidden_feeds(self.source_id))
+        self._by_key: dict[str, Subscription] = {}
+        for f in feeds_for(self.source_id):
+            if f.key in hidden:
+                continue
+            if f.key == self.all_feed:
+                logger.warning(
+                    "订阅 key %r 与聚合流名 %s 撞名，已跳过（%s.feeds）",
+                    f.key, self.all_feed, self.source_id,
+                )
+                continue
+            self._by_key[f.key] = f
+        keys = list(self._by_key)
+        self.feeds = ([self.all_feed] if keys and self.all_feed not in hidden else []) + keys
+        self.feed_labels = (
+            {self.all_feed: "全部", **{k: f.label for k, f in self._by_key.items()}}
+            if self.feeds
+            else {}
+        )
+        if not keys:
+            logger.info(
+                "%s 暂无订阅：在 sources.toml 的 [%s.feeds] 配置后，F2 勾选启用",
+                self.label, self.source_id,
+            )
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        if name == self.all_feed:
+            return StaticFeedLoader(await self._open_merged())
+        feed = self._by_key.get(name)
+        if feed is None:
+            raise ValueError(f"未知信息流：{name}")
+        return await self._open_one(feed)
+
+    async def _open_merged(self) -> list[FeedItem]:
+        """「全部」聚合流的首批（StaticFeedLoader 一次到头，聚合不做翻页）。"""
+        if not self._by_key:
+            # 订阅刚被删光的过渡窗口：旧实例还挂着「全部」流，别让空表走到
+            # 0 条守卫报「站点可能已改版」——那是误导，指引才是实话
+            raise SourceError(
+                f"{self.label} 还没有订阅——F2 里选中 {self.label} 按 → 添加{self.sub_noun}"
+            )
+        items, errors = await self._fetch_merged(list(self._by_key.values()))
+        if errors and items:  # 部分失败降级：时间线照出，失败原因进日志
+            logger.warning(
+                "%s「全部」%d/%d 个%s拉取失败：%s",
+                self.label, len(errors), len(self._by_key), self.sub_noun, "；".join(errors[:3]),
+            )
+        if not items and errors:
+            raise SourceError(
+                f"{self.label}「全部」订阅全部拉取失败（共 {len(errors)} 个）："
+                + "；".join(errors[:3])
+            )
+        return require_feed_items(items, self.label, "全部")  # 全空且无错 = 可能改版
+
+    @abstractmethod
+    async def _fetch_merged(
+        self, feeds: list[Subscription]
+    ) -> tuple[list[FeedItem], list[str]]:
+        """并发拉全部订阅并聚合：(合并条目, 失败订阅的短消息列表)。"""
+
+    @abstractmethod
+    async def _open_one(self, feed: Subscription) -> FeedLoader:
+        """打开单个订阅的信息流（各源的取数/解析差异全在这里）。"""

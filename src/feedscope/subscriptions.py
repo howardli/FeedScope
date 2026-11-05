@@ -21,14 +21,27 @@ from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
 from feedscope.core import config
-from feedscope.core.config import RssFeed
+from feedscope.core.config import Subscription
+from feedscope.core.registry import get_class
 from feedscope.core.source import SourceError
 from feedscope.sources.reddit.parse import parse_subreddit_input
 from feedscope.sources.rss.parse import discover_feed_link, probe
 
 
+def _reserved(source_id: str) -> tuple[str, ...]:
+    """订阅 key 的保留字（聚合流名 / 内置流名）：一律读源自己的声明
+    （Source.reserved_feed_keys，单一出处）——源新增内置流后保留字自动
+    跟上，不会再出现这里抄一份、那边忘了同步的窗口。"""
+    cls = get_class(source_id)
+    return cls.reserved_feed_keys if cls is not None else ()
+
+
 class SubscriptionError(Exception):
     """订阅操作的业务失败（重复 / key 冲突 / 文件读不了）：消息面向用户可直接打印。"""
+
+
+class BadSubscriptionFile(SubscriptionError):
+    """OPML 文件读不了 / 不是合法 OPML：用法级错误（CLI 退出码 2，与 argparse 约定一致）。"""
 
 
 def derive_key(url: str, existing: Iterable[str]) -> str:
@@ -56,7 +69,7 @@ async def _fetch_body_or_none(url: str) -> bytes | None:
         return None
 
 
-async def add_feed(url: str, *, key: str | None = None, label: str | None = None) -> RssFeed:
+async def add_feed(url: str, *, key: str | None = None, label: str | None = None) -> Subscription:
     """加一条订阅并落盘；显示名缺省拉一次 feed 标题，再缺省回 key。
 
     地址不是 feed 而是站点首页时自动发现 feed 声明（<link rel="alternate">）
@@ -69,8 +82,8 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
         raise SubscriptionError(f"这个地址已经订阅过了（key：{dup}）")
     if key is None:
         key = derive_key(url, (f.key for f in feeds))
-    elif key == config.RSS_ALL_FEED:
-        raise SubscriptionError("all 是聚合流保留字，不能用作订阅 key")
+    elif key in _reserved("rss"):
+        raise SubscriptionError(f"{key} 是聚合流保留字，不能用作订阅 key")
     elif key in {f.key for f in feeds}:
         raise SubscriptionError(f"key {key!r} 已被占用（feedscope rss list 查看）")
     if not label:
@@ -83,12 +96,12 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
                 if alt and alt != url:
                     return await add_feed(alt, key=key)
             label = title
-    feed = RssFeed(key=key, label=label or key, url=url)
+    feed = Subscription(key=key, label=label or key, url=url)
     config.update_rss_feeds([*feeds, feed])
     return feed
 
 
-def _rename(source_id: str, key: str, new_label: str) -> RssFeed | None:
+def _rename(source_id: str, key: str, new_label: str) -> Subscription | None:
     """改显示名（rss / reddit 共用）；名字清空 / key 不存在返回 None（不动配置）。"""
     new_label = new_label.strip()
     if not new_label:
@@ -96,17 +109,17 @@ def _rename(source_id: str, key: str, new_label: str) -> RssFeed | None:
     feeds = config.feeds_for(source_id)
     if key not in {f.key for f in feeds}:
         return None
-    renamed = RssFeed(key=key, label=new_label, url=next(f.url for f in feeds if f.key == key))
+    renamed = Subscription(key=key, label=new_label, url=next(f.url for f in feeds if f.key == key))
     config.update_feeds(source_id, [renamed if f.key == key else f for f in feeds])
     return renamed
 
 
-def rename_feed(key: str, new_label: str) -> RssFeed | None:
+def rename_feed(key: str, new_label: str) -> Subscription | None:
     """改 rss 订阅的显示名。"""
     return _rename("rss", key, new_label)
 
 
-async def add_from_input(text: str) -> tuple[list[RssFeed], str]:
+async def add_from_input(text: str) -> tuple[list[Subscription], str]:
     """添加入口的智能分流：http(s) 地址 → 单条添加；本地路径 → OPML 导入。
 
     返回 (本次新增, 结果描述)；`~` 开头的路径自动展开。CLI 的 add 与 TUI
@@ -118,20 +131,12 @@ async def add_from_input(text: str) -> tuple[list[RssFeed], str]:
     if text.startswith(("http://", "https://")):
         feed = await add_feed(text)
         return [feed], f"已订阅 {feed.key}：{feed.label}"
-    path = Path(text).expanduser()
-    try:
-        opml_text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise SubscriptionError(f"文件读不了：{exc}") from None
-    try:
-        added, skipped = import_opml(opml_text)
-    except ET.ParseError as exc:
-        raise SubscriptionError(f"不是合法的 OPML：{exc}") from None
+    added, skipped = import_opml(read_opml_file(text))
     detail = f"，跳过 {len(skipped)} 条" if skipped else ""
     return added, f"导入 {len(added)} 条订阅{detail}"
 
 
-def _remove(source_id: str, key: str, *, drop_when_empty: bool) -> RssFeed | None:
+def _remove(source_id: str, key: str, *, drop_when_empty: bool) -> Subscription | None:
     """删一条订阅（各源共用），返回被删的；key 不存在返回 None（不动配置）。
 
     drop_when_empty：删到空是否从 enabled 摘掉该源——rss/telegram 的 feeds
@@ -145,7 +150,7 @@ def _remove(source_id: str, key: str, *, drop_when_empty: bool) -> RssFeed | Non
     return next(f for f in feeds if f.key == key)
 
 
-def remove_feed(key: str) -> RssFeed | None:
+def remove_feed(key: str) -> Subscription | None:
     """删一条 rss 订阅。"""
     return _remove("rss", key, drop_when_empty=True)
 
@@ -153,9 +158,20 @@ def remove_feed(key: str) -> RssFeed | None:
 # ---- OPML 进出 ----
 
 
+def read_opml_file(path: str | Path) -> str:
+    """读 OPML 文件文本（`~` 展开）；读不了抛 BadSubscriptionFile（CLI/TUI 同一出口）。"""
+    try:
+        return Path(path).expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BadSubscriptionFile(f"OPML 文件读不了：{exc}") from None
+
+
 def parse_opml(text: str) -> list[tuple[str, str]]:
     """OPML 文本 -> [(label, xmlUrl)]；嵌套目录拍平，无 xmlUrl 的节点只当容器。"""
-    root = ET.fromstring(text)
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise BadSubscriptionFile(f"不是合法的 OPML：{exc}") from None
     out: list[tuple[str, str]] = []
     for outline in root.iter("outline"):
         url = (outline.get("xmlUrl") or "").strip()
@@ -166,16 +182,17 @@ def parse_opml(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def import_opml(text: str) -> tuple[list[RssFeed], list[str]]:
+def import_opml(text: str) -> tuple[list[Subscription], list[str]]:
     """OPML 批量导入（幂等合并）：返回 (新增订阅, 跳过原因列表)。
 
+    文件读不了 / 不是合法 OPML 抛 BadSubscriptionFile（用法级错误）。
     已订阅的地址（含 OPML 内部重复）跳过；label 用 outline 的 text/title，
     缺了回 key；一次落盘（中途失败不写半截配置）。
     """
     feeds = config.rss_feeds()
     known_urls = {f.url for f in feeds}
     known_keys = {f.key for f in feeds}
-    added: list[RssFeed] = []
+    added: list[Subscription] = []
     skipped: list[str] = []
     for label, url in parse_opml(text):
         if url in known_urls:
@@ -184,7 +201,7 @@ def import_opml(text: str) -> tuple[list[RssFeed], list[str]]:
         key = derive_key(url, known_keys)
         known_urls.add(url)
         known_keys.add(key)
-        added.append(RssFeed(key=key, label=label or key, url=url))
+        added.append(Subscription(key=key, label=label or key, url=url))
     if added:
         config.update_rss_feeds([*feeds, *added])
     return added, skipped
@@ -199,7 +216,7 @@ def _attr(value: str) -> str:
     return f"{_XML_QUOTE}{escaped}{_XML_QUOTE}"
 
 
-def export_opml(feeds: list[RssFeed]) -> str:
+def export_opml(feeds: list[Subscription]) -> str:
     """订阅表 -> OPML 2.0 文本（标准阅读器都认，可再迁去别家）。"""
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -215,63 +232,59 @@ def export_opml(feeds: list[RssFeed]) -> str:
 
 
 # ---- Reddit subreddit 订阅 ----
-
-# 与 Reddit 内置流（首页/热门）撞名的 subreddit 不能当订阅 key（会遮住内置流）
-_REDDIT_BUILTIN = ("home", "popular")
+# （订阅 key 的保留字＝内置流名 home/popular，读源声明：见 _reserved）
 
 
 # ---- Telegram 频道订阅 ----
-
-# 与「全部」聚合流撞名的频道名不能当订阅 key（同 rss 的 all 保留字）
-_TELEGRAM_RESERVED = ("all",)
+# （订阅 key 的保留字＝聚合流名 all，读源声明：见 _reserved）
 
 
-async def add_subreddit(text: str, *, label: str | None = None) -> RssFeed:
+async def add_subreddit(text: str, *, label: str | None = None) -> Subscription:
     """加一个 subreddit 订阅并落盘；显示名缺省拉一次 r/{name}/about 的 display_name。
 
     输入四形态归一（裸名 / r/name / /r/name/ / 站点地址，见 parse_subreddit_input）；
     重复 / 撞内置流 / about 拉不到（subreddit 不存在或未登录）→ SubscriptionError
     （不动配置）。未登录时 about 的报错消息自带「需要登录」指引。
     """
-    from feedscope.sources.reddit import _require_login
+    from feedscope.sources.reddit import require_login
     from feedscope.sources.reddit.fetch import fetch_about
 
     name = parse_subreddit_input(text)
     if not name:
         raise SubscriptionError("没认出 subreddit 名（支持：rust、r/rust、/r/rust/ 或站点地址）")
-    if name in _REDDIT_BUILTIN:
+    if name in _reserved("reddit"):
         raise SubscriptionError(f"{name} 与内置流重名（首页/热门），不能用作订阅名")
     feeds = config.feeds_for("reddit")
     if any(f.key == name for f in feeds):
         raise SubscriptionError(f"r/{name} 已经订阅过了")
     try:
-        await _require_login(f"r/{name}")
+        await require_login(f"r/{name}")
         about = await fetch_about(name)
     except SourceError as exc:  # 含 LoginRequired：订阅管理屏没有账号动线，消息自带指引
         raise SubscriptionError(f"r/{name} 加不上：{exc}") from None
     display = str(about.get("display_name") or "") or name
-    feed = RssFeed(key=name, label=label or display, url=f"https://www.reddit.com/r/{name}/")
+    feed = Subscription(key=name, label=label or display, url=f"https://www.reddit.com/r/{name}/")
     config.update_feeds("reddit", [*feeds, feed])
     return feed
 
 
-async def add_subreddit_from_input(text: str) -> tuple[list[RssFeed], str]:
+async def add_subreddit_from_input(text: str) -> tuple[list[Subscription], str]:
     """订阅管理屏的 reddit 添加入口（与 rss 的 add_from_input 同形，store 注入用）。"""
     feed = await add_subreddit(text)
     return [feed], f"已订阅 r/{feed.key}：{feed.label}"
 
 
-def remove_subreddit(key: str) -> RssFeed | None:
+def remove_subreddit(key: str) -> Subscription | None:
     """删一个 subreddit 订阅；key 不存在返回 None（不动配置）。"""
     return _remove("reddit", key, drop_when_empty=False)
 
 
-def rename_subreddit(key: str, new_label: str) -> RssFeed | None:
+def rename_subreddit(key: str, new_label: str) -> Subscription | None:
     """改 subreddit 订阅的显示名；名字清空 / key 不存在返回 None（不动配置）。"""
     return _rename("reddit", key, new_label)
 
 
-async def add_channel(text: str, *, label: str | None = None) -> RssFeed:
+async def add_channel(text: str, *, label: str | None = None) -> Subscription:
     """加一个 Telegram 频道订阅并落盘；显示名缺省拉一次预览页的频道名。
 
     输入形态见 parse_telegram_input（durov / @durov / t.me/durov / 帖子直链）；
@@ -288,7 +301,7 @@ async def add_channel(text: str, *, label: str | None = None) -> RssFeed:
     name = parse_telegram_input(text)
     if not name:
         raise SubscriptionError("没认出频道名（支持：durov、@durov、t.me/durov 或帖子链接）")
-    if name in _TELEGRAM_RESERVED:
+    if name in _reserved("telegram"):
         raise SubscriptionError("all 是聚合流保留字，不能用作订阅名")
     feeds = config.feeds_for("telegram")
     if any(f.key == name for f in feeds):
@@ -298,23 +311,23 @@ async def add_channel(text: str, *, label: str | None = None) -> RssFeed:
     if not items:
         raise SubscriptionError(f"@{name} 拉不到任何帖子：频道可能不存在、为空，或关闭了 Web 预览")
     display = channel_title(html) or name
-    feed = RssFeed(key=name, label=label or display, url=f"https://t.me/{name}/")
+    feed = Subscription(key=name, label=label or display, url=f"https://t.me/{name}/")
     config.update_feeds("telegram", [*feeds, feed])
     return feed
 
 
-async def add_channel_from_input(text: str) -> tuple[list[RssFeed], str]:
+async def add_channel_from_input(text: str) -> tuple[list[Subscription], str]:
     """订阅管理屏的 Telegram 添加入口（与 rss 的 add_from_input 同形，store 注入用）。"""
     feed = await add_channel(text)
     return [feed], f"已订阅 @{feed.key}：{feed.label}"
 
 
-def remove_channel(key: str) -> RssFeed | None:
+def remove_channel(key: str) -> Subscription | None:
     """删一个频道订阅；key 不存在返回 None（不动配置）。"""
     return _remove("telegram", key, drop_when_empty=True)
 
 
-def rename_channel(key: str, new_label: str) -> RssFeed | None:
+def rename_channel(key: str, new_label: str) -> Subscription | None:
     """改频道订阅的显示名；名字清空 / key 不存在返回 None（不动配置）。"""
     return _rename("telegram", key, new_label)
 
@@ -335,10 +348,10 @@ class SubsStore:
     add_placeholder: str  # 添加输入框占位（各源可输入的形态不同）
     hint: str  # 底部键位提示行
     empty: str  # 零订阅占位文案
-    feeds: Callable[[], list[RssFeed]]  # 当前订阅表（列表顺序 = 配置顺序）
-    add: Callable[[str], Awaitable[tuple[list[RssFeed], str]]]
-    remove: Callable[[str], RssFeed | None]
-    rename: Callable[[str, str], RssFeed | None]
+    feeds: Callable[[], list[Subscription]]  # 当前订阅表（列表顺序 = 配置顺序）
+    add: Callable[[str], Awaitable[tuple[list[Subscription], str]]]
+    remove: Callable[[str], Subscription | None]
+    rename: Callable[[str, str], Subscription | None]
 
 
 def rss_store() -> SubsStore:

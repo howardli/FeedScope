@@ -4,7 +4,7 @@
 
 数据是编的（不碰网络与浏览器），但走的是真实 UI 全链路（注册表 -> FeedScopeApp
 -> 列表/详情屏），改 UI 后重跑即可同步截图。FEEDSCOPE_CONFIG 指向不存在的路径，
-避免本机隐藏流配置让侧栏条目数漂移；PREWARM 关闭避免拉起真 Chrome。
+避免本机隐藏流配置让侧栏条目数漂移；NO_PREWARM 关闭避免拉起真 Chrome。
 
 管线：export_screenshot 出 SVG -> _fix_cjk_metrics 修正中文格宽（Rich 的
 SVG 导出按字符数而非终端格数算 textLength，双格宽的 CJK 只分到一半 advance，
@@ -19,7 +19,6 @@ import asyncio
 import html as _html
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from collections import Counter
@@ -86,20 +85,15 @@ def _fix_cjk_metrics(svg: str) -> tuple[str, int]:
 
 # ---- 无头 Chrome 栅格化（与项目运行前提同源：channel="chrome" 的本机 Chrome）----
 
-_CHROME_CANDIDATES = (
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "google-chrome",
-    "google-chrome-stable",
-)
-
 
 def _chrome_bin() -> str:
-    for cand in _CHROME_CANDIDATES:
-        if "/" in cand and Path(cand).exists():
-            return cand
-        if (p := shutil.which(cand)) :
-            return p
-    raise SystemExit("找不到 Chrome（截图栅格化依赖它，装法见 README）")
+    """Chrome 可执行文件：与 doctor 共用同一发现逻辑（core.const.find_chrome）。"""
+    from feedscope.core.const import find_chrome
+
+    chrome = find_chrome()
+    if not chrome:
+        raise SystemExit("找不到 Chrome（截图栅格化依赖它，装法见 README）")
+    return chrome
 
 
 def _rasterize(svg: str, png: Path) -> None:
@@ -480,7 +474,7 @@ def _reddit_item(title: str, meta: str, kind: str = "link") -> FeedItem:
 
 
 class _DemoCommentsLoader(CommentLoader):
-    """楼层回复树 stub：内存切片（形态对齐 RedditCommentsLoader）。"""
+    """楼层回复树 stub：内存切片（形态对齐 core 的 SliceCommentsLoader）。"""
 
     def __init__(self, comments: list[Comment]) -> None:
         self.comments = comments
@@ -805,11 +799,11 @@ def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
 
 def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
-    # （引导是交互弹层，自动化流程过不去）；PREWARM 关掉不拉真 Chrome
+    # （引导是交互弹层，自动化流程过不去）；NO_PREWARM 关掉不拉真 Chrome
     cfg = DOCS.parent / ".screenshot-sources.toml"
     cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
-    app_mod.PREWARM = False
+    os.environ["FEEDSCOPE_NO_PREWARM"] = "1"
     saved = dict(_REGISTRY)
     _REGISTRY.clear()
     _REGISTRY[DemoZhihu.source_id] = DemoZhihu

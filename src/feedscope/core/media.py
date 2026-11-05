@@ -15,7 +15,9 @@ import re
 from feedscope.core.const import new_h2t
 from feedscope.core.text import strip_zwsp
 
-_ATTR_RE = re.compile(r'([\w-]+)\s*=\s*["\']([^"\']*)["\']')
+# 开标签属性：键 [\w-]+，值双/单引号皆可（反向引用配对——双引号值里的
+# 英文撇号（Don't）不会被单引号误截断，单引号值里的双引号同理）
+_ATTR_RE = re.compile(r"""([\w-]+)\s*=\s*(["'])(.*?)\2""")
 _TOKEN_RE = re.compile("\x00(\\d+)\x00")
 
 # <video>…</video> 整块（嵌套 <source> 一起吃掉），自闭合也认；没有闭合标签的残片不碰
@@ -24,7 +26,7 @@ VIDEO_RE = re.compile(r"<video\b[^>]*(?:/>|>.*?</video>)", re.IGNORECASE | re.DO
 
 def attrs(tag: str) -> dict[str, str]:
     """开标签 -> 属性字典：键转小写，值反转义（src 里的 &amp; 还原成 &）。"""
-    return {k.lower(): _html.unescape(v) for k, v in _ATTR_RE.findall(tag)}
+    return {k.lower(): _html.unescape(v) for k, _q, v in _ATTR_RE.findall(tag)}
 
 
 def pick_url(tag: str, attr_order: tuple[str, ...]) -> str:
@@ -89,6 +91,9 @@ IMG_RE = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
 _ANCHOR_IMG_RE = re.compile(r"(<a\b[^>]*>)\s*\x00(\d+)\x00\s*</a>", re.IGNORECASE)
 
 
+_H2T = new_h2t()  # 模块级实例复用（handle 自带状态复位，省每调用重建）
+
+
 def html_to_md(html: str) -> str:
     """整段 HTML -> markdown：img 换 [图片](原图直链)。RSS 与 V2EX 同管线。
 
@@ -110,4 +115,4 @@ def html_to_md(html: str) -> str:
     tok = Tokens()
     stashed = IMG_RE.sub(lambda m: tok.stash(mark("[图片]", pick_url(m.group(0), ("src",)))), html)
     stashed = _ANCHOR_IMG_RE.sub(_unwrap_anchor, stashed)
-    return strip_zwsp(tok.expand(new_h2t().handle(stashed))).strip()
+    return strip_zwsp(tok.expand(_H2T.handle(stashed))).strip()

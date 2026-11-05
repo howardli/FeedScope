@@ -42,3 +42,13 @@ def truncate_display(text: str, limit: int) -> str:
 def strip_zwsp(text: str) -> str:
     """清掉零宽字符（U+200B）并 strip，中文网页文本进终端前的统一清洗。"""
     return (text or "").replace(_ZWSP, "").strip()
+
+
+def is_cjk(ch: str) -> bool:
+    """是否中日韩字符（表意文字 / 中文标点 / 全角形式）：输入法上屏内容的判定范围。"""
+    return (
+        "\u4e00" <= ch <= "\u9fff"
+        or "\u3400" <= ch <= "\u4dbf"
+        or "\u3000" <= ch <= "\u303f"
+        or "\uff00" <= ch <= "\uffef"
+    )

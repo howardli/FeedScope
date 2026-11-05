@@ -113,7 +113,9 @@ def _title_of(text_html: str, marks: list[str]) -> str:
     return " ".join(labels) if labels else ""
 
 
-def parse_channel_html(html: str, *, channel: str, label: str, all_view: bool = False) -> list[FeedItem]:
+def parse_channel_html(
+    html: str, *, channel: str, label: str, all_view: bool = False
+) -> list[FeedItem]:
     """一页预览 HTML -> FeedItem 列表（时间正序，调用方自行倒排/合并）。
 
     all_view=True 是「全部」聚合视图：元信息列前缀频道名（单频道流里频道

@@ -27,17 +27,18 @@ key，url 存站内地址自解释）走加法——零订阅仍有内置流（�
 
 from __future__ import annotations
 
+import base64
+import json as _json
 from typing import ClassVar
 
 from feedscope.core import config
 from feedscope.core.browser import profile_cookies
-from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
-    CommentLoader,
-    DetailLoader,
     FeedLoader,
     LoginRequired,
+    SliceDetailLoader,
     Source,
     SourceError,
     require_feed_items,
@@ -45,68 +46,26 @@ from feedscope.core.source import (
 from feedscope.sources.reddit.fetch import RedditFeedLoader, fetch_thread_html
 from feedscope.sources.reddit.parse import SOURCE_ID, ThreadDetail, parse_thread_html
 
-# 详情一次拿全树后，楼层/评论每页给多少（内存切片，不是请求）：与 HN 同宽
+# 详情一次拿全树后，楼层每页给多少（内存切片，不是请求）：与 HN 同宽；
+# 评论页宽（20）用 core.SliceCommentsLoader 的默认值
 FLOOR_PAGE = 15
-COMMENT_PAGE = 20
 
 
-class RedditDetailLoader(DetailLoader):
+class RedditDetailLoader(SliceDetailLoader):
     """Reddit 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。"""
 
+    source_label = "Reddit"
+    floor_page = FLOOR_PAGE
+
     def __init__(self, thread: ThreadDetail, fallback_title: str = "") -> None:
-        self._floors = thread.floors
-        first = self._floors[:FLOOR_PAGE]
-        self._given = len(first)
-        self.doc = DetailDoc(
+        super().__init__(
+            [f.answer for f in thread.floors],
+            comment_trees=[f.comments for f in thread.floors],
             title=thread.title or fallback_title,
             meta=thread.meta,
             time=thread.time,
             description_md=thread.description_md,
-            answers=[f.answer for f in first],
         )
-
-    @property
-    def done(self) -> bool:
-        return self._given >= len(self._floors)
-
-    async def load_more(self) -> list[Answer]:
-        if self.done:
-            return []
-        batch = self._floors[self._given : self._given + FLOOR_PAGE]
-        self._given += len(batch)
-        answers = [f.answer for f in batch]
-        self.doc.answers.extend(answers)  # 「doc = 已加载全部」不变量
-        return answers
-
-    async def open_comments(self, index: int) -> RedditCommentsLoader:
-        if not 0 <= index < len(self.doc.answers):
-            raise SourceError("Reddit 该评论不在已加载范围内，先按 Ctrl+N 加载更多楼层")
-        return RedditCommentsLoader(self._floors[index].comments)
-
-    async def close(self) -> None:
-        pass  # 树在内存，无资源
-
-
-class RedditCommentsLoader(CommentLoader):
-    """楼层回复树加载器：整串已在内存，翻页是本地切片（Ctrl+N 零请求）。"""
-
-    def __init__(self, comments: list[Comment]) -> None:
-        self.comments = comments[:COMMENT_PAGE]
-        self._rest = comments[COMMENT_PAGE:]
-
-    @property
-    def done(self) -> bool:
-        return not self._rest
-
-    async def load_more(self) -> list[Comment]:
-        if self.done:
-            return []
-        batch, self._rest = self._rest[:COMMENT_PAGE], self._rest[COMMENT_PAGE:]
-        self.comments.extend(batch)  # 「comments = 已加载全部」不变量
-        return batch
-
-    async def close(self) -> None:
-        pass
 
 
 def _token_logged_in(token_v2: str | None) -> bool:
@@ -120,9 +79,6 @@ def _token_logged_in(token_v2: str | None) -> bool:
     """
     if not token_v2:
         return False
-    import base64
-    import json as _json
-
     try:
         payload = token_v2.split(".")[1]
         payload += "=" * (-len(payload) % 4)
@@ -145,8 +101,12 @@ async def _login_verified(ctx) -> bool:
     return _token_logged_in(jar.get("token_v2"))
 
 
-async def _require_login(what: str) -> None:
-    """判登门：token_v2 JWT 过门（通道页签的 cookie 由浏览器自带，无需另建会话）。"""
+async def require_login(what: str) -> None:
+    """判登门：token_v2 JWT 过门（通道页签的 cookie 由浏览器自带，无需另建会话）。
+
+    公共 API：subscriptions 的 subreddit 添加入口也过这道门（订阅管理屏
+    没有账号动线，LoginRequired 的消息自带指引）。
+    """
     cookies = await profile_cookies("https://www.reddit.com")
     if not _token_logged_in(cookies.get("token_v2")):
         raise LoginRequired(f"Reddit 需要登录后才能查看{what}")
@@ -175,6 +135,9 @@ class RedditSource(Source):
         "popular": "https://www.reddit.com/r/popular/",
     }
     _BUILTIN_LABELS: ClassVar[dict[str, str]] = {"home": "首页", "popular": "热门"}
+    # 订阅 key 不得撞内置流名（/r/home、/r/popular 真实存在，撞名会遮住内置流）：
+    # 从 _BUILTIN 派生，新增内置流时保留字自动跟上（subscriptions 的拒收读这里）
+    reserved_feed_keys = tuple(_BUILTIN)
 
     def __init__(self) -> None:
         """混形合成：内置流剔 hide（减法）+ 订阅表各成一流（加法，RSS 同款）。
@@ -201,7 +164,7 @@ class RedditSource(Source):
         page = (
             self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"
         )  # 订阅 key 即 subreddit 名
-        await _require_login(f"「{label}」流")
+        await require_login(f"「{label}」流")
         loader = RedditFeedLoader(page, label)
         await loader.load_more()  # 首批（判登在此抛 LoginRequired）
         if name == "home" and not loader.items:
@@ -214,7 +177,7 @@ class RedditSource(Source):
         require_feed_items(loader.items, self.label, label)  # 0 条 = 大概率改版
         return loader
 
-    async def open_detail(self, item: FeedItem) -> DetailLoader:
-        await _require_login("帖子详情")
+    async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
+        await require_login("帖子详情")
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
         return RedditDetailLoader(parse_thread_html(html, fallback_title=item.title))

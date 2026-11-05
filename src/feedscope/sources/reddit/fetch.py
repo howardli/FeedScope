@@ -36,7 +36,11 @@ import re
 from feedscope.core.browser import ChannelTab
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
-from feedscope.sources.reddit.parse import parse_next_html, parse_posts_html
+from feedscope.sources.reddit.parse import (
+    parse_next_html,
+    parse_posts_html,
+    parse_subreddit_page,
+)
 
 _API = "https://www.reddit.com"
 
@@ -129,7 +133,6 @@ async def fetch_thread_html(permalink: str, *, source: str = "Reddit 帖子") ->
 
 async def fetch_about(name: str) -> dict:
     """r/{name} 页面校验存在性；返回 {"display_name": 名}（订阅添加用）。"""
-    from feedscope.sources.reddit.parse import parse_subreddit_page
 
     html = await _get_html(f"{_API}/r/{name}/", source=f"Reddit r/{name}")
     real = parse_subreddit_page(html)

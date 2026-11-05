@@ -3,7 +3,8 @@
 包内分层（全项目统一的源模板）：
 - fetch.py  取数层：官方 v1 公开 API（免 token 免登录、无登录态）
 - parse.py  解析层：v1 JSON -> FeedItem / 主题详情，纯函数可测
-- __init__.py 编排层：Source 能力声明与 open_* 分派 + 内存分页 Loader
+- __init__.py 编排层：Source 能力声明与 open_* 分派（楼层翻页走 core 的
+  内存切片基类）
 
 结构映射是 X 式两层：topic 本体 -> 回复平铺当楼层（unit「回复」）；V2EX
 回复没有嵌套结构，无评论层（supports_comments=False，Enter 键位预告按此
@@ -15,10 +16,10 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from feedscope.core.models import Answer, DetailDoc, FeedItem
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
-    DetailLoader,
+    SliceDetailLoader,
     Source,
     SourceError,
     StaticFeedLoader,
@@ -32,35 +33,20 @@ from feedscope.sources.v2ex.parse import SOURCE_ID, TopicDetail, parse_detail, p
 REPLY_PAGE = 15
 
 
-class V2exDetailLoader(DetailLoader):
+class V2exDetailLoader(SliceDetailLoader):
     """V2EX 详情加载器：回复已全在内存——楼层翻页是切片，零额外请求。"""
 
+    source_label = "V2EX"
+    floor_page = REPLY_PAGE
+
     def __init__(self, topic: TopicDetail, fallback_title: str = "") -> None:
-        self._replies = topic.replies
-        first = self._replies[:REPLY_PAGE]
-        self._given = len(first)
-        self.doc = DetailDoc(
+        super().__init__(
+            topic.replies,
             title=topic.title or fallback_title,
             meta=topic.meta,
             time=topic.time,
             description_md=topic.description_md,
-            answers=list(first),
         )
-
-    @property
-    def done(self) -> bool:
-        return self._given >= len(self._replies)
-
-    async def load_more(self) -> list[Answer]:
-        if self.done:
-            return []
-        batch = self._replies[self._given : self._given + REPLY_PAGE]
-        self._given += len(batch)
-        self.doc.answers.extend(batch)  # 「doc = 已加载全部」不变量
-        return batch
-
-    async def close(self) -> None:
-        pass  # 回复在内存，无资源
 
 
 @register
@@ -82,7 +68,7 @@ class V2exSource(Source):
         require_feed_items(items, self.label, label)  # 0 条 = 接口可能已变
         return StaticFeedLoader(items)  # v1 一页全量（hot 10 / latest 40），无翻页
 
-    async def open_detail(self, item: FeedItem) -> DetailLoader:
+    async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         # 正文随列表透传（列表端点 content 即全量）；缺上下文的旧条目（如
         # 跨进程恢复的列表）回列表重进即可，不值得为此多打一个端点
         topic = item.extra.get("topic")

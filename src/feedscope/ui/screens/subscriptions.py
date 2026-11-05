@@ -19,97 +19,13 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+from textual.widgets import Button, Label, ListItem, ListView, Static
 
-from feedscope.core.config import RssFeed  # 仅类型注解用（列表行的 key/label/url 三段）
+from feedscope.core.config import Subscription  # 仅类型注解用（列表行的 key/label/url 三段）
 from feedscope.subscriptions import SubscriptionError, SubsStore
 from feedscope.ui import feedback
+from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
-
-
-class InputScreen(ArrowModalScreen[str | None]):
-    """单行输入弹层：Enter 确定 / Esc 取消，返回文本（空 = None）。
-
-    全应用唯一的文本输入（粘贴走终端原生 bracketed paste，从 Finder 拖
-    文件进终端即得路径）；Input 自己消费字符键（←/→ 是文本光标），↑/↓
-    在输入行与按钮行间移动焦点（ArrowModalScreen）。
-    """
-
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
-
-    CSS = """
-    #input-dialog {
-        width: 64; height: auto;
-        background: $surface; border: ascii $primary; padding: 1 2;
-    }
-    #input-title { text-style: bold; padding-bottom: 1; }
-    #input-line { width: 1fr; }
-    #input-actions { height: auto; margin-top: 1; }
-    #input-actions Button { margin-right: 1; }
-    """
-
-    def __init__(self, title: str, *, initial: str = "", placeholder: str = "") -> None:
-        super().__init__()
-        self._title = title
-        self._initial = initial
-        self._placeholder = placeholder
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="input-dialog"):
-            yield Label(self._title, id="input-title")
-            yield Input(value=self._initial, placeholder=self._placeholder, id="input-line")
-            with Horizontal(id="input-actions"):
-                yield Button("确定", id="input-ok", variant="primary")
-                yield Button("取消", id="input-cancel")
-
-    def on_mount(self) -> None:
-        self.query_one("#input-line", Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value.strip() or None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "input-ok":
-            self.dismiss(self.query_one("#input-line", Input).value.strip() or None)
-        else:
-            self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ConfirmModal(ArrowModalScreen[bool]):
-    """轻确认弹层（删除订阅用）：True=确认，Esc/取消 = False。"""
-
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
-
-    CSS = """
-    #confirm-dialog {
-        width: auto; max-width: 60; height: auto;
-        background: $surface; border: ascii $primary; padding: 1 2;
-    }
-    #confirm-prompt { padding-bottom: 1; }
-    #confirm-actions { height: auto; }
-    #confirm-actions Button { margin-right: 1; }
-    """
-
-    def __init__(self, prompt: str, confirm_label: str = "确认") -> None:
-        super().__init__()
-        self._prompt = prompt
-        self._confirm_label = confirm_label
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-dialog"):
-            yield Label(self._prompt, id="confirm-prompt")
-            with Horizontal(id="confirm-actions"):
-                yield Button(self._confirm_label, id="confirm-ok", variant="primary")
-                yield Button("取消", id="confirm-cancel")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "confirm-ok")
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
 
 
 class SubscriptionsScreen(ArrowModalScreen[bool]):
@@ -180,7 +96,7 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
             self.query_one("#subs-empty", Label).update(self._store.empty)
         view.focus()
 
-    def _current(self) -> RssFeed | None:
+    def _current(self) -> Subscription | None:
         """当前选中的订阅（列表顺序 = 配置顺序，索引即位）。"""
         view = self.query_one("#subs-list", ListView)
         feeds = self._store.feeds()
@@ -221,7 +137,7 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     async def _remove_flow(self, key: str, label: str) -> None:
         if not await self.app.push_screen(
-            ConfirmModal(f"删除订阅「{label}」？", confirm_label="删除"), wait_for_dismiss=True
+            ConfirmScreen(f"删除订阅「{label}」？", confirm_label="删除"), wait_for_dismiss=True
         ):
             return
         if self._store.remove(key) is not None:

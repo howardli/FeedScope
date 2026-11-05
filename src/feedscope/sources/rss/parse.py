@@ -105,7 +105,9 @@ def parse_feed(
                     "feed_key": feed_key,
                     "feed_label": feed_label,
                     "author": author,
-                    "published": _epoch(entry.get("published_parsed") or entry.get("updated_parsed")),
+                    "published": _epoch(
+                        entry.get("published_parsed") or entry.get("updated_parsed")
+                    ),
                     "content_html": _content_html(entry),
                 },
             )

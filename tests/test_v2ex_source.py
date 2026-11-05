@@ -10,25 +10,14 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import recording_http
 from test_v2ex_parse import REPLIES, TOPICS
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
-from feedscope.core import http
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import get_source
 from feedscope.core.source import SourceError
 from feedscope.sources.v2ex.parse import parse_topics
-
-
-def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
-    calls: list[httpx.Request] = []
-
-    def wrapped(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return handler(request)
-
-    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(wrapped)))
-    return calls
 
 
 def _item(topic: dict = TOPICS[0]) -> FeedItem:
@@ -45,7 +34,7 @@ def test_open_feed_hot(monkeypatch: pytest.MonkeyPatch) -> None:
         assert request.url.path == "/api/topics/hot.json"
         return httpx.Response(200, json=TOPICS, request=request)
 
-    _mock(monkeypatch, handler)
+    recording_http(monkeypatch, handler)
     loader = asyncio.run(get_source("v2ex").open_feed("hot"))
     try:
         assert [it.id for it in loader.items] == ["1253836", "1253979"]
@@ -61,14 +50,14 @@ def test_open_feed_unknown_name_rejected() -> None:
 
 
 def test_open_feed_empty_topics_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock(monkeypatch, lambda r: httpx.Response(200, json=[], request=r))
+    recording_http(monkeypatch, lambda r: httpx.Response(200, json=[], request=r))
     with pytest.raises(SourceError, match="0 条"):
         asyncio.run(get_source("v2ex").open_feed("hot"))
 
 
 def test_open_feed_non_list_shape_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """返回结构变了（如换成 dict 包裹）= 接口已改版，显式报错而非静默空列表。"""
-    _mock(monkeypatch, lambda r: httpx.Response(200, json={"data": []}, request=r))
+    recording_http(monkeypatch, lambda r: httpx.Response(200, json={"data": []}, request=r))
     with pytest.raises(SourceError, match="返回结构异常"):
         asyncio.run(get_source("v2ex").open_feed("hot"))
 
@@ -82,7 +71,7 @@ def test_open_detail_floors(monkeypatch: pytest.MonkeyPatch) -> None:
         assert request.url.params["topic_id"] == "1253836"
         return httpx.Response(200, json=REPLIES, request=request)
 
-    calls = _mock(monkeypatch, handler)
+    calls = recording_http(monkeypatch, handler)
     detail = asyncio.run(get_source("v2ex").open_detail(_item()))
     try:
         doc = detail.doc
@@ -98,7 +87,7 @@ def test_open_detail_floors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_open_detail_missing_context_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """extra 没带 topic（跨进程恢复的旧条目）：报错引导回列表，不发请求。"""
-    calls = _mock(monkeypatch, lambda r: httpx.Response(200, json=[], request=r))
+    calls = recording_http(monkeypatch, lambda r: httpx.Response(200, json=[], request=r))
     bare = FeedItem(source="v2ex", id="1253836", title="T", url="https://www.v2ex.com/t/1253836")
     with pytest.raises(SourceError, match="列表上下文"):
         asyncio.run(get_source("v2ex").open_detail(bare))
@@ -123,7 +112,7 @@ def _wide_replies(n: int = 17) -> list[dict]:
 
 def test_detail_local_paging(monkeypatch: pytest.MonkeyPatch) -> None:
     """楼层翻页是内存切片：一次请求后零网络。"""
-    calls = _mock(monkeypatch, lambda r: httpx.Response(200, json=_wide_replies(), request=r))
+    calls = recording_http(monkeypatch, lambda r: httpx.Response(200, json=_wide_replies(), request=r))
     detail = asyncio.run(get_source("v2ex").open_detail(_item()))
     try:
         assert len(detail.doc.answers) == 15 and not detail.done

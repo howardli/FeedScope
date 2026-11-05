@@ -10,24 +10,13 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import recording_http
 from test_hn_parse import _TREE, HITS
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
-from feedscope.core import http
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import get_source
 from feedscope.core.source import SourceError
-
-
-def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
-    calls: list[httpx.Request] = []
-
-    def wrapped(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return handler(request)
-
-    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(wrapped)))
-    return calls
 
 
 def _search_json(hits: list[dict], *, page: int = 0, nb_pages: int = 1) -> dict:
@@ -48,7 +37,7 @@ def test_open_feed_front(monkeypatch: pytest.MonkeyPatch) -> None:
         assert request.url.params["page"] == "0"
         return httpx.Response(200, json=_search_json(HITS), request=request)
 
-    _mock(monkeypatch, handler)
+    recording_http(monkeypatch, handler)
     loader = asyncio.run(get_source("hn").open_feed("front"))
     try:
         assert [it.id for it in loader.items] == ["50312408", "50326821", "50330000"]
@@ -63,7 +52,7 @@ def test_open_feed_unknown_name_rejected() -> None:
 
 
 def test_open_feed_empty_hits_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock(monkeypatch, lambda r: httpx.Response(200, json=_search_json([]), request=r))
+    recording_http(monkeypatch, lambda r: httpx.Response(200, json=_search_json([]), request=r))
     with pytest.raises(SourceError, match="0 条"):
         asyncio.run(get_source("hn").open_feed("ask"))
 
@@ -78,7 +67,7 @@ def test_feed_loader_pages_and_dedups(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=pages[int(request.url.params["page"])], request=request)
 
-    _mock(monkeypatch, handler)
+    recording_http(monkeypatch, handler)
     loader = asyncio.run(get_source("hn").open_feed("front"))
     try:
         assert not loader.done and len(loader.items) == 3
@@ -92,7 +81,7 @@ def test_feed_loader_pages_and_dedups(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_open_detail_floors_and_comments(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _mock(
+    calls = recording_http(
         monkeypatch,
         lambda r: httpx.Response(200, json=_TREE, request=r),
     )
@@ -159,7 +148,7 @@ def _wide_tree(n_floors: int = 17, replies_per: int = 25) -> dict:
 
 def test_detail_and_comments_local_paging(monkeypatch: pytest.MonkeyPatch) -> None:
     """楼层（15/页）与评论（20/页）的翻页都是内存切片：一次请求后零网络。"""
-    calls = _mock(monkeypatch, lambda r: httpx.Response(200, json=_wide_tree(), request=r))
+    calls = recording_http(monkeypatch, lambda r: httpx.Response(200, json=_wide_tree(), request=r))
     detail = asyncio.run(get_source("hn").open_detail(_item("1")))
     try:
         assert len(detail.doc.answers) == 15 and not detail.done

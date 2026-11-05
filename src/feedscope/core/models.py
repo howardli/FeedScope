@@ -21,7 +21,7 @@ class FeedItem:
     id: str                            # 源内稳定 id（url token、hn id 等）
     title: str
     url: str
-    kind: str = ""                     # 内容类型；语义由源定义，见 Source.kind_labels / detail_kinds
+    kind: str = ""                     # 内容类型；语义由源定义（Source.kind_labels / detail_kinds）
     meta: str = ""                     # 列表元信息列语义文本（热度/作者/节点名…），UI 统一截断对齐
     extra: dict[str, Any] = field(default_factory=dict)  # 传给 detail 抓取的补充字段
 
@@ -58,9 +58,22 @@ class Answer:
     author: str
     votes: str                         # 展示文本，如 "赞同 148"
     content_md: str
-    time: str = ""                     # 发布时间展示文本，如 "2026-10-19 14:32"（源尽力而为，缺省空）
+    time: str = ""                     # 发布时间展示文本，如 "2026-10-19 14:32"（源尽力而为）
     url: str = ""                      # 楼层直达链接（知乎回答页）；空 = 用父条目 url
     comment_count: str = ""            # 展示文本，如 "158 条评论"（缺省空）
+
+
+@dataclass
+class Floor:
+    """一个楼层（顶层评论/回答）：本体 + 它的回复树（已是 Comment 列表）。
+
+    「详情一次拉全树」的源（HN / Reddit）的 parse 产物单元，楼层切片
+    Loader（core.source.SliceDetailLoader 的调用方）按 answer 建楼层、
+    按下标切 comments 进评论层。
+    """
+
+    answer: Answer
+    comments: list[Comment] = field(default_factory=list)
 
 
 @dataclass

@@ -31,7 +31,7 @@ from feedscope.sources.x.fetch import (
 )
 
 
-async def _require_login(what: str) -> None:
+async def require_login(what: str) -> None:
     """判登门：auth_token/ct0 成对在 profile 里即已登录（通道页签的 cookie 由浏览器自带）。"""
     cookies = await profile_cookies("https://x.com")
     if not cookies.get("auth_token") or not cookies.get("ct0"):
@@ -55,14 +55,14 @@ class XSource(Source):
         if name not in self.feed_labels:
             raise ValueError(f"未知信息流：{name}")
         label = self.feed_labels[name]
-        await _require_login(f"「{label}」时间线")
+        await require_login(f"「{label}」时间线")
         loader = XFeedLoader(name)
         await loader.load_more()  # 首批
         require_feed_items(loader.items, self.label, label)  # 0 条 = 大概率改版
         return loader
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
-        await _require_login("推文详情")
+        await require_login("推文详情")
         # 转发（RT）的会话在原推那里：列表已把原推 id 放进 extra（见 parse._tweet_from_result）
         rest_id = str(item.extra.get("conversation_id") or item.id.rsplit("/", 1)[-1])
         entries, cursor = await _fetch_conversation(rest_id, None)

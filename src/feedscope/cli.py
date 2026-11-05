@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,13 +61,17 @@ def _run_rss(args: argparse.Namespace) -> int:
         return 0
 
     if args.rss_command == "add":
-        # add_from_input 只分流 URL / OPML 路径；显式 key/label 仍走 add_feed
+        # add_from_input 只分流 URL / OPML 路径；显式 key/label 仍走 add_feed。
+        # 坏 OPML 文件 = 用法级错误退 2（与 import 同一规则），业务冲突退 1
         try:
             if args.key or args.label:
                 feed = asyncio.run(subs.add_feed(args.url, key=args.key, label=args.label))
                 added, summary = [feed], f"已订阅 {feed.key}：{feed.label} <{feed.url}>"
             else:
                 added, summary = asyncio.run(subs.add_from_input(args.url))
+        except subs.BadSubscriptionFile as exc:
+            print(f"未添加：{exc}")
+            return 2
         except subs.SubscriptionError as exc:
             print(f"未添加：{exc}")
             return 1
@@ -88,14 +91,9 @@ def _run_rss(args: argparse.Namespace) -> int:
 
     if args.rss_command == "import":
         try:
-            text = Path(args.path).read_text(encoding="utf-8")
-        except OSError as exc:
-            print(f"OPML 文件读不了：{exc}")
-            return 2
-        try:
-            added, skipped = subs.import_opml(text)
-        except ET.ParseError as exc:
-            print(f"不是合法的 OPML（XML 解析失败）：{exc}")
+            added, skipped = subs.import_opml(subs.read_opml_file(args.path))
+        except subs.BadSubscriptionFile as exc:
+            print(f"导入失败：{exc}")
             return 2
         for f in added:
             print(f"已订阅 {f.key}：{f.label} <{f.url}>")

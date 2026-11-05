@@ -146,12 +146,16 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         sid = self._entries[idx][0]
         cls = next((c for c in source_classes() if c.source_id == sid), None)
         if cls is None or not cls.subscribable:
-            feedback.info(self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅")
+            feedback.info(
+                self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅"
+            )
             return
         self.run_worker(self._manage_feeds(sid, cls))
 
     async def _manage_feeds(self, sid: str, cls: type) -> None:
-        changed = await self.app.push_screen(SubscriptionsScreen(store_for(sid)), wait_for_dismiss=True)
+        changed = await self.app.push_screen(
+            SubscriptionsScreen(store_for(sid)), wait_for_dismiss=True
+        )
         if not changed:
             return
         self._sync_row(sid)

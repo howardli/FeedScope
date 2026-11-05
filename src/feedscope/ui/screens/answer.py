@@ -4,6 +4,8 @@
 评论按需抓取：进这一屏才调问题 loader 的 open_comments（用户不进就不花
 一次请求）；正文秒显（数据已在问题 loader 的 doc 里），评论异步补上。
 评论层与问题层共享页签：评论 loader 的 close() 只收评论区，不关底座。
+与问题屏共享的阅读屏机械件（resize 重排 / hint 生命周期 / 清理）在
+ReadingScreen。
 """
 
 from __future__ import annotations
@@ -16,21 +18,19 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.events import Resize
-from textual.screen import Screen
-from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Comment, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import feedback
-from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
+from feedscope.ui.layout import md_body_width
+from feedscope.ui.screens.reading import READING_CSS, ReadingScreen
 from feedscope.ui.widgets import divider
 from feedscope.ui.wrap import wrap_markdown
 
 
-class AnswerScreen(Screen[None]):
+class AnswerScreen(ReadingScreen):
     """单条回答全文 + 它的评论区（评论此刻才请求）。
 
     Esc 返回问题屏（阅读位置不变）；Ctrl+N 加载更多评论（评论多时一层层翻）；
@@ -40,13 +40,26 @@ class AnswerScreen(Screen[None]):
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明。标签是占位：__init__ 按源词汇表换成
-        # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）
-        Binding("escape", "back", "返回"),
+        # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）；
+        # Esc 返回继承自 ReadingScreen
         Binding("ctrl+n", "more", "更多评论"),
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_answer", "下一回答"),
         Binding("left", "prev_answer", "上一回答"),
     ]
+
+    CSS = READING_CSS + """
+    #answer-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
+    #answer-meta { padding: 0 2; }
+    #answer-content { padding: 0 2; }
+    .comments-header { padding: 1 2; text-style: bold; }
+    .comment-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 与 .answer-head 同：折行不裁剪 */
+    .comment-body { padding: 0 2; }
+    .comment-head.comment-sub { margin-left: 3; }
+    .comment-body.comment-sub { margin-left: 3; }
+    #cm-loading, #cm-more-loading { padding: 1 2; }
+    #cm-empty, #cm-no-more, .cm-hint { padding: 1; }
+    """
 
     def __init__(
         self, source: Source, item: FeedItem, qloader: DetailLoader, index: int
@@ -73,11 +86,6 @@ class AnswerScreen(Screen[None]):
             ]
         self._exhausted = False        # 评论到头，n 不再触发
         self._floor_count = 0          # 评论楼层序号，跨 load_more 递增
-        self._prev_sub_title: str | None = None
-        self._rendered = False         # 正文已上屏（resize 重排的门槛）
-        self._last_width = 0
-        self._resize_timer: Timer | None = None
-        self._hint: Static | None = None
 
     @property
     def _answer(self):
@@ -88,24 +96,43 @@ class AnswerScreen(Screen[None]):
         yield VerticalScroll(id="answer-body-scroll")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        self._prev_sub_title = self.app.sub_title
-        self.query_one("#answer-body-scroll", VerticalScroll).focus()
+    def _body_scroll(self) -> VerticalScroll:
+        return self.query_one("#answer-body-scroll", VerticalScroll)
+
+    async def _mount_body(self) -> None:
+        self._body_scroll().focus()
         await self._render_doc()
         self._rendered = True
         self.run_worker(self._load_comments(), group="comments", exclusive=True)
 
+    def _reset_render_state(self) -> None:
+        self._floor_count = 0
+
+    async def _close_loader(self) -> None:
+        loader, self.cloader = self.cloader, None
+        if loader is not None:
+            await loader.close()  # 只收评论区（Esc 关 Modal），问题页签由问题屏管
+
+    def _hint_widget(self) -> Static:
+        # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重。
+        # 只留 Footer 没有的语义增量（加载什么）；换楼层/返回是 Footer 的键位职责
+        return Static(
+            f"[dim]── Ctrl+N 加载更多{self._unit} ──[/dim]",
+            classes="cm-hint",
+        )
+
     # ---- 渲染 ----
 
     def _md_width(self, indent: int = 0) -> int:
-        w = md_body_width(self.query_one("#answer-body-scroll", VerticalScroll).region.width)
+        w = md_body_width(self._body_scroll().region.width)
         return max(w - indent, 20)
 
     async def _render_doc(self) -> None:
         """整个回答详情上屏（单次 mount = 单次布局）；评论未到先占位。"""
         ans = self._answer
-        body = self.query_one("#answer-body-scroll", VerticalScroll)
-        widgets: list[Widget] = [Static(escape(f"{ans.author} 的{self._floor_unit}"), id="answer-title")]
+        body = self._body_scroll()
+        title = Static(escape(f"{ans.author} 的{self._floor_unit}"), id="answer-title")
+        widgets: list[Widget] = [title]
         meta = " · ".join(x for x in (ans.votes, ans.comment_count, ans.time) if x)
         if meta:
             widgets.append(Static(f"[dim]{escape(meta)}[/dim]", id="answer-meta"))
@@ -126,14 +153,6 @@ class AnswerScreen(Screen[None]):
             self._hint = self._hint_widget()
             widgets.append(self._hint)
         await body.mount(*widgets)
-
-    def _hint_widget(self) -> Static:
-        # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重。
-        # 只留 Footer 没有的语义增量（加载什么）；换楼层/返回是 Footer 的键位职责
-        return Static(
-            f"[dim]── Ctrl+N 加载更多{self._unit} ──[/dim]",
-            classes="cm-hint",
-        )
 
     def _comment_floor(self, c: Comment) -> list[Widget]:
         """一条顶层评论的楼层部件（头部 + 内容 + 缩进的子回复）。"""
@@ -181,25 +200,33 @@ class AnswerScreen(Screen[None]):
             self.cloader = await self.qloader.open_comments(self.index)
         except Exception as exc:
             feedback.fail(self.app, self.source, exc, action="评论加载失败")
-            self._swap_status("cm-loading", f"[red]评论加载失败：{escape(feedback.failure_text(self.source, exc))} · Ctrl+N 重试[/red]")
+            self._swap_status(
+                "cm-loading",
+                f"[red]评论加载失败：{escape(feedback.failure_text(self.source, exc))}"
+                " · Ctrl+N 重试[/red]",
+            )
             return
         comments = self.cloader.comments
         self._exhausted = self.cloader.done and not comments
         await self._mount_floors(comments, first=True)
 
     async def _mount_floors(self, comments: list[Comment], *, first: bool) -> None:
-        body = self.query_one("#answer-body-scroll", VerticalScroll)
+        body = self._body_scroll()
         if first:
             for sel in ("#cm-loading",):
                 for w in self.query(sel):
                     await w.remove()
             if not comments:
-                self._exhausted = True
                 self._remove_hint()
-                await body.mount(
-                    Static(f"[dim]（没有{self._unit}）[/dim]", id="cm-empty"),
-                    Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"),
-                )
+                tail: list[Widget] = [Static(f"[dim]（没有{self._unit}）[/dim]", id="cm-empty")]
+                if self._exhausted:
+                    # 到头且为空 = 真没有评论（EOF 标记）
+                    tail.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"))
+                else:
+                    # 首批拉空但没到头（网慢）：不判死，尾行保留 Ctrl+N 重试预告
+                    self._hint = self._hint_widget()
+                    tail.append(self._hint)
+                await body.mount(*tail)
                 return
         widgets: list[Widget] = []
         for c in comments:
@@ -211,23 +238,7 @@ class AnswerScreen(Screen[None]):
         for w in self.query(sel):
             w.update(text)
 
-    def _remove_hint(self) -> None:
-        if self._hint is not None:
-            w, self._hint = self._hint, None
-            try:
-                w.remove()  # 同步发起摘除；同 id 重复挂载的防护见 _mount_hint
-            except Exception:
-                pass
-
-    async def _mount_hint(self) -> None:
-        self._remove_hint()
-        self._hint = self._hint_widget()
-        await self.query_one("#answer-body-scroll", VerticalScroll).mount(self._hint)
-
     # ---- 键位 ----
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
 
     def action_open_browser(self) -> None:
         webbrowser.open(self._answer.url or self.item.url)
@@ -240,7 +251,7 @@ class AnswerScreen(Screen[None]):
         if self._exhausted:
             feedback.info(self.app, f"没有更多{self._unit}了")
             return
-        self.run_worker(self._load_more(), group="comments")
+        self.run_worker(self._load_more(), group="comments", exclusive=True)
 
     async def _retry_comments(self) -> None:
         for w in self.query("#cm-loading"):
@@ -248,7 +259,7 @@ class AnswerScreen(Screen[None]):
         await self._load_comments()
 
     async def _load_more(self) -> None:
-        body = self.query_one("#answer-body-scroll", VerticalScroll)
+        body = self._body_scroll()
         self._remove_hint()
         loading = Label("[dim]加载更多…[/dim]", id="cm-more-loading")
         await body.mount(loading)
@@ -283,7 +294,9 @@ class AnswerScreen(Screen[None]):
         if not 0 <= nxt < n_answers:
             feedback.info(
                 self.app,
-                f"后面没有已加载的{self._floor_unit}了" if delta > 0 else f"前面没有{self._floor_unit}了",
+                f"后面没有已加载的{self._floor_unit}了"
+                if delta > 0
+                else f"前面没有{self._floor_unit}了",
             )
             return
         self.workers.cancel_group(self, "comments")  # 评论还在途：丢弃
@@ -292,59 +305,11 @@ class AnswerScreen(Screen[None]):
             await loader.close()
         self.index = nxt
         self._exhausted = False
-        self._floor_count = 0
+        self._reset_render_state()
         self._rendered = False
-        self._hint = None
-        body = self.query_one("#answer-body-scroll", VerticalScroll)
+        self._remove_hint()
+        body = self._body_scroll()
         await body.remove_children()
         await self._render_doc()
         self._rendered = True
         self.run_worker(self._load_comments(), group="comments", exclusive=True)
-
-    def action_scroll_down(self) -> None:
-        self.query_one("#answer-body-scroll", VerticalScroll).scroll_down(animate=False)
-
-    def action_scroll_up(self) -> None:
-        self.query_one("#answer-body-scroll", VerticalScroll).scroll_up(animate=False)
-
-    # ---- resize 重排（与问题屏同手法）----
-
-    def on_resize(self, event: Resize) -> None:
-        if event.size.width == self._last_width:
-            return
-        first_layout = self._last_width == 0
-        self._last_width = event.size.width
-        if first_layout or not self._rendered:
-            return
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, self._rerender)
-
-    def _rerender(self) -> None:
-        if not self._rendered:
-            return
-        scroll_y = self.query_one("#answer-body-scroll", VerticalScroll).scroll_y
-        self.run_worker(self._rerender_body(scroll_y))
-
-    async def _rerender_body(self, scroll_y: float) -> None:
-        body = self.query_one("#answer-body-scroll", VerticalScroll)
-        await body.remove_children()
-        self._hint = None
-        self._floor_count = 0
-        try:
-            await self._render_doc()
-        except Exception:
-            return  # 屏幕正在被关闭：放弃重排
-        body.call_after_refresh(body.scroll_to, y=scroll_y, animate=False)
-
-    # ---- 清理 ----
-
-    async def on_unmount(self) -> None:
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-            self._resize_timer = None
-        if self._prev_sub_title is not None:
-            self.app.sub_title = self._prev_sub_title
-        loader, self.cloader = self.cloader, None
-        if loader is not None:
-            await loader.close()  # 只收评论区（Esc 关 Modal），问题页签由问题屏管

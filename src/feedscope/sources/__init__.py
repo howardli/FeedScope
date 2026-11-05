@@ -5,13 +5,20 @@
 （用户侧隐藏内置流走 sources.toml，见 core/config.py，不动这里）：
 
     sources/<id>/
-      fetch.py      取数层：拿原始数据（httpx / 浏览器顶跳 / DOM 提取），
+      fetch.py      取数层：拿原始数据（httpx / 通道页签 fetch / DOM 提取），
                     持资源的增量 Loader 也放这里；不碰 UI。
       parse.py      解析层：raw dict/HTML -> FeedItem/Answer/DetailDoc/markdown，
                     纯函数，直接可写 fixture 测试；不碰网络。
-      __init__.py   编排层：@register 的 Source 子类，只做能力声明
-                    （feeds/kind_labels/detail_kinds/登录声明）与 open_* 分派
-                    （出口统一过 require_feed_items 首屏守卫），加无资源的内存分页 Loader。
+      __init__.py   编排层：@register 的 Source 子类，只做能力声明与 open_* 分派
+                    （出口统一过 require_feed_items 首屏守卫）。
+
+编排层按源形态直接继承共享骨架，别重写机械件：
+- 纯订阅聚合（RSS / Telegram 形）：继承 core.source.SubscribedSource——
+  feeds 加法合成、「全部」流的四级错误出口全在基类，子类只注入
+  _fetch_merged / _open_one 两个差异
+- 详情一次拉全树（HN / Reddit / V2EX 形）：楼层/评论 loader 继承
+  core.source.SliceDetailLoader / 用 StaticDetailLoader，翻页切片零代码
+- 讨论树深层拍平：core.tree（@ 父作者前缀规则全库唯一实现）
 
 依赖方向只允许 __init__ -> fetch -> parse -> core（parse 永远是最底层叶子）。
 """

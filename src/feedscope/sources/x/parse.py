@@ -16,7 +16,8 @@
 
 URT 条目三类：
 - TimelineTimelineItem：推文（itemContent.promotedMetadata 有值 = 推广，丢弃）
-- TimelineTimelineModule：conversationthread-* / home-conversation-* 内嵌 items[] 是推文；who-to-follow-* 丢弃
+- TimelineTimelineModule：conversationthread-* / home-conversation-* 内嵌
+  items[] 是推文；who-to-follow-* 丢弃
 - TimelineTimelineCursor：cursor-bottom-* / cursor-showmorethread-* 是下一页游标
 """
 
@@ -39,6 +40,9 @@ _TITLE_MAX_CELLS = 280
 
 # 引用片段缀尾预算：列表里提示「引了什么」够用，被引全文进详情看
 _QUOTE_SNIPPET_CELLS = 80
+
+# 详情标题截断：正文首行的显示格上限（详情屏标题行与 Header 副标题共用）
+_DETAIL_TITLE_CELLS = 60
 
 
 def _rt_result(r: dict) -> dict:
@@ -170,7 +174,8 @@ def _grok_translation(r: dict) -> str:
     if not g.get("is_available") or not text:
         return ""
     text = re.sub(r"\s+", " ", _expand_urls(text, data)).strip()
-    lang = _LANG_NAMES.get(str(data.get("source_language") or ""), str(data.get("source_language") or ""))
+    src_lang = str(data.get("source_language") or "")
+    lang = _LANG_NAMES.get(src_lang, src_lang)
     label = f"**译文**（{lang}）" if lang else "**译文**"
     return f"> {label}：{text}"
 
@@ -395,7 +400,7 @@ def _quote_context(r: dict, label: str) -> str:
 def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
     """焦点推文 -> (title, meta, description_md, time)。
 
-    title 取正文首行截 60 格（详情屏标题行与 Header 副标题共用，标题保持
+    title 取正文首行截 _DETAIL_TITLE_CELLS 格（详情屏标题行与 Header 副标题共用，标题保持
     原文——扫描面）；正文全文（含换行，开头的 @ 提及已藏）放 description_md，
     媒体附直接地址（_media_links，与知乎同形），外文推的 Grok 译文块接在
     正文与媒体之后（阅读面才有译文，列表/标题不带），单行短文与标题重复时
@@ -407,7 +412,11 @@ def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
     legacy = focal.get("legacy") or {}
     name, handle = _author(focal)
     body = _visible_text(focal)
-    title = truncate_display(body.split("\n", 1)[0].strip(), 60) or _media_markers(focal).strip() or "推文"
+    title = (
+        truncate_display(body.split("\n", 1)[0].strip(), _DETAIL_TITLE_CELLS)
+        or _media_markers(focal).strip()
+        or "推文"
+    )
     meta = f"{name} @{handle}".strip()  # 署名「名字 @handle」（详情行全宽，不再截 8 格）
     if legacy.get("reply_count"):
         meta += f" · {fmt_count(legacy['reply_count'])} 回复"
@@ -452,7 +461,9 @@ def _strip_trailing_media(text: str, legacy: dict) -> str:
     display_text_range 通常已把它排除，但实测个别推文会把它划进显示区（索引
     不可靠）——按「结尾恰好是某条媒体 url」剥，只剥尾不碰中段。
     """
-    media_urls = {str(m.get("url")) for m in (legacy.get("entities") or {}).get("media") or [] if m.get("url")}
+    media_urls = {
+        str(m.get("url")) for m in (legacy.get("entities") or {}).get("media") or [] if m.get("url")
+    }
     for _ in range(len(media_urls)):
         t = text.rstrip()
         hit = next((u for u in media_urls if t.endswith(u)), None)

@@ -5,7 +5,7 @@ profile cookie，不碰浏览器不碰网络）。
 - 传输是常驻通道页签的页面 fetch（知乎同款）：FakeTab.evaluate 认取数
   JS，按 URL 路由页面/片段，编排与解析逻辑真实跑（页签生命周期归
   test_channel.py 集中测，这里只测取数语义）
-- 判登门 = token_v2 JWT 本地解码（sub="user"/"loid"），_require_login 的
+- 判登门 = token_v2 JWT 本地解码（sub="user"/"loid"），require_login 的
   过门逻辑用假 profile_cookies 注入真实跑
 - 订阅表驱动的 feeds 合成照 test_rss_source.py 的配置文件模式
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from conftest import FakeTab, FetchReq
+from conftest import FakeTab, FetchReq, use_config
 from test_reddit_parse import LISTING_END_HTML, LISTING_HTML, THREAD_HTML, _post
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
@@ -37,11 +37,6 @@ _VERSION = "2026-11-04T13:46Z~456d6f1d"
 _PARTIAL_PATH = "/svc/shreddit/feeds/popular-feed"
 
 
-def _use_config(monkeypatch: pytest.MonkeyPatch, tmp_path, text: str):
-    p = tmp_path / "sources.toml"
-    p.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(p))
-    return p
 
 
 def _jwt(claims: dict) -> str:
@@ -64,7 +59,7 @@ def _fake_login(
     monkeypatch: pytest.MonkeyPatch,
     cookies: dict[str, str] | None = None,
 ) -> None:
-    """假 profile cookie：_require_login 的判登门真实跑，不起真浏览器。"""
+    """假 profile cookie：require_login 的判登门真实跑，不起真浏览器。"""
     jar = dict(
         cookies
         if cookies is not None
@@ -83,6 +78,8 @@ def _page(html: str) -> str:
 
 
 # ---- 通道页签替身：conftest 的 FakeTab（统一取数原语分派），生命周期归 test_channel.py ----
+
+
 
 
 def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[FetchReq]:
@@ -279,7 +276,7 @@ def test_partial_first_use_harvests_version(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_feeds_composition_builtins_plus_subs(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, _CFG)
+    use_config(monkeypatch, tmp_path, _CFG)
     src = get_source("reddit")
     assert src.feeds == ["home", "popular", "rust", "python"]  # 内置在前，订阅按书写序
     assert src.feed_labels == {
@@ -293,7 +290,7 @@ def test_feeds_composition_builtins_plus_subs(monkeypatch: pytest.MonkeyPatch, t
 
 def test_feeds_composition_hide_and_collision(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """hide 剔内置流；手编配置里与内置流撞名的订阅被跳过（添加入口已拦，双保险）。"""
-    _use_config(
+    use_config(
         monkeypatch,
         tmp_path,
         '[reddit]\nhide = ["popular"]\n[reddit.feeds]\nhome = { url = "https://www.reddit.com/r/home/" }\nrust = { url = "https://www.reddit.com/r/rust/" }\n',
@@ -304,7 +301,7 @@ def test_feeds_composition_hide_and_collision(monkeypatch: pytest.MonkeyPatch, t
 
 
 def test_open_feed_subscription_pages(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    _use_config(monkeypatch, tmp_path, _CFG)
+    use_config(monkeypatch, tmp_path, _CFG)
     calls = _mock(monkeypatch, _route_listing)
     _fake_login(monkeypatch)
     loader = asyncio.run(get_source("reddit").open_feed("rust"))
@@ -336,8 +333,12 @@ def test_open_detail_floors_and_comments(monkeypatch: pytest.MonkeyPatch) -> Non
 
         cl = asyncio.run(detail.open_comments(1))  # alice 楼层的回复树
         try:
-            assert [c.author for c in cl.comments] == ["bob", "dave", "erin"]
-            assert cl.comments[1].content_md == "@bob：Deeper e"
+            # 拍平两层（同 HN）：bob 顶层；dave 紧贴楼上无 @、erin 隔层 @dave
+            assert [c.author for c in cl.comments] == ["bob"]
+            assert [(c.author, c.content_md) for c in cl.comments[0].replies] == [
+                ("dave", "Deeper e"),
+                ("erin", "@dave：Deepest"),
+            ]
             assert cl.done
         finally:
             asyncio.run(cl.close())
@@ -417,7 +418,7 @@ def test_add_subreddit_validates_and_persists(monkeypatch: pytest.MonkeyPatch, t
     from feedscope.core import config
     from feedscope.subscriptions import SubscriptionError, add_subreddit
 
-    p = _use_config(monkeypatch, tmp_path, "enabled = []\n")
+    p = use_config(monkeypatch, tmp_path, "enabled = []\n")
     _fake_login(monkeypatch)
     _mock(monkeypatch, _about_route)
     feed = asyncio.run(add_subreddit("https://www.reddit.com/r/rust/"))
@@ -438,7 +439,7 @@ def test_add_subreddit_validates_and_persists(monkeypatch: pytest.MonkeyPatch, t
 def test_add_subreddit_about_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from feedscope.subscriptions import SubscriptionError, add_subreddit
 
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _fake_login(monkeypatch)
     _mock(monkeypatch, _about_route)  # 壳页：subreddit 校验不通过
     with pytest.raises(SubscriptionError, match="加不上"):
@@ -448,7 +449,7 @@ def test_add_subreddit_about_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) 
 def test_add_subreddit_needs_login(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from feedscope.subscriptions import SubscriptionError, add_subreddit
 
-    _use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, "")
     _fake_login(monkeypatch, cookies={})
     _mock(monkeypatch, _about_route)
     with pytest.raises(SubscriptionError, match="需要登录"):
@@ -459,7 +460,7 @@ def test_remove_and_rename_subreddit(monkeypatch: pytest.MonkeyPatch, tmp_path) 
     from feedscope.core import config
     from feedscope.subscriptions import remove_subreddit, rename_subreddit
 
-    _use_config(monkeypatch, tmp_path, "enabled = []\n" + _CFG)
+    use_config(monkeypatch, tmp_path, "enabled = []\n" + _CFG)
 
     assert rename_subreddit("rust", "  锈  ").label == "锈"  # 顺手 strip
     assert rename_subreddit("rust", "   ") is None  # 空名不动配置
@@ -482,7 +483,7 @@ def test_update_feeds_roundtrip_preserved_on_save(
     from feedscope.core import config
     from feedscope.core.config import save_enabled
 
-    _use_config(monkeypatch, tmp_path, _CFG)
+    use_config(monkeypatch, tmp_path, _CFG)
     save_enabled(["zhihu", "reddit"])
     assert [f.key for f in config.feeds_for("reddit")] == ["rust", "python"]  # 订阅表原样保留
     assert [f.key for f in config.rss_feeds()] == []  # 各源互不干扰

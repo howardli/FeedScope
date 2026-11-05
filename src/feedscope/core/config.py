@@ -8,6 +8,9 @@
   feeds 订阅表（订阅是用户数据，覆写丢段 = 丢订阅；rss 的 feed 地址、
   reddit 的 subreddit 同款），无法识别的键丢弃；原子落盘（临时文件 +
   os.replace），不留半截文件。
+- 本模块对「源」只认 id 字符串，不认识任何具体源：订阅 key 的保留字
+  （聚合流名 / 内置流名）由各源自己声明（Source.reserved_feed_keys），
+  读取侧的过滤在 SubscribedSource、添加侧的拒收在 subscriptions。
 """
 
 from __future__ import annotations
@@ -24,13 +27,11 @@ from platformdirs import user_config_path
 
 logger = logging.getLogger(__name__)
 
-# rss 源的聚合流名（「全部」），保留字：订阅 key 与它同名会遮住聚合流
-RSS_ALL_FEED = "all"
-
 
 @dataclass(frozen=True)
-class RssFeed:
-    """一条 RSS 订阅：key 即信息流名（侧栏与 open_feed 的寻址键）。"""
+class Subscription:
+    """一条订阅（rss 的 feed / reddit 的 subreddit / telegram 的频道同形）：
+    key 即信息流名（侧栏与 open_feed 的寻址键）。"""
 
     key: str
     label: str  # 侧栏显示名；配置缺省 = key 本身
@@ -76,7 +77,7 @@ def hidden_feeds(source_id: str) -> list[str]:
     return list(hidden or [])
 
 
-def feeds_for(source_id: str) -> list[RssFeed]:
+def feeds_for(source_id: str) -> list[Subscription]:
     """读某源的订阅表（书写顺序即侧栏顺序），结构与坏条目逐条容错。
 
     期望结构（label 缺省用 key；url 必填）：
@@ -89,9 +90,9 @@ def feeds_for(source_id: str) -> list[RssFeed]:
         rust = { url = "https://www.reddit.com/r/rust/" }
 
     条目不是表 / 缺 url = 警告并跳过该条，不波及其他订阅（同一容错粒度：
-    文件级坏 = 全默认已在上层 _read，这里是条目级）。rss 另有保留字 all
-    （聚合流名，订阅 key 撞它 = 跳过）；其他源的保留字在各源的添加入口拦
-    （reddit 的 home/popular 与内置流撞名，见 subscriptions.add_subreddit）。
+    文件级坏 = 全默认已在上层 _read，这里是条目级）。保留字（聚合流名 /
+    内置流名）撞名的 key 原样返回——过滤在各源的 SubscribedSource（读取
+    侧会跳过并警告），拒收在 subscriptions 的添加入口，本模块不认识源。
     """
     section = _read()[0].get(source_id)
     feeds_raw = section.get("feeds") if isinstance(section, dict) else None
@@ -100,11 +101,8 @@ def feeds_for(source_id: str) -> list[RssFeed]:
     if not isinstance(feeds_raw, dict):
         logger.warning("配置 [%s] feeds 应为订阅表，已忽略", source_id)
         return []
-    feeds: list[RssFeed] = []
+    feeds: list[Subscription] = []
     for key, entry in feeds_raw.items():
-        if source_id == "rss" and key == RSS_ALL_FEED:
-            logger.warning("订阅 key %r 与聚合流名 all 撞名，已跳过", key)
-            continue
         if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not entry["url"]:
             logger.warning("订阅 %r 应为含非空 url 的表，已跳过", key)
             continue
@@ -112,11 +110,11 @@ def feeds_for(source_id: str) -> list[RssFeed]:
         if label is not None and not isinstance(label, str):
             logger.warning("订阅 %r 的 label 应为字符串，已回退用 key", key)
             label = None
-        feeds.append(RssFeed(key=key, label=label or key, url=entry["url"]))
+        feeds.append(Subscription(key=key, label=label or key, url=entry["url"]))
     return feeds
 
 
-def rss_feeds() -> list[RssFeed]:
+def rss_feeds() -> list[Subscription]:
     """rss 源的订阅表（feeds_for 的 rss 特例，保留既有调用名）。"""
     return feeds_for("rss")
 
@@ -168,8 +166,8 @@ def _toml_array(values: list[str]) -> str:
 def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
     """feeds 表的写前校验：留 (key, label, url)，坏条目丢弃记日志。
 
-    与 rss_feeds 的读校验同规则（表 + 非空 str url），保证读写往返一致；
-    label 只收 str，缺省回 key——读侧重抛 RssFeed，写侧要的是行参数。
+    与 feeds_for 的读校验同规则（表 + 非空 str url），保证读写往返一致；
+    label 只收 str，缺省回 key——读侧重抛 Subscription，写侧要的是行参数。
     """
     if raw is None:
         return []
@@ -242,7 +240,9 @@ def save_enabled(ids: list[str]) -> None:
     _write_config(_render_config(list(ids), _read()[0]))
 
 
-def update_feeds(source_id: str, feeds: list[RssFeed], *, drop_enabled_when_empty: bool = False) -> None:
+def update_feeds(
+    source_id: str, feeds: list[Subscription], *, drop_enabled_when_empty: bool = False
+) -> None:
     """整体替换某源的订阅表（订阅管理屏 / rss 子命令的落盘路径）；enabled / hide 原样保留。
 
     enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺该源
@@ -272,7 +272,7 @@ def update_feeds(source_id: str, feeds: list[RssFeed], *, drop_enabled_when_empt
     _write_config(_render_config(enabled, data))
 
 
-def update_rss_feeds(feeds: list[RssFeed]) -> None:
+def update_rss_feeds(feeds: list[Subscription]) -> None:
     """整体替换 rss 订阅表（update_feeds 的 rss 特例，保留既有调用名）。"""
     update_feeds("rss", feeds, drop_enabled_when_empty=True)
 

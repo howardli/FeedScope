@@ -12,13 +12,13 @@ import json
 import sys
 
 from feedscope.core.browser import close_session
-from feedscope.sources.x import LoginRequired, _require_login
+from feedscope.sources.x import LoginRequired, require_login
 from feedscope.sources.x.fetch import _DETAIL_OP, _fetch_conversation, _fetch_entries, harvest
 
 
 async def _probe() -> None:
     try:
-        await _require_login("探针脚本")
+        await require_login("探针脚本")
     except LoginRequired:
         print("NO_AUTH：先运行 feedscope login x")
         sys.exit(1)

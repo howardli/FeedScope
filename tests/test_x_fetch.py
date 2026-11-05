@@ -278,14 +278,14 @@ def test_require_login_gate(monkeypatch: pytest.MonkeyPatch) -> None:
         return {"auth_token": "a", "ct0": "c"}
 
     monkeypatch.setattr(x_mod, "profile_cookies", jar)
-    asyncio.run(x_mod._require_login("测试"))  # 成对在：直放
+    asyncio.run(x_mod.require_login("测试"))  # 成对在：直放
 
     async def empty(url: str) -> dict[str, str]:
         return {"auth_token": "a"}  # 只有 auth_token 没有 ct0：不算
 
     monkeypatch.setattr(x_mod, "profile_cookies", empty)
     with pytest.raises(LoginRequired, match="需要登录"):
-        asyncio.run(x_mod._require_login("测试"))
+        asyncio.run(x_mod.require_login("测试"))
 
 
 def test_open_feed_wires_gate_and_loader(monkeypatch: pytest.MonkeyPatch) -> None:

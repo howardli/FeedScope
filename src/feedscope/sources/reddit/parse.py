@@ -2,7 +2,7 @@
 帖子与评论树，纯函数不碰网络。
 
 2026-11 起 www 的 .json 遗留端点对第三方全线 403，本源改吃网站自己的
-HTML 通道（httpx 直取，头同形见 fetch.py）：
+HTML 通道（请求由常驻 reddit.com 通道页签的真 Chrome 发出，见 fetch.py）：
 - 列表：流页面 SSR（首页 / 热门 r/popular / 订阅 r/{sub}）+ 翻页跟随
   faceplate-partial slot="load-after" 的 src 链（feeds/*-feed 与
   community-more-posts 两族，src 里带全参数不用自己拼）
@@ -27,22 +27,23 @@ Reddit 特有语义：
 
 from __future__ import annotations
 
-import html as _html
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
+from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count, votes_text
+from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
-from feedscope.core.models import Answer, Comment, FeedItem
+from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
+from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, count_kept, floor_comments
 
 SOURCE_ID = "reddit"
 
 _SITE = "https://www.reddit.com"
 
-_DELETED = "[已删除]"  # 作者栏占位（Reddit 原生是 [deleted]/[removed]）
-_DELETED_BODIES = {"[deleted]", "[removed]"}
+_DELETED_BODIES = {"[deleted]", "[removed]"}  # Reddit 原生删除态（作者/正文两栏的判定源）
 
 # subreddit 名域（字母数字下划线）：下限放宽到 2——校验过严拒掉真订阅的
 # 代价（加不上），比过松收进一个假名（页面校验会拦住）更高
@@ -55,22 +56,9 @@ _R_PATH_RE = re.compile(r"(?:^|[/=.])r/([A-Za-z0-9_]+)/?")
 _POST_TAG_RE = re.compile(r"<shreddit-post\s[^>]*>")
 _COMMENT_TAG_RE = re.compile(r"<shreddit-comment\s[^>]*>")
 _PARTIAL_TAG_RE = re.compile(r"<faceplate-partial\s[^>]*>")
-_ATTR_RE = re.compile(r'([a-zA-Z-]+)="([^"]*)"')
 
 _SELF_TYPES = {"text", "self"}  # post-type -> kind 的两类映射（其余一律 link）
 _MEDIA_TYPES = {"image", "video", "gallery"}
-
-
-def _attrs(tag: str) -> dict[str, str]:
-    """开标签字符串 -> 属性表（值 HTML 反转义；属性序保留在 dict 里）。"""
-    return {m.group(1): _html.unescape(m.group(2)) for m in _ATTR_RE.finditer(tag)}
-
-
-def _int(value: object) -> int:
-    try:
-        return int(value or 0)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0
 
 
 # ---- 列表 ----
@@ -80,7 +68,7 @@ def parse_posts_html(html: str) -> list[FeedItem]:
     """页面/片段 HTML -> FeedItem 列表（保持文档序，广告与残条逐条防御跳过）。"""
     items: list[FeedItem] = []
     for m in _POST_TAG_RE.finditer(html):
-        a = _attrs(m.group(0))
+        a = tag_attrs(m.group(0))
         pid = str(a.get("id") or "")
         title = str(a.get("post-title") or "").strip()
         if not pid.startswith("t3_") or not title:
@@ -89,7 +77,8 @@ def parse_posts_html(html: str) -> list[FeedItem]:
             continue
         subreddit = str(a.get("subreddit-name") or "")
         permalink = str(a.get("permalink") or "")
-        parts = [f"{fmt_count(_int(a.get('score')))} 点", f"{fmt_count(_int(a.get('comment-count')))} 评"]
+        parts = [f"{fmt_count(safe_int(a.get('score')))} 点",
+                 f"{fmt_count(safe_int(a.get('comment-count')))} 评"]
         if subreddit:
             parts.append(f"r/{subreddit}")
         items.append(
@@ -113,21 +102,13 @@ def parse_next_html(html: str) -> str | None:
     直接整串跟走，不重新拼。
     """
     for m in _PARTIAL_TAG_RE.finditer(html):
-        a = _attrs(m.group(0))
+        a = tag_attrs(m.group(0))
         if a.get("slot") == "load-after" and a.get("src"):
             return urljoin(_SITE, a["src"])
     return None
 
 
 # ---- 帖子与评论树 ----
-
-
-@dataclass
-class Floor:
-    """一个楼层（顶层评论）：本体 + 它的回复树（已是 Comment 列表）。"""
-
-    answer: Answer
-    comments: list[Comment] = field(default_factory=list)
 
 
 @dataclass
@@ -147,16 +128,16 @@ class _CNode:
 
     attrs: dict[str, str]
     body: str
-    children: list["_CNode"] = field(default_factory=list)
+    children: list[_CNode] = field(default_factory=list)
 
     @property
     def author(self) -> str:
         a = str(self.attrs.get("author") or "")
-        return a if a and a not in _DELETED_BODIES else _DELETED
+        return a if a and a not in _DELETED_BODIES else DELETED_AUTHOR
 
     @property
     def votes(self) -> str:
-        return votes_text(_int(self.attrs.get("score")))
+        return votes_text(safe_int(self.attrs.get("score")))
 
 
 _DIV_TOKEN_RE = re.compile(r"<div\b|</div>")
@@ -179,64 +160,37 @@ def _slot_inner(segment: str, slot: str) -> str:
     return ""
 
 
-def _author_of(node: _CNode) -> str:
-    return node.author
+def _content(node: _CNode) -> str:
+    """一条评论的正文：删除占位的兜底（@ 前缀由 core.tree 统一拼装）。"""
+    return node.body or DELETED_BODY
 
 
-def _content(node: _CNode, *, at: str = "") -> str:
-    """一条评论的正文：删除占位、@ 回复指向前缀的拼装次序唯一出处。"""
-    md = node.body or "（已删除）"
-    if at:
-        md = f"{at}：{md}"
-    return md
-
-
-def _comment_of(node: _CNode, *, at: str = "") -> Comment:
+def _comment_of(node: _CNode) -> Comment:
     return Comment(
         author=node.author,
         votes=node.votes,
-        content_md=_content(node, at=at),
+        content_md=_content(node),
         time=fmt_iso(str(node.attrs.get("created") or "") or None),
-        raw_id=str(node.attrs.get("thingId") or "").removeprefix("t1_"),
+        raw_id=str(node.attrs.get("thingid") or "").removeprefix("t1_"),
     )
 
 
 def _keep(node: _CNode) -> bool:
-    """空壳节点（被删且无回复的评论）整支跳过，与 HN _keep 同语义。"""
+    """空壳节点（被删且无回复的评论）整支跳过（规则见 core.tree）。"""
     return bool(node.body or node.children)
 
 
-def _flatten(nodes: list[_CNode], parent_author: str, *, direct: bool = False) -> list[Comment]:
-    """nodes 的全部后代拍平成一串 Comment（@ 前缀标出回复对象）。
-
-    direct=True 是「紧贴上一条」的第一层（回复的就是楼上那条，@ 冗余）；
-    更深层 @ 直接父——被拍平后父不一定视觉相邻，@ 是唯一指向。父已删
-    不给前缀（@ 不到人）；本尊已删有内容照常保留。
-    """
-    flat: list[Comment] = []
-    for node in nodes:
-        if not _keep(node):
-            continue
-        author = node.author
-        at = "" if direct or not parent_author or parent_author == _DELETED else f"@{parent_author}"
-        c = _comment_of(node, at=at)
-        flat.append(c)
-        flat.extend(_flatten(node.children, author))
-    return flat
+def _kids_of(node: _CNode) -> list[_CNode]:
+    return node.children
 
 
-def _floor_comments(children: list[_CNode]) -> list[Comment]:
-    """楼层的直接子回复 -> 顶层 Comment；各自更深的后代拍平进 replies（同 HN）。
-
-    直接子回复不加 @：楼层作者就在屏首；replies 里第一层也不加，
-    @ 从隔层起才有指向价值。
-    """
-    return _flatten(children, "", direct=True)
+def _author_of(node: _CNode) -> str:
+    return node.author
 
 
-def _count_replies(node: _CNode) -> int:
-    """node 子树内保留下来的评论总数（楼层头「N 条回复」用）。"""
-    return sum(1 + _count_replies(c) for c in node.children if _keep(c))
+# 差异注入：Reddit 的树是 HTML 按 depth 重建的 _CNode（拍平与 @ 规则在 core.tree）
+_ACC = {"keep": _keep, "kids_of": _kids_of, "author_of": _author_of, "comment_of": _comment_of}
+_COUNT = {"keep": _keep, "kids_of": _kids_of}  # count_kept 只要这两个
 
 
 def _post_body(attrs: dict[str, str], html: str) -> str:
@@ -258,9 +212,10 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     post: dict[str, str] = {}
     m = _POST_TAG_RE.search(html)
     if m:
-        post = _attrs(m.group(0))
+        post = tag_attrs(m.group(0))
     subreddit = str(post.get("subreddit-name") or "")
-    parts = [f"{fmt_count(_int(post.get('score')))} 点", f"{fmt_count(_int(post.get('comment-count')))} 评"]
+    parts = [f"{fmt_count(safe_int(post.get('score')))} 点",
+             f"{fmt_count(safe_int(post.get('comment-count')))} 评"]
     if subreddit:
         parts.append(f"r/{subreddit}")
     if author := str(post.get("author") or ""):
@@ -271,12 +226,14 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     stack: list[tuple[int, list[_CNode]]] = []
     tags = list(_COMMENT_TAG_RE.finditer(html))
     for i, t in enumerate(tags):
+        # 末条评论的正文区上界：200KB 足够容纳一条评论的 rtjson（再大只会
+        # 白扫），配平逻辑保证越界内容也只是被丢弃而不是误吞
         end = tags[i + 1].start() if i + 1 < len(tags) else min(t.end() + 200_000, len(html))
         node = _CNode(
-            attrs=_attrs(t.group(0)),
+            attrs=tag_attrs(t.group(0)),
             body=html_to_md(_slot_inner(html[t.end() : end], "comment")),
         )
-        depth = max(0, _int(node.attrs.get("depth")))
+        depth = max(0, safe_int(node.attrs.get("depth")))
         while stack and stack[-1][0] >= depth:
             stack.pop()
         (stack[-1][1] if stack else roots).append(node)
@@ -286,7 +243,7 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     for node in roots:
         if not _keep(node):
             continue
-        n = _count_replies(node)
+        n = count_kept(node, **_COUNT)
         cp = str(node.attrs.get("permalink") or "")
         floors.append(
             Floor(
@@ -298,11 +255,11 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
                     url=urljoin(_SITE, cp) if cp.startswith("/") else "",
                     comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
                 ),
-                comments=_floor_comments(node.children),
+                comments=floor_comments(node.children, **_ACC),
             )
         )
     # 截断口：服务端只渲染了前一部分楼层（大帖常见），按 comment-count 诚实提示
-    total = _int(post.get("comment-count"))
+    total = safe_int(post.get("comment-count"))
     loaded = sum(1 + len(f.comments) + sum(len(c.replies) for c in f.comments) for f in floors)
     if floors and total > loaded:
         last = floors[-1].answer

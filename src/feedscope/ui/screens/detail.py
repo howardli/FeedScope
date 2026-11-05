@@ -2,7 +2,8 @@
 
 多层递进的第二层：列表 -> 这里（回答流）-> 回答详情屏（评论层）。
 Enter 进「视口正在阅读」的那个回答（读到哪进哪）；评论不随首批抓取
-（首载要快），楼层头部只带评论数引导。
+（首载要快），楼层头部只带评论数引导。与回答屏共享的阅读屏机械件
+（resize 重排 / hint 生命周期 / 清理）在 ReadingScreen。
 """
 
 from __future__ import annotations
@@ -16,33 +17,41 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.events import Resize
-from textual.screen import Screen
-from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, Source
 from feedscope.ui import feedback
-from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
+from feedscope.ui.layout import md_body_width
+from feedscope.ui.screens.reading import READING_CSS, ReadingScreen
 from feedscope.ui.widgets import divider
 from feedscope.ui.wrap import wrap_markdown
 
 
-class DetailScreen(Screen[None]):
+class DetailScreen(ReadingScreen):
     """全屏阅读一个问题：Esc 返回（列表位置不变），Ctrl+N 加载更多回答，[/] 换篇。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
-        # 原生键，无需声明
-        Binding("escape", "back", "返回"),
+        # 原生键，无需声明；Esc 返回继承自 ReadingScreen
         Binding("ctrl+n", "more", "更多"),
-        Binding("enter", "pick_answer", "评论"),  # 标签占位：__init__ 换源词汇表；无评论层的源隐藏此键位
+        # Enter 的标签是占位：__init__ 换源词汇表；无评论层的源隐藏该键位
+        Binding("enter", "pick_answer", "评论"),
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("right", "next_article", "下一篇"),
         Binding("left", "prev_article", "上一篇"),
     ]
+
+    CSS = READING_CSS + """
+    #detail-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
+    #detail-meta { padding: 0 2; }
+    #detail-desc { padding: 0 2; }
+    .answers-header { padding: 0 2; text-style: bold; }
+    .answer-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 窄终端长楼层头折行不裁剪 */
+    .answer-body { padding: 0 2; }
+    #more-hint, #more-loading, #no-more { padding: 1; }
+    """
 
     @property
     def _unit(self) -> str:
@@ -63,33 +72,41 @@ class DetailScreen(Screen[None]):
         # 误按仍走 action_pick_answer 的「暂不支持」反馈，不无声（与尾行预告
         # 同一能力判定）。
         self._bindings.key_to_bindings["enter"] = [
-            dataclasses.replace(b, description=source.comment_unit_label, show=b.show and source.supports_comments)
+            dataclasses.replace(
+                b, description=source.comment_unit_label, show=b.show and source.supports_comments
+            )
             for b in self._bindings.key_to_bindings.get("enter", [])
         ]
         self._step_item = step_item  # 向 App 要相邻的可读条目（[/] 换篇，同步推进列表选中）
         self.loader: DetailLoader | None = None
-        self._hint: Static | None = None
         self._exhausted = False       # 已到回答末尾，n 不再触发
         self._answer_count = 0        # 回答序号，跨 load_more 递增
-        self._prev_sub_title: str | None = None
-        self._rendered = False        # 首批已上屏；此后 resize 才需要重排
-        self._last_width = 0
-        self._resize_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id="detail-body")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        self._prev_sub_title = self.app.sub_title
-        self.query_one("#detail-body", VerticalScroll).focus()
-        self.run_worker(self._load(), group="load", exclusive=True)  # 组内互斥：换篇/重试可打断在途首载
+    def _body_scroll(self) -> VerticalScroll:
+        return self.query_one("#detail-body", VerticalScroll)
+
+    async def _mount_body(self) -> None:
+        self._body_scroll().focus()
+        # 组内互斥：换篇/重试可打断在途首载
+        self.run_worker(self._load(), group="load", exclusive=True)
+
+    def _reset_render_state(self) -> None:
+        self._answer_count = 0
+
+    async def _close_loader(self) -> None:
+        loader, self.loader = self.loader, None
+        if loader is not None:
+            await loader.close()
 
     # ---- 加载与渲染 ----
 
     async def _load(self) -> None:
-        body = self.query_one("#detail-body", VerticalScroll)
+        body = self._body_scroll()
         loading = Label("加载中…", id="detail-loading")
         await body.mount(loading)
         try:
@@ -99,7 +116,8 @@ class DetailScreen(Screen[None]):
             feedback.fail(self.app, self.source, exc)
             self.app.sub_title = "加载失败"  # 状态行常驻标记失败（与列表屏面包屑同一手法）
             loading.update(
-                f"[red]加载失败：{escape(feedback.failure_text(self.source, exc))} · Ctrl+N 重试[/red]"
+                f"[red]加载失败：{escape(feedback.failure_text(self.source, exc))}"
+                " · Ctrl+N 重试[/red]"
             )
             return
         loading.remove()
@@ -109,10 +127,12 @@ class DetailScreen(Screen[None]):
 
     def _md_width(self) -> int:
         """正文折行宽：折行算术与 CSS 常量的对应关系集中在 ui/layout.py。"""
-        return md_body_width(self.query_one("#detail-body", VerticalScroll).region.width)
+        return md_body_width(self._body_scroll().region.width)
 
-    async def _render_doc(self, doc: DetailDoc) -> None:
+    async def _render_doc(self, doc: DetailDoc | None = None) -> None:
         """把整个文档渲染上屏（单次 mount = 单次布局）；重排（resize）时也走这里。"""
+        if doc is None:
+            doc = self.loader.doc  # 重排路径：doc 即已加载的全部内容
         widgets: list[Widget] = [Static(escape(doc.title), id="detail-title")]
         if doc.meta or doc.time:
             meta = " · ".join(x for x in (doc.meta, doc.time) if x)  # 正文发布时间并入元信息行
@@ -141,7 +161,7 @@ class DetailScreen(Screen[None]):
         else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
-        await self.query_one("#detail-body", VerticalScroll).mount(*widgets)
+        await self._body_scroll().mount(*widgets)
 
     def _hint_widget(self) -> Static:
         """尾行动线预告：只留 Footer 没有的语义增量（按了会加载/进入什么）；
@@ -194,7 +214,7 @@ class DetailScreen(Screen[None]):
         视口还在标题/描述区时，第一个楼层自然命中（Enter 即进回答 1，
         新手按键就有反馈，不用先滚）。
         """
-        top = self.query_one("#detail-body", VerticalScroll).region.y
+        top = self._body_scroll().region.y
         for head in self.query(".answer-head"):
             if head.region.bottom > top:
                 return int(head.name)
@@ -206,57 +226,7 @@ class DetailScreen(Screen[None]):
 
         self.app.push_screen(AnswerScreen(self.source, self.item, self.loader, index))
 
-    async def _mount_hint(self) -> None:
-        self._remove_hint()
-        self._hint = self._hint_widget()
-        await self.query_one("#detail-body", VerticalScroll).mount(self._hint)
-
-    def _remove_hint(self) -> None:
-        if self._hint is not None:
-            try:
-                self._hint.remove()
-            except Exception:
-                pass
-            self._hint = None
-
-    # ---- resize 重排：与列表屏行为一致（改宽度即重新折行）----
-
-    def on_resize(self, event: Resize) -> None:
-        if event.size.width == self._last_width:
-            return
-        first_layout = self._last_width == 0  # 首次布局不算
-        self._last_width = event.size.width
-        if first_layout or not self._rendered:
-            return
-        # 正文折行宽变了：等拖拽稳定后整屏重排（doc 即已加载的全部内容，不重新抓取）
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, self._rerender)
-
-    def _rerender(self) -> None:
-        if self.loader is None or not self._rendered:
-            return
-        scroll_y = self.query_one("#detail-body", VerticalScroll).scroll_y
-        self.run_worker(self._rerender_body(scroll_y))
-
-    async def _rerender_body(self, scroll_y: float) -> None:
-        if self.loader is None:
-            return
-        body = self.query_one("#detail-body", VerticalScroll)
-        await body.remove_children()
-        self._hint = None
-        self._answer_count = 0
-        try:
-            await self._render_doc(self.loader.doc)
-        except Exception:
-            return  # 屏幕正在被关闭：放弃重排
-        # 重排后恢复阅读位置（内容高度要等一次刷新才更新，故延后滚动）
-        body.call_after_refresh(body.scroll_to, y=scroll_y, animate=False)
-
     # ---- 键位 ----
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
 
     def action_open_browser(self) -> None:
         webbrowser.open(self.item.url)
@@ -269,7 +239,7 @@ class DetailScreen(Screen[None]):
         if self._exhausted:
             feedback.info(self.app, f"没有更多{self._unit}了")  # 常驻行之外再给瞬时反馈：按键不无声
             return
-        self.run_worker(self._load_more())
+        self.run_worker(self._load_more(), group="more", exclusive=True)
 
     async def _retry(self) -> None:
         """首载失败后的原地重试：摘掉失败行，重走一遍 _load。"""
@@ -299,15 +269,15 @@ class DetailScreen(Screen[None]):
             await loader.close()
         self.item = item
         self._exhausted = False
-        self._answer_count = 0
+        self._reset_render_state()
         self._rendered = False
-        self._hint = None
-        body = self.query_one("#detail-body", VerticalScroll)
+        self._remove_hint()
+        body = self._body_scroll()
         await body.remove_children()
         self.run_worker(self._load(), group="load", exclusive=True)
 
     async def _load_more(self) -> None:
-        body = self.query_one("#detail-body", VerticalScroll)
+        body = self._body_scroll()
         self._remove_hint()
         loading = Label("[dim]加载更多…[/dim]", id="more-loading")
         await body.mount(loading)
@@ -337,21 +307,3 @@ class DetailScreen(Screen[None]):
         # 「衔接」靠内容连续而非视口跳转。滚动到底（scroll_end）或顶对齐
         # （scroll_to_widget top=True）都会把刚读到的楼层顶出视野、整屏跳动，
         # 逼用户再滚回去找位置——踩过的坑，别再引入。
-
-    def action_scroll_down(self) -> None:
-        self.query_one("#detail-body", VerticalScroll).scroll_down(animate=False)
-
-    def action_scroll_up(self) -> None:
-        self.query_one("#detail-body", VerticalScroll).scroll_up(animate=False)
-
-    # ---- 清理 ----
-
-    async def on_unmount(self) -> None:
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-            self._resize_timer = None
-        if self._prev_sub_title is not None:
-            self.app.sub_title = self._prev_sub_title
-        loader, self.loader = self.loader, None
-        if loader is not None:
-            await loader.close()

@@ -23,12 +23,18 @@ from feedscope.core.browser import close_session
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, LoginRequired, Source, SourceError
+from feedscope.report import line as _line
 
-_MARKS = {"OK": "[OK]  ", "FAIL": "[FAIL]", "SKIP": "[SKIP]"}
 
+def _classify(exc: BaseException) -> tuple[str, str]:
+    """异常 -> (状态, 消息)：LoginRequired=SKIP、SourceError=FAIL、其余兜住也算 FAIL。
 
-def _line(state: str, label: str, detail: str = "") -> None:
-    print(f"{_MARKS[state]} {label}" + (f" - {detail}" if detail else ""))
+    巡检要兜住一切——崩溃也是发现（取数/详情两处共用同一套分类）。"""
+    if isinstance(exc, LoginRequired):
+        return "SKIP", str(exc)
+    if isinstance(exc, SourceError):
+        return "FAIL", str(exc)
+    return "FAIL", f"未预期异常：{exc!r}"
 
 
 async def _try_open_feed(source: Source, name: str) -> tuple[str, FeedLoader | None, str]:
@@ -36,12 +42,9 @@ async def _try_open_feed(source: Source, name: str) -> tuple[str, FeedLoader | N
     label = f"{source.label} {name}"
     try:
         return "OK", await source.open_feed(name), label
-    except LoginRequired as exc:
-        return "SKIP", None, f"{label} - {exc}"
-    except SourceError as exc:
-        return "FAIL", None, f"{label} - {exc}"
-    except Exception as exc:  # 巡检要兜住一切：崩溃也是发现
-        return "FAIL", None, f"{label} - 未预期异常：{exc!r}"
+    except Exception as exc:
+        state, msg = _classify(exc)
+        return state, None, f"{label} - {msg}"
 
 
 async def _probe_source(source: Source, stats: dict[str, int]) -> None:
@@ -71,17 +74,10 @@ async def _probe_detail(source: Source, item: FeedItem, stats: dict[str, int]) -
     label = f"{source.label} 详情"
     try:
         loader = await source.open_detail(item)
-    except LoginRequired as exc:
-        _line("SKIP", label, str(exc))
-        stats["skip"] += 1
-        return
-    except SourceError as exc:
-        _line("FAIL", label, str(exc))
-        stats["fail"] += 1
-        return
     except Exception as exc:
-        _line("FAIL", label, f"未预期异常：{exc!r}")
-        stats["fail"] += 1
+        state, msg = _classify(exc)
+        _line(state, label, msg)
+        stats[state.lower()] += 1
         return
     try:
         doc = loader.doc

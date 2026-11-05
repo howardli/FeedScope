@@ -192,7 +192,9 @@ async ([url, headers, cookieHeaders, referrer, asText]) => {
   try {
     const h = Object.assign({}, headers);
     for (const [name, cookie] of Object.entries(cookieHeaders)) {
-      const v = (document.cookie.match(new RegExp("(?:^|;\\\\s*)" + cookie + "=([^;]+)")) || [])[1];
+      // cookie 名里的正则元字符先转义（名字是调用方给的，不当正则源用）
+      const esc = cookie.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+      const v = (document.cookie.match(new RegExp("(?:^|;\\\\s*)" + esc + "=([^;]+)")) || [])[1];
       if (v) h[name] = decodeURIComponent(v);
     }
     const opts = { headers: h, credentials: "include" };
@@ -266,7 +268,6 @@ class BrowserSession:
         self._pw: Any = None  # Playwright 句柄
         self._context: Any = None  # BrowserContext
         self._lock = asyncio.Lock()
-        self.ua: str | None = None  # 探针修过的完整 Chrome UA（探针失败 None）；httpx 源对齐用
 
     @property
     def started(self) -> bool:
@@ -289,7 +290,6 @@ class BrowserSession:
             except Exception:
                 logger.warning("探测 Chrome 版本失败，沿用原生 headless UA", exc_info=True)
                 ua = None
-            self.ua = ua  # 暴露给 httpx 源（X）：请求 UA 与浏览器会话逐字一致
             ua_kwargs: dict[str, Any] = {"user_agent": ua} if ua else {}
             self._context = await self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(PROFILE_DIR),
@@ -336,8 +336,9 @@ async def close_session() -> None:
 async def profile_cookies(url: str) -> dict[str, str]:
     """读持久 profile 某域的 cookie（本地操作，不导航、不触发反爬）。
 
-    X 这类「profile 读 cookie、httpx 直调」的源用：返回全部 name->value，
-    判登（auth_token / ct0 是否在）由调用方自己看键，不在这里替它做决定。
+    判登门这类「本地看 cookie」的检查用（X/Reddit 的源声明层）：返回全部
+    name->value，判登规则（哪个键在、怎么解码）由调用方自己定，不在这里
+    替它做决定。
     """
     cookies = await get_session().run(lambda ctx: ctx.cookies(url))
     return {c["name"]: c["value"] for c in cookies}
@@ -348,7 +349,7 @@ async def drop_profile_cookies(url: str, names: tuple[str, ...]) -> None:
 
     登录态被服务端吊销后 cookie 只是「还躺在本地」——不清掉的话判登
     （cookie 在即算已登录）与账号屏会一直被骗过，用户只能反复撞 401/403。
-    httpx 源（Reddit/X）在确认登录态失效后调这里再抛 LoginRequired。
+    源在确认登录态失效后调这里清掉再抛 LoginRequired（X 的 401 自愈路径）。
     url 只为对齐 profile_cookies 的形态：clear_cookies 按名字全域清。
     """
 

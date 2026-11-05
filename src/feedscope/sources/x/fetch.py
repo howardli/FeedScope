@@ -201,7 +201,8 @@ _CSRF_FROM_COOKIE = {"X-Csrf-Token": "ct0"}
 _SCRIPT_URLS_JS = """
 () => {
   const res = performance.getEntriesByType("resource").map(e => e.name);
-  const inHtml = document.documentElement.outerHTML.match(/https:\\/\\/abs\\.twimg\\.com\\/[^"'\\s]+\\.js/g) || [];
+  const inHtml = document.documentElement.outerHTML
+      .match(/https:\\/\\/abs\\.twimg\\.com\\/[^"'\\s]+\\.js/g) || [];
   const tags = [...document.querySelectorAll("script[src]")].map(s => s.src);
   return [...new Set([...res, ...inHtml, ...tags])].filter(u => u.endsWith(".js"));
 }
@@ -377,7 +378,8 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
             raise LoginRequired("X 登录已失效（服务端已不认本地登录态），Ctrl+U 重新登录") from None
         if status == 403:
             raise SourceError(
-                f"{source} 请求失败（HTTP 403）——可能被风控或账号受限，重新登录救不了，稍后再试或换网络"
+                f"{source} 请求失败（HTTP 403）——可能被风控或账号受限，"
+                "重新登录救不了，稍后再试或换网络"
             ) from None
         if status and status not in _SHAPE_ROT:
             raise SourceError(
@@ -394,7 +396,8 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
                 break
             op = healed
     raise SourceError(
-        f"{source} 接口报错（请求形状可能已失效，自动收割未修复——跑 scripts/x_probe.py 诊断或反馈维护者）"
+        f"{source} 接口报错（请求形状可能已失效，自动收割未修复——"
+        "跑 scripts/x_probe.py 诊断或反馈维护者）"
     )
 
 
