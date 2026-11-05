@@ -26,6 +26,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --python ${{ matrix.python-version }}
-      - run: uv run pytest tests/
+      - run: uv run pytest tests/ --cov --cov-fail-under=80
       # 测试基线全离线（解析 fixture / TUI 冒烟 / 登录流程），hosted runner 直接可跑；
       # feedscope probe 巡检需要真实登录态与 Chrome，只能挂 self-hosted runner 定时跑（见 README）
+      # coverage 门槛在 pyproject（fail_under=80，当前实测 ~89%）：防倒退，新增模块应抬高它
