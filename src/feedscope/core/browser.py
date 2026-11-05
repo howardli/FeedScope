@@ -20,7 +20,7 @@ from typing import Any, TypeVar
 
 from platformdirs import user_cache_path
 
-from feedscope.core.const import chrome_launch_kwargs
+from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ def drop_stale_locks() -> None:
                 lock.unlink()
         except OSError:
             logger.warning("无法清理残留锁 %s", lock)
+
 
 _T = TypeVar("_T")
 
@@ -66,6 +67,69 @@ async def close_page(page: Any) -> None:
         pass
 
 
+class ChannelTab:
+    """常驻取数通道页签：停靠某 URL 的进程级单例 + evaluate 自愈。
+
+    敌意源（知乎/Reddit/X）共用的取数通道形态——请求由真 Chrome 的页面
+    fetch 发出，TLS/头序/cookie 与登录会话完全自洽。fetch 层只声明停靠
+    URL（同源 fetch 与 cookie 的前提）与开页校验（如登录墙），生命周期
+    全在这里：单例复用、页签被关重建、evaluate 撞上在途跳转（context
+    destroyed）换页签重试一次。页签随 BrowserSession 生灭，无需显式释放。
+    """
+
+    def __init__(
+        self,
+        park_url: str,
+        *,
+        check: Callable[[Any], Awaitable[None]] | None = None,
+        name: str = "",
+    ) -> None:
+        self._park_url = park_url
+        self._check = check  # 开页后校验（登录墙等）：抛即弃页原样上交
+        self._name = name or park_url  # 定位标签（日志/排错）
+        self._page: Any = None
+
+    async def get(self) -> Any:
+        """取（必要时开）通道页签；页签被关后下一次取重新开。"""
+        if self._page is not None and not self._page.is_closed():
+            return self._page
+
+        async def _open(ctx: Any) -> Any:
+            page = await ctx.new_page()
+            try:
+                await page.goto(
+                    self._park_url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS
+                )
+                if self._check is not None:
+                    await self._check(page)
+            except BaseException:
+                await close_page(page)
+                raise
+            return page
+
+        self._page = await get_session().run(_open)
+        return self._page
+
+    async def eval(self, script: str, arg: Any = None) -> Any:
+        """页签里 evaluate；页签废了（在途跳转/被关）换新页签重试一次。
+
+        页面 fetch 自身的失败不走这层（JS 里按约定回 __status/__error，
+        不抛异常穿过 evaluate），只有 Playwright 层的页签失效才重建。
+        """
+        for attempt in range(2):
+            page = await self.get()
+            try:
+                return await page.evaluate(script, arg)
+            except Exception:
+                if attempt:
+                    raise
+                self._page = None
+
+    def reset(self) -> None:
+        """弃单例（下一次 get 重开）；出错自愈路径用。"""
+        self._page = None
+
+
 _UA_CACHE_TTL = 7 * 24 * 3600  # Chrome 版本几天到几周才变，探针结果落盘缓存
 
 
@@ -84,7 +148,9 @@ def _write_ua_cache(ua: str) -> None:
     """落盘 UA 缓存（写失败不声张：下次再探一次而已）。"""
     try:
         PROFILE_DIR.parent.mkdir(parents=True, exist_ok=True)
-        (PROFILE_DIR.parent / "chrome-ua.json").write_text(json.dumps({"ua": ua, "ts": time.time()}))
+        (PROFILE_DIR.parent / "chrome-ua.json").write_text(
+            json.dumps({"ua": ua, "ts": time.time()})
+        )
     except OSError:
         logger.warning("UA 缓存写盘失败（不影响本次运行）")
 
@@ -122,8 +188,8 @@ class BrowserSession:
     """管理一个 Playwright persistent context（channel 固定为本机 Chrome）。"""
 
     def __init__(self) -> None:
-        self._pw: Any = None        # Playwright 句柄
-        self._context: Any = None   # BrowserContext
+        self._pw: Any = None  # Playwright 句柄
+        self._context: Any = None  # BrowserContext
         self._lock = asyncio.Lock()
         self.ua: str | None = None  # 探针修过的完整 Chrome UA（探针失败 None）；httpx 源对齐用
 
@@ -157,9 +223,7 @@ class BrowserSession:
                 **ua_kwargs,
             )
 
-    async def run(
-        self, op: Callable[..., Awaitable[_T]], *args: Any, **kwargs: Any
-    ) -> _T:
+    async def run(self, op: Callable[..., Awaitable[_T]], *args: Any, **kwargs: Any) -> _T:
         """串行执行一次浏览器操作：op(context, *args, **kwargs) -> awaitable，全 app 排队走这里。"""
         await self.start()
         async with self._lock:
@@ -212,6 +276,7 @@ async def drop_profile_cookies(url: str, names: tuple[str, ...]) -> None:
     httpx 源（Reddit/X）在确认登录态失效后调这里再抛 LoginRequired。
     url 只为对齐 profile_cookies 的形态：clear_cookies 按名字全域清。
     """
+
     async def _clear(ctx: Any) -> None:
         for name in names:
             await ctx.clear_cookies(name=name)

@@ -8,8 +8,9 @@ HTML 全放行：页面（SSR，帖子/评论树直接织在 HTML 里）与翻�
 （text/vnd.reddit.partial+html）页签里都拿得到。
 
 - 通道：进程级单例页签停在 www.reddit.com 上（同源 fetch 与 cookie 的
-  前提），evaluate 撞上在途跳转/页签被关都重建重试一次（Zhihu 同款）；
-  判登门在编排层（token_v2 JWT 解码，见 __init__.py），门没过到不了这层
+  前提，生命周期见 core/browser.ChannelTab），evaluate 撞上在途跳转/页签
+  被关都重建重试一次；判登门在编排层（token_v2 JWT 解码，见
+  __init__.py），门没过到不了这层
 - 列表：流页面起步（首页 / 、热门 /r/popular/ 、订阅 /r/{sub}/ ），翻页
   跟随页面/片段里 faceplate-partial slot="load-after" 的 src 链（服务端
   给全参 URL，feeds/*-feed 与 community-more-posts 两族不用自己认）
@@ -31,17 +32,16 @@ Reddit 登录态限流（约 100 次/分）之下。
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from feedscope.core import samples
-from feedscope.core.browser import close_page, get_session
-from feedscope.core.const import PAGE_TIMEOUT_MS
+from feedscope.core.browser import ChannelTab
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
 from feedscope.sources.reddit.parse import parse_next_html, parse_posts_html
 
 _API = "https://www.reddit.com"
-_CHANNEL_URL = f"{_API}/"  # 通道页签停留处：同源 fetch（referer/cookie）的前提
+
+_tab = ChannelTab(f"{_API}/", name="reddit")  # 停靠 www.reddit.com/：同源 fetch（referer/cookie）的前提
 
 # 一次 load_more 至少攒够的条数：SSR 页面只嵌 3-10 帖（站点首屏后自己
 # 也会续拉一批），不足就顺着 load-after 链补齐——「一屏上下、翻页有货」
@@ -59,8 +59,6 @@ _PARTIAL_ACCEPT = "text/vnd.reddit.partial+html, text/html;q=0.9"
 _HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9"
 
 _version: str | None = None  # 进程级缓存（页面响应顺手更新，403 自愈时重割）
-
-_channel_page: Any = None  # 进程级单例页签；随 BrowserSession 关闭，无需显式释放
 
 # 通道页签里执行的一次 fetch：UA/头序/cookie/TLS 全是真 Chrome 的，我们只
 # 补浏览器不会自动带的头（Accept 显式声明；partial 加版本头与 retry 头）。
@@ -81,42 +79,6 @@ async ([url, accept, version]) => {
 """
 
 
-async def _channel() -> Any:
-    """取（必要时创建）常驻 fetch 通道页签：停在 www.reddit.com 上，进程内复用。
-
-    不查登录墙：判登门（token_v2 JWT）在编排层，没过门到不了这层；页签
-    被关/在途跳转由 _eval_fetch 的重建重试兜住。
-    """
-    global _channel_page
-    if _channel_page is not None and not _channel_page.is_closed():
-        return _channel_page
-
-    async def _open(ctx: Any) -> Any:
-        page = await ctx.new_page()
-        try:
-            await page.goto(_CHANNEL_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
-        except BaseException:
-            await close_page(page)
-            raise
-        return page
-
-    _channel_page = await get_session().run(_open)
-    return _channel_page
-
-
-async def _eval_fetch(url: str, accept: str, version: str | None) -> dict:
-    """页签里发一次 fetch；evaluate 撞上在途跳转（context destroyed）换页签重试一次。"""
-    for attempt in range(2):
-        page = await _channel()
-        try:
-            return await page.evaluate(_FETCH_HTML_JS, [url, accept, version])
-        except Exception:
-            if attempt:
-                raise
-            global _channel_page
-            _channel_page = None  # 页签废了：换新页签再试（fetch 失败不走这层，见 JS）
-
-
 async def _raw_fetch(
     url: str, accept: str, version: str | None, *, source: str
 ) -> tuple[int | None, str]:
@@ -124,11 +86,10 @@ async def _raw_fetch(
 
     状态码原样上交（304xx 语义没有，403 的自愈决策在 _get_html），成功时
     正文连同状态码一起返回——收割路径要 403 页不炸，取数路径才转错误。
+    页签失效（在途跳转/被关）由 ChannelTab.eval 重建重试兜住。
     """
     try:
-        data = await _eval_fetch(url, accept, version)
-    except SourceError:
-        raise
+        data = await _tab.eval(_FETCH_HTML_JS, [url, accept, version])
     except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
         raise SourceError(f"{source} 请求失败：{exc}") from exc
     if not isinstance(data, dict):

@@ -13,7 +13,6 @@ from feedscope.core.models import FeedItem
 from feedscope.core.source import SourceError, dedup_append
 from feedscope.sources.x.fetch import (
     XFeedLoader,
-    XSession,
     XTweetDetailLoader,
 )
 from feedscope.sources.x.parse import (
@@ -569,25 +568,10 @@ def _timeline(entries: list[dict], cursor: str | None) -> tuple[list[dict], str 
     return entries, cursor
 
 
-def _x_session() -> XSession:
-    """Loader 测试用的最小登录态（cookie 全量 jar 语义由 headers 测试覆盖）。"""
-    return XSession({"auth_token": "a", "ct0": "c"}, "UA/1.0")
-
-
-def test_x_session_headers_full_jar_and_ua() -> None:
-    # httpx 与登录会话的一致性对齐：cookie 带全量 jar（不止判登两个）、UA 原样透传、ct0 进 csrf 头
-    s = XSession({"auth_token": "a", "ct0": "c", "twid": "t", "guest_id": "g"}, "Chrome/152.0.7977.65 UA")
-    h = s.headers()
-    assert h["User-Agent"] == "Chrome/152.0.7977.65 UA"
-    assert h["X-Csrf-Token"] == "c"
-    assert h["Cookie"] == "auth_token=a; ct0=c; twid=t; guest_id=g"  # 全量 jar 按序拼
-    assert h["Authorization"].startswith("Bearer ")
-
-
 def test_x_feed_loader_dedup_and_cursor(monkeypatch) -> None:
     calls: list[tuple[str, str | None]] = []
 
-    async def _fake_fetch(session: XSession, feed: str, cursor: str | None):
+    async def _fake_fetch(feed: str, cursor: str | None):
         calls.append((feed, cursor))
         if cursor is None:
             return _timeline(
@@ -602,7 +586,7 @@ def test_x_feed_loader_dedup_and_cursor(monkeypatch) -> None:
         )
 
     monkeypatch.setattr("feedscope.sources.x.fetch._fetch_entries", _fake_fetch)
-    loader = XFeedLoader(_x_session(), "following")
+    loader = XFeedLoader("following")
     new = asyncio.run(loader.load_more())
     assert [it.id for it in new] == ["status/1", "status/2"]
     assert not loader.done
@@ -614,11 +598,11 @@ def test_x_feed_loader_dedup_and_cursor(monkeypatch) -> None:
 
 
 def test_x_feed_loader_done_stops(monkeypatch) -> None:
-    async def _fake_fetch(session: XSession, feed: str, cursor: str | None):
+    async def _fake_fetch(feed: str, cursor: str | None):
         return _timeline([], None)
 
     monkeypatch.setattr("feedscope.sources.x.fetch._fetch_entries", _fake_fetch)
-    loader = XFeedLoader(_x_session(), "following")
+    loader = XFeedLoader("following")
     assert asyncio.run(loader.load_more()) == []
     assert loader.done
     assert asyncio.run(loader.load_more()) == []  # done 后不再请求
@@ -999,13 +983,13 @@ def test_x_tweet_detail_loader_first_batch_and_paging(monkeypatch) -> None:
     ]
     calls: list[str | None] = []
 
-    async def _fake_conv(session: XSession, rest_id: str, cursor: str | None):
+    async def _fake_conv(rest_id: str, cursor: str | None):
         calls.append(cursor)
         assert rest_id == "100"
         return (first, "more") if cursor is None else (page2, None)
 
     monkeypatch.setattr("feedscope.sources.x.fetch._fetch_conversation", _fake_conv)
-    loader = XTweetDetailLoader(_x_session(), "100", first, "more")
+    loader = XTweetDetailLoader("100", first, "more")
     assert loader.doc.title == "主推"
     assert loader.doc.description_md == "主推\n第二行"
     assert [a.content_md for a in loader.doc.answers] == ["回复一"]
@@ -1021,13 +1005,13 @@ def test_x_tweet_detail_loader_first_batch_and_paging(monkeypatch) -> None:
 
 def test_x_tweet_detail_loader_empty_raises() -> None:
     with pytest.raises(SourceError):
-        XTweetDetailLoader(_x_session(), "100", [], None)
+        XTweetDetailLoader("100", [], None)
 
 
 def test_x_tweet_detail_loader_no_replies_done_immediately() -> None:
     # 0 回复推文也带游标：首批无回复即判 done，不再无休空翻
     first = [_entry(entry_id="tweet-100", item_content=_item_content(_tweet_result("100", text="主推", new_user=True)))]
-    loader = XTweetDetailLoader(_x_session(), "100", first, "more")
+    loader = XTweetDetailLoader("100", first, "more")
     assert loader.done
     assert loader.doc.answers == []
     assert asyncio.run(loader.load_more()) == []
@@ -1043,11 +1027,11 @@ def test_x_tweet_detail_loader_empty_page_marks_done(monkeypatch) -> None:
         ),
     ]
 
-    async def _fake_conv(session: XSession, rest_id: str, cursor: str | None):
+    async def _fake_conv(rest_id: str, cursor: str | None):
         return [_entry(entry_id="tweet-100", item_content=_item_content(_tweet_result("100", text="主推", new_user=True)))], "still-more"
 
     monkeypatch.setattr("feedscope.sources.x.fetch._fetch_conversation", _fake_conv)
-    loader = XTweetDetailLoader(_x_session(), "100", first, "more")
+    loader = XTweetDetailLoader("100", first, "more")
     assert not loader.done
     assert asyncio.run(loader.load_more()) == []
     assert loader.done  # 空页判死

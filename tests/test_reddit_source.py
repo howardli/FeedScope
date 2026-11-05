@@ -1,9 +1,10 @@
 """Reddit 源编排层测试：JWT 判登门、通道页签取数、列表翻页链、详情楼层/
-评论内存切片、403 版本自愈、subreddit 订阅增删（FakePage 替身 + 假
+评论内存切片、403 版本自愈、subreddit 订阅增删（FakeTab 替身 + 假
 profile cookie，不碰浏览器不碰网络）。
 
-- 传输是常驻通道页签的页面 fetch（知乎同款）：FakePage.evaluate 认取数
-  JS，按 URL 路由页面/片段，编排与解析逻辑真实跑
+- 传输是常驻通道页签的页面 fetch（知乎同款）：FakeTab.evaluate 认取数
+  JS，按 URL 路由页面/片段，编排与解析逻辑真实跑（页签生命周期归
+  test_channel.py 集中测，这里只测取数语义）
 - 判登门 = token_v2 JWT 本地解码（sub="user"/"loid"），_require_login 的
   过门逻辑用假 profile_cookies 注入真实跑
 - 订阅表驱动的 feeds 合成照 test_rss_source.py 的配置文件模式
@@ -23,7 +24,7 @@ from feedscope.core.registry import get_source
 from feedscope.core.source import LoginRequired, SourceError
 from feedscope.sources import reddit as reddit_mod
 from feedscope.sources.reddit import fetch as reddit_fetch
-from feedscope.sources.reddit.fetch import _channel, fetch_listing
+from feedscope.sources.reddit.fetch import fetch_listing
 
 # 两条 subreddit 订阅（feeds 合成 / 订阅流路径用）
 _CFG = """\
@@ -34,7 +35,6 @@ python = { url = "https://www.reddit.com/r/python/" }
 
 _VERSION = "2026-11-04T13:46Z~456d6f1d"
 _PARTIAL_PATH = "/svc/shreddit/feeds/popular-feed"
-_NAV_ERR = "Execution context was destroyed, most likely because of a navigation"
 
 
 def _use_config(monkeypatch: pytest.MonkeyPatch, tmp_path, text: str):
@@ -82,7 +82,7 @@ def _page(html: str) -> str:
     return f"<script>var v='{_VERSION}'</script>{html}"
 
 
-# ---- 通道页签替身（知乎 test_zhihu_fetch 的同款骨架）----
+# ---- 通道页签替身（生命周期归 test_channel.py，这里只替 evaluate 路由）----
 
 
 class _Req:
@@ -98,65 +98,32 @@ class _Req:
         return urlparse(self.url).path
 
 
-class FakePage:
-    """最小 Playwright page 替身：evaluate 认页签 fetch 脚本，按 URL 路由到
-    handler -> (状态码或 None, HTML)；nav_failures>0 时前若干次 evaluate 抛
-    「执行上下文被销毁」模拟在途跳转。"""
+class _FakeTab:
+    """ChannelTab 替身：evaluate 认取数 JS，按 URL 路由到 handler -> (状态码或 None, HTML)。"""
 
-    def __init__(self, handler, nav_failures: int = 0) -> None:
-        self.url = "https://www.reddit.com/"
-        self.closed = False
+    def __init__(self, handler) -> None:
         self._handler = handler
-        self._nav = nav_failures
 
-    async def goto(self, url: str, **kw) -> None:
-        self.url = url
-
-    def is_closed(self) -> bool:
-        return self.closed
-
-    async def close(self) -> None:
-        self.closed = True
-
-    async def evaluate(self, script: str, arg=None):
-        if self._nav > 0:
-            self._nav -= 1
-            raise RuntimeError(_NAV_ERR)
+    async def eval(self, script: str, arg=None):
         if "fetch(" not in script:
-            raise AssertionError(f"FakePage 未识别的脚本：{script[:40]}…")
+            raise AssertionError(f"FakeTab 未识别的脚本：{script[:40]}…")
         url, accept, version = arg
         status, body = self._handler(_Req(url, accept, version))
         return {"__status": status} if status else {"__body": body}
 
-
-class _FakeContext:
-    def __init__(self, pages: list[FakePage]) -> None:
-        self._pages = pages
-
-    async def new_page(self) -> FakePage:
-        return self._pages.pop(0) if len(self._pages) > 1 else self._pages[0]
-
-
-class _FakeSession:
-    def __init__(self, *pages: FakePage) -> None:
-        self._pages = list(pages)
-        self.pages_opened = 0
-
-    async def run(self, op, *args, **kwargs):
-        self.pages_opened += 1
-        return await op(_FakeContext(self._pages), *args, **kwargs)
+    def reset(self) -> None:
+        pass
 
 
 def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[_Req]:
-    """假通道页签接管取数：get_session/_channel_page/_version 全复位。"""
+    """假通道页签接管取数：_tab/_version 全复位。"""
     calls: list[_Req] = []
 
     def wrapped(req: _Req) -> tuple[int | None, str]:
         calls.append(req)
         return handler(req)
 
-    monkeypatch.setattr(reddit_fetch, "get_session", lambda: _FakeSession(FakePage(wrapped)))
-    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
+    monkeypatch.setattr(reddit_fetch, "_tab", _FakeTab(wrapped))
     monkeypatch.setattr(reddit_fetch, "_version", None)
     return calls
 
@@ -339,62 +306,20 @@ def test_partial_first_use_harvests_version(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls[1].version == _VERSION
 
 
-# ---- 常驻通道页签（进程级单例、被关重建、在途跳转重建）----
-
-
-def test_channel_opened_once_and_reused(monkeypatch: pytest.MonkeyPatch) -> None:
-    """通道页签进程级单例：第二次调用直接复用，不再开页。"""
-    session = _FakeSession(FakePage(_route_listing))
-    monkeypatch.setattr(reddit_fetch, "get_session", lambda: session)
-    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
-    p1 = asyncio.run(_channel())
-    p2 = asyncio.run(_channel())
-    assert p1 is p2 and session.pages_opened == 1
-    assert p1.url == "https://www.reddit.com/"
-
-
-def test_channel_reopens_when_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """页签被关：单例失效，下一次取通道重新开页。"""
-    page = FakePage(_route_listing)
-    session = _FakeSession(page)
-    monkeypatch.setattr(reddit_fetch, "get_session", lambda: session)
-    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
-    asyncio.run(_channel())
-    page.closed = True
-    asyncio.run(_channel())
-    assert session.pages_opened == 2
-
-
-def test_fetch_rebuilds_channel_on_nav_destroyed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """通道在途跳转（context destroyed）：丢掉单例换新页签重试一次，不裸炸。"""
-    bad = FakePage(_route_listing, nav_failures=1)  # 首个 evaluate 抛「执行上下文被销毁」
-    good = FakePage(_route_listing)
-    calls: list[int] = []
-
-    async def _fake_channel():
-        calls.append(1)
-        return bad if len(calls) == 1 else good
-
-    monkeypatch.setattr(reddit_fetch, "_channel", _fake_channel)
-    monkeypatch.setattr(reddit_fetch, "_version", None)
-    items, _nxt = asyncio.run(fetch_listing("https://www.reddit.com/r/popular/"))
-    assert [it.id for it in items] == ["1abcde", "1fghij"]  # 第二个页签拿到了数据
-    assert len(calls) == 2
+# ---- 异常出口 ----
 
 
 def test_bad_payload_is_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """页签 fetch 返回非约定结构：转 SourceError（出口给 UI 提示）。"""
-    page = FakePage(_route_listing)
 
-    async def bad_eval(script: str, arg=None):
-        return "not-a-dict"
+    class _BadTab:
+        async def eval(self, script: str, arg=None):
+            return "not-a-dict"
 
-    page.evaluate = bad_eval
+        def reset(self) -> None:
+            pass
 
-    async def fake_channel():
-        return page
-
-    monkeypatch.setattr(reddit_fetch, "_channel", fake_channel)
+    monkeypatch.setattr(reddit_fetch, "_tab", _BadTab())
     monkeypatch.setattr(reddit_fetch, "_version", None)
     with pytest.raises(SourceError, match="结构异常"):
         asyncio.run(
