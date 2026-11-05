@@ -5,18 +5,22 @@
 - 惰性创建：只有真正发请求才建（测试/脚本不碰网络就不建）
 - FEEDSCOPE_SAMPLE_DIR 设定时把响应体落盘（feedscope probe 巡检用，平时零开销）
 
-httpx 源（X）走这里；浏览器源走 core/browser.py。
+友好源（RSS/HN/V2EX/Telegram）走这里；敌意源（知乎/Reddit/X）的数据
+通道走 core/browser.ChannelTab——但边界按请求定不按源定：敌意源里的公开
+请求（X 收割的 CDN chunk 下载）也走这里。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
 from feedscope.core import samples
 from feedscope.core.const import DESKTOP_UA, HTTP_TIMEOUT
 from feedscope.core.source import SourceError
+
+_J = TypeVar("_J", dict, list)  # get_json 的期望顶层形状（dict / list）
 
 _client: httpx.AsyncClient | None = None
 
@@ -39,13 +43,15 @@ async def get(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     allow_304: bool = False,
+    sample: bool = True,
 ) -> httpx.Response:
     """GET 并校验状态码；httpx 异常统一包成 SourceError。
 
     source 是展示标签（如 "X"），只进错误消息；params / headers 原样透传
     （headers 供带鉴权头的源用，如 X 的 Bearer/Cookie）。allow_304 给条件
     请求的源用（rss 的 ETag/Last-Modified 协商）：304 是「内容没变」的正
-    常语义而非失败，放行给调用方自己回放缓存；其余状态码照常校验。
+    常语义而非失败，放行给调用方自己回放缓存；其余状态码照常校验。sample
+    关掉样本落盘（X 收割 chunk 下载的 JS bundle 不是 API 响应，留着只占地方）。
     """
     try:
         r = await get_client().get(url, params=params, headers=headers)
@@ -57,8 +63,32 @@ async def get(
         raise SourceError(f"{source} 请求失败（HTTP {exc.response.status_code}）：{url}") from None
     except httpx.HTTPError as exc:
         raise SourceError(f"{source} 请求失败：{exc}") from exc
-    samples.save(samples.url_name(source, str(r.url)), r.content)
+    if sample:
+        samples.save(samples.url_name(source, str(r.url)), r.content)
     return r
+
+
+async def get_json(
+    url: str,
+    *,
+    source: str,
+    params: dict[str, Any] | None = None,
+    expect: type[_J],
+) -> _J:
+    """GET 并按 JSON 解析 + 形状校验：JSON API 源（HN/V2EX）共用的小原语。
+
+    两种失败分开报：「返回的不是 JSON」是网络/代理层问题，「返回结构异常，
+    接口可能已变」是改版信号（probe 巡检据此定位）。expect 是期望的顶层
+    形状（dict / list），形状不对视为改版而非崩溃。
+    """
+    r = await get(url, source=source, params=params)
+    try:
+        data = r.json()
+    except ValueError:
+        raise SourceError(f"{source} 返回的不是 JSON") from None
+    if not isinstance(data, expect):
+        raise SourceError(f"{source} 返回结构异常，接口可能已变") from None
+    return data
 
 
 async def close() -> None:

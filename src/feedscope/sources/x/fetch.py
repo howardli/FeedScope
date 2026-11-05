@@ -238,9 +238,12 @@ def _parse_graphql_url(url: str) -> tuple[str, _Op] | None:
 
 
 async def _download_chunk(url: str) -> str | None:
-    """下载一个公开 CDN chunk（abs.twimg.com 无门禁，httpx 即可）；失败返回 None。"""
+    """下载一个公开 CDN chunk（abs.twimg.com 无门禁，httpx 即可）；失败返回 None。
+
+    敌意源里的公开请求走 httpx（边界按请求定不按源定）；sample=False——
+    JS bundle 不是 API 响应，落样本只占地方。"""
     try:
-        r = await http.get(url, source="X chunk")
+        r = await http.get(url, source="X chunk", sample=False)
     except SourceError:
         return None
     return r.text

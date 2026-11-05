@@ -45,7 +45,9 @@ def test_get_passes_headers(monkeypatch) -> None:
     _patch(monkeypatch, handler)
 
     async def go() -> str:
-        r = await http.get("https://x.test/api", source="测试源", headers={"Authorization": "Bearer t"})
+        r = await http.get(
+            "https://x.test/api", source="测试源", headers={"Authorization": "Bearer t"}
+        )
         return r.text
 
     assert asyncio.run(go()) == "ok"
@@ -81,3 +83,17 @@ def test_close_is_idempotent(monkeypatch) -> None:
     asyncio.run(http.close())
     asyncio.run(http.close())  # 再关一次不炸
     assert http._client is None
+
+
+def test_get_json_validates_shape(monkeypatch) -> None:
+    """get_json：形状对直通；非 JSON 与形状不符（改版信号）分开报。"""
+    _patch(monkeypatch, lambda r: httpx.Response(200, json=[{"id": 1}], request=r))
+    assert asyncio.run(http.get_json("https://x/api", source="测试", expect=list)) == [{"id": 1}]
+
+    _patch(monkeypatch, lambda r: httpx.Response(200, text="not json", request=r))
+    with pytest.raises(SourceError, match="不是 JSON"):
+        asyncio.run(http.get_json("https://x/api", source="测试", expect=list))
+
+    _patch(monkeypatch, lambda r: httpx.Response(200, json={"data": 1}, request=r))
+    with pytest.raises(SourceError, match="结构异常"):
+        asyncio.run(http.get_json("https://x/api", source="测试", expect=list))

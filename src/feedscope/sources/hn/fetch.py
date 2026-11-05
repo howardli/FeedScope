@@ -29,32 +29,19 @@ HITS_PER_PAGE = 30  # 与 HN 官方首页同宽（front_page 恰好 30 条，一
 
 
 async def fetch_feed(name: str, label: str, page: int) -> dict:
-    """一个信息流的一页 search 结果（原始 JSON dict）。"""
+    """一个信息流的一页 search 结果（原始 JSON dict；解析/校验见 http.get_json）。"""
     url, base_params = FEEDS[name]
-    r = await http.get(
+    return await http.get_json(
         url,
         source=f"HN「{label}」",
         params={**base_params, "hitsPerPage": HITS_PER_PAGE, "page": page},
+        expect=dict,
     )
-    try:
-        data = r.json()
-    except ValueError:
-        raise SourceError(f"HN「{label}」返回的不是 JSON") from None
-    if not isinstance(data, dict):
-        raise SourceError(f"HN「{label}」返回结构异常，接口可能已变")
-    return data
 
 
 async def fetch_item(object_id: str) -> dict:
-    """一条 story 的 items/:id 整棵评论树（原始 JSON dict）。"""
-    r = await http.get(f"{_API}/items/{object_id}", source="HN 详情")
-    try:
-        data = r.json()
-    except ValueError:
-        raise SourceError("HN 详情返回的不是 JSON") from None
-    if not isinstance(data, dict):
-        raise SourceError("HN 详情返回结构异常，接口可能已变")
-    return data
+    """一条 story 的 items/:id 整棵评论树（原始 JSON dict；解析/校验见 http.get_json）。"""
+    return await http.get_json(f"{_API}/items/{object_id}", source="HN 详情", expect=dict)
 
 
 class HnFeedLoader(FeedLoader):

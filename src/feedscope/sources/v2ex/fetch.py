@@ -13,7 +13,6 @@ Access Token）与 v1 的 node_name 查询，不在 MVP 这层。
 from __future__ import annotations
 
 from feedscope.core import http
-from feedscope.core.source import SourceError
 
 _API = "https://www.v2ex.com/api"
 
@@ -25,14 +24,8 @@ FEEDS: dict[str, str] = {
 
 
 async def _get_list(url: str, source: str, params: dict[str, str] | None = None) -> list[dict]:
-    """GET 一个返回数组的端点 -> 原始 dict 列表（非 dict 成员剔除）。"""
-    r = await http.get(url, source=source, params=params)
-    try:
-        data = r.json()
-    except ValueError:
-        raise SourceError(f"{source} 返回的不是 JSON") from None
-    if not isinstance(data, list):
-        raise SourceError(f"{source} 返回结构异常，接口可能已变")
+    """GET 一个返回数组的端点 -> 原始 dict 列表（解析/校验见 http.get_json；非 dict 成员剔除）。"""
+    data = await http.get_json(url, source=source, params=params, expect=list)
     return [d for d in data if isinstance(d, dict)]
 
 
