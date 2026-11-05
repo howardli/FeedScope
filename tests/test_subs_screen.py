@@ -99,9 +99,9 @@ async def _run_flow(cfg, monkeypatch) -> None:
 
         # 保存：rss 进 tab，侧栏出现「全部」+ 订阅流，列表加载出内容
         await pilot.click("#setup-confirm")
-        assert await settle(pilot, lambda: [s.source_id for s in app.sources] == ["rss"])
+        assert await settle(pilot, lambda: [s.source_id for s in app.main.sources] == ["rss"])
         # 聚合视图不给无地址条目兜底地址：样例 RSS 里 guid/link 双缺的第三条被跳过
-        assert await settle(pilot, lambda: len(app.items) == 2), "刷新拉到订阅内容"
+        assert await settle(pilot, lambda: len(app.main.items) == 2), "刷新拉到订阅内容"
         nav_text = " ".join(str(n.content) for n in app.query(".feed-nav-item"))
         assert "全部" in nav_text and "我的新名字" not in nav_text, "侧栏有全部流"
 
@@ -197,7 +197,7 @@ async def _run_empty_telegram_flow(cfg, monkeypatch) -> None:
         from feedscope.core import config as cfg_mod
 
         assert cfg_mod.enabled_ids() and "telegram" in cfg_mod.enabled_ids()  # 勾选确实落盘
-        assert "telegram" not in [s.source_id for s in app.sources]  # 零订阅不进 Tab（既有语义）
+        assert "telegram" not in [s.source_id for s in app.main.sources]  # 零订阅不进 Tab（既有语义）
         notes = list(getattr(app, "_notifications", []))
         assert any("还没有订阅" in str(n.message) for n in notes), (
             "给下一步指引，而不是看起来没生效"
@@ -248,8 +248,8 @@ async def _run_delete_all_flow(monkeypatch, tmp_path) -> None:
 
         # 保存链路完整走完：worker 不崩（崩溃会让 setup-confirm 后屏幕卡死）、
         # telegram 零订阅不进 Tab、当前源回退到 v2ex
-        assert [s.source_id for s in app.sources] == ["v2ex"]
-        assert app.current_source.source_id == "v2ex"
+        assert [s.source_id for s in app.main.sources] == ["v2ex"]
+        assert app.main.current_source.source_id == "v2ex"
         notes = [str(n.message) for n in getattr(app, "_notifications", [])]
         assert any("还没有订阅" in m for m in notes), "给下一步指引"
 

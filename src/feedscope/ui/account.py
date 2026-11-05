@@ -42,7 +42,7 @@ class AccountFlow:
             self.app.run_worker(self.login(source), group="login", exclusive=True)
         else:
             self.refused.add(source.source_id)
-            self.app._show_empty(hint)
+            self.app.main._show_empty(hint)
             feedback.info(self.app, "已取消，本次运行不再自动询问；Ctrl+U 可登录")
 
     async def open(self, source: Source) -> None:
@@ -84,7 +84,7 @@ class AccountFlow:
         """
         self.in_progress = True
         try:
-            await self.app._release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
+            await self.app.main._release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
             await close_session()
             try:
                 ok = await login.login(source.source_id, quiet=True)
@@ -99,8 +99,9 @@ class AccountFlow:
                 feedback.warn(self.app, f"{source.label} 登录未完成，可再试一次", title="登录")
         finally:
             self.in_progress = False
-            self.app.action_refresh()
-            # action_refresh 有 in_progress 挡门：复位必须在刷新之前（finally 保序）
+            if self.app.main is not None:
+                self.app.main.action_refresh()
+                # action_refresh 有 in_progress 挡门：复位必须在刷新之前（finally 保序）
 
     async def logout(self, source: Source) -> None:
         """清掉当前源登录 cookie → 刷新（撞墙弹登录框，即换账号动线）。"""
@@ -111,4 +112,5 @@ class AccountFlow:
             feedback.fail(self.app, source, exc, action="登出失败")
             return
         feedback.info(self.app, f"已登出 {source.label}" if had else f"{source.label} 本就没有登录")
-        self.app.action_refresh()
+        if self.app.main is not None:
+            self.app.main.action_refresh()

@@ -24,6 +24,7 @@ from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, Source
 from feedscope.ui import feedback
 from feedscope.ui.layout import md_body_width
+from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.reading import READING_CSS, ReadingScreen
 from feedscope.ui.widgets import divider
 from feedscope.ui.wrap import wrap_markdown
@@ -222,8 +223,6 @@ class DetailScreen(ReadingScreen):
 
     def open_answer(self, index: int) -> None:
         """进第 index 条回答（问题屏保持在栈底，Esc 回来阅读位置不变）。"""
-        from feedscope.ui.screens.answer import AnswerScreen
-
         self.app.push_screen(AnswerScreen(self.source, self.item, self.loader, index))
 
     # ---- 键位 ----

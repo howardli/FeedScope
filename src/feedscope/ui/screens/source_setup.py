@@ -23,7 +23,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
-from feedscope.core.registry import source_classes
+from feedscope.core.registry import get_class
 from feedscope.subscriptions import store_for
 from feedscope.ui import feedback
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavSelectionList
@@ -144,7 +144,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         if idx is None or not 0 <= idx < len(self._entries):
             return
         sid = self._entries[idx][0]
-        cls = next((c for c in source_classes() if c.source_id == sid), None)
+        cls = get_class(sid)
         if cls is None or not cls.subscribable:
             feedback.info(
                 self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅"
@@ -165,7 +165,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     def _sync_row(self, sid: str) -> None:
         """订阅管理返回后同步该源勾选：还有可选信息流 = 勾上（加订阅显然想
         用，与 CLI 的 enabled 联动同语义）；删空 = 取消勾选。"""
-        cls = next((c for c in source_classes() if c.source_id == sid), None)
+        cls = get_class(sid)
         if cls is None:
             return
         want = bool(cls().feeds)

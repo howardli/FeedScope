@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Sequence
+from typing import Literal
 
 from platformdirs import user_cache_path
 
@@ -26,7 +27,7 @@ from feedscope.core.source import FeedLoader, LoginRequired, Source, SourceError
 from feedscope.report import line as _line
 
 
-def _classify(exc: BaseException) -> tuple[str, str]:
+def _classify(exc: BaseException) -> tuple[Literal["SKIP", "FAIL"], str]:
     """异常 -> (状态, 消息)：LoginRequired=SKIP、SourceError=FAIL、其余兜住也算 FAIL。
 
     巡检要兜住一切——崩溃也是发现（取数/详情两处共用同一套分类）。"""
@@ -37,7 +38,9 @@ def _classify(exc: BaseException) -> tuple[str, str]:
     return "FAIL", f"未预期异常：{exc!r}"
 
 
-async def _try_open_feed(source: Source, name: str) -> tuple[str, FeedLoader | None, str]:
+async def _try_open_feed(
+    source: Source, name: str
+) -> tuple[Literal["OK", "SKIP", "FAIL"], FeedLoader | None, str]:
     """打开一个流，返回 (状态, loader, 消息)；异常一律兜住转成状态行。"""
     label = f"{source.label} {name}"
     try:

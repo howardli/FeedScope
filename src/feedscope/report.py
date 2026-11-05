@@ -6,10 +6,14 @@
 
 from __future__ import annotations
 
-MARKS = {"OK": "[OK]  ", "FAIL": "[FAIL]", "SKIP": "[SKIP]"}  # OK 补空格对齐三态
+from typing import Literal
+
+State = Literal["OK", "FAIL", "SKIP"]  # 状态行三态（doctor / probe 共用）
+
+MARKS: dict[str, str] = {"OK": "[OK]  ", "FAIL": "[FAIL]", "SKIP": "[SKIP]"}  # OK 补空格对齐三态
 
 
-def line(state: str, label: str, detail: str = "") -> bool:
+def line(state: State, label: str, detail: str = "") -> bool:
     """打一行状态；返回是否 OK（调用方累计通过项用）。"""
     print(f"{MARKS[state]} {label}" + (f" - {detail}" if detail else ""))
     return state == "OK"

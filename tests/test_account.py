@@ -171,7 +171,7 @@ async def _run_refusal_survives_switch_flow() -> None:
     async with app.run_test(size=(80, 30)) as pilot:
         # 注册顺序：匿名源在前（默认源），登录源第二位
         assert await settle(
-            pilot, lambda: app.current_source.source_id == "anon" and len(app.items) == 1
+            pilot, lambda: app.main.current_source.source_id == "anon" and len(app.main.items) == 1
         ), "匿名源正常出内容"
 
         await pilot.click("#source-tab-1")  # 切到登录源：撞墙弹登录框
@@ -180,7 +180,7 @@ async def _run_refusal_survives_switch_flow() -> None:
 
         # 切回匿名源不受影响，再切回登录源不再追问
         await pilot.click("#source-tab-0")
-        assert await settle(pilot, lambda: app.current_source.source_id == "anon" and len(app.items) == 1)
+        assert await settle(pilot, lambda: app.main.current_source.source_id == "anon" and len(app.main.items) == 1)
         await pilot.click("#source-tab-1")
         await asyncio.sleep(0.3)
         await pilot.pause()
@@ -230,7 +230,7 @@ async def _run_logout_reprompts_flow(calls) -> None:
         await pilot.press("ctrl+u")
         assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.click("#account-go")
-        assert await settle(pilot, lambda: LoginSource.authed and len(app.items) == 1), "登录成功出内容"
+        assert await settle(pilot, lambda: LoginSource.authed and len(app.main.items) == 1), "登录成功出内容"
 
         # 登出（换账号动线）：撞墙要重新弹登录框，不能被旧的拒绝记录压住
         await pilot.press("ctrl+u")
@@ -254,7 +254,7 @@ async def _run_login_success_flow(calls) -> None:
         # 登录成功后自动刷新，列表出内容、弹框已关
         assert await settle(
             pilot,
-            lambda: len(app.items) == 1 and not isinstance(app.screen, AccountScreen),
+            lambda: len(app.main.items) == 1 and not isinstance(app.screen, AccountScreen),
         ), "选登录后刷新出内容"
         assert calls["login"] == ["loginsrc"], "登录动作只调了当前源"
         assert LoginSource.authed is True
@@ -268,7 +268,7 @@ async def _run_account_key_flow(calls) -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(80, 30)) as pilot:
         # 匿名源（注册顺序第一位 = 默认源）：u 提示无需登录，不弹框
-        assert await settle(pilot, lambda: app.current_source.source_id == "anon" and len(app.items) == 1)
+        assert await settle(pilot, lambda: app.main.current_source.source_id == "anon" and len(app.main.items) == 1)
         await pilot.press("ctrl+u")
         assert await settle(pilot, lambda: "无需登录" in last_notification(app)), "匿名源 u 有反馈"
         assert not isinstance(app.screen, AccountScreen), "匿名源 u 不弹框"
@@ -289,7 +289,7 @@ async def _run_account_key_flow(calls) -> None:
         await pilot.press("ctrl+u")
         assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
         await pilot.click("#account-go")
-        assert await settle(pilot, lambda: LoginSource.authed and len(app.items) == 1), "登录成功刷新出内容"
+        assert await settle(pilot, lambda: LoginSource.authed and len(app.main.items) == 1), "登录成功刷新出内容"
 
         # 已登录：u 弹登出框
         await pilot.press("ctrl+u")

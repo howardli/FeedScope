@@ -25,7 +25,9 @@ import feedscope.sources  # noqa: F401  先触发真实源注册
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.registry import _REGISTRY
 from feedscope.core.source import DetailLoader, FeedLoader, Source, SourceError
-from feedscope.ui.app import FeedScopeApp, meta_col_text, score_col_width
+from feedscope.ui.app import FeedScopeApp
+from feedscope.ui.layout import meta_col_text, score_col_width
+from feedscope.ui.screens.main import MainScreen
 from feedscope.ui.layout import META_COL_MAX
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.detail import DetailScreen
@@ -295,7 +297,7 @@ async def _run_flow(opened: list[str]) -> None:
     app = FeedScopeApp()
     assert app.theme == "feedscope-editor", "克制的编辑器风主题已启用"
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3), "列表加载"
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "列表加载"
 
         rows = app.query(ListItem)
         assert rows.nodes[0].outer_size.height > 1, "长标题折行（行高 > 1）"
@@ -313,12 +315,12 @@ async def _run_flow(opened: list[str]) -> None:
         assert app.query_one("#feed").index == 0, "↑ 上移"
 
         await pilot.press("ctrl+n")
-        assert await settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 加载更多（列表）"
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "Ctrl+N 加载更多（列表）"
 
         await pilot.press("ctrl+n")
         assert await settle(
             pilot,
-            lambda: "没有更多了" in app.sub_title and len(app.items) == 5,
+            lambda: "没有更多了" in app.sub_title and len(app.main.items) == 5,
         ), "Ctrl+N 到头：状态行常驻提示（不只瞬时 toast）"
 
         await pilot.resize_terminal(120, 40)
@@ -410,7 +412,7 @@ async def _run_failure_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
         # 增量失败：通知带源标签与消息体（不再是裸异常类名）
-        assert await settle(pilot, lambda: len(app.items) == 1)
+        assert await settle(pilot, lambda: len(app.main.items) == 1)
         await pilot.press("ctrl+n")
         assert await settle(pilot, lambda: "失败源 加载更多失败" in last_notification(app)), (
             f"增量失败要有带源标签的通知，实际 {last_notification(app)!r}"
@@ -430,7 +432,7 @@ async def _run_failure_flow() -> None:
 
         # 详情首载失败：屏内常驻失败态（notify 是瞬时的，屏幕不能空着）
         await pilot.press("left", "up", "enter")  # 经边栏切回 ok 流
-        assert await settle(pilot, lambda: len(app.items) == 1)
+        assert await settle(pilot, lambda: len(app.main.items) == 1)
         await pilot.press("enter")
         assert await settle(
             pilot,
@@ -453,17 +455,17 @@ def test_error_outlets_unified(failing_registry) -> None:
 async def _run_guard_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
         await pilot.press("enter")
         assert isinstance(app.screen, DetailScreen)
         assert await settle(pilot, lambda: app.screen._rendered)
         title = app.sub_title  # 详情标题（_load 设置）
 
-        await pilot.press("f5")  # 主屏守卫：详情屏上 F5 不做隐形后台刷新，但有反馈
+        await pilot.press("f5")  # F5 是主屏屏级绑定：详情屏上根本不命中（无刷新也无打断）
         await asyncio.sleep(0.3)
         await pilot.pause()
-        assert app.sub_title == title, "详情屏上 r 不应顶掉详情标题"
-        assert "非列表屏" in last_notification(app), "F5 被挡下要有反馈（不静默）"
+        assert app.sub_title == title, "详情屏上 F5 不应顶掉详情标题"
+        assert len(app.main.items) == 3, "也不做隐形后台刷新"
 
         await pilot.press("escape")
         assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
@@ -476,13 +478,13 @@ def test_app_keys_guarded_on_detail(stub_registry) -> None:
 async def _run_source_switch_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
-        assert app.source_idx == 0 and app.current_source.source_id == "stub"
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert app.main.source_idx == 0 and app.main.current_source.source_id == "stub"
 
         await pilot.press("tab")  # Tab 切到第二个源
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub2" and len(app.items) == 1,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
         ), "Tab 切站"
         assert app.query_one("#source-tab-1").has_class("source-tab-active"), "顶部 tab 高亮新源"
         assert app.query_one("#feed-nav-0").has_class("feed-nav-active"), "侧栏高亮当前流"
@@ -490,35 +492,35 @@ async def _run_source_switch_flow() -> None:
         await pilot.press("shift+tab")  # Shift+Tab 循环回第一个源
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub" and len(app.items) == 3,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
         ), "Shift+Tab 循环切站"
 
         # 鼠标点击：顶部 tab 切站、左侧边栏切流（与键盘共用同一条动作路径）
         await pilot.click("#source-tab-1")
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub2" and len(app.items) == 1,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
         ), "点击顶部 tab 切站"
         await pilot.click("#source-tab-0")
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub" and len(app.items) == 3,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
         ), "点击顶部 tab 回站"
         await pilot.click("#feed-nav-1")
-        assert await settle(pilot, lambda: app.feed_idx == 1), "点击侧栏切流"
+        assert await settle(pilot, lambda: app.main.feed_idx == 1), "点击侧栏切流"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随点击"
 
         await pilot.click("#source-tab-1")
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub2" and len(app.items) == 1,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
         ), "点击 tab 切源"
         await pilot.click("#source-tab-0")
         assert await settle(
             pilot,
-            lambda: app.current_source.source_id == "stub" and len(app.items) == 3,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
         ), "回到第一个源"
-        assert app.feed_idx == 1, "切回站点恢复上次的信息流（每源记忆）"
+        assert app.main.feed_idx == 1, "切回站点恢复上次的信息流（每源记忆）"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "记忆的流高亮"
 
 
@@ -549,7 +551,7 @@ async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
         ), "取消勾选即去掉序号"
         await pilot.click("#setup-confirm")
 
-        assert await settle(pilot, lambda: len(app.items) == 3), "确认后进主界面并加载"
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "确认后进主界面并加载"
         assert not isinstance(app.screen, OnboardingScreen)
         assert len(app.query(".source-tab")) == 1, "只勾一个源：顶部 tab 只剩一个"
         assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], (
@@ -584,7 +586,7 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
         assert len(app.query(".source-tab")) == 2
 
         # 停用 stub2：F2 打开管理 → 空格取消第二项 → 保存
@@ -598,7 +600,7 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
         assert await settle(pilot, lambda: len(app.query(".source-tab")) == 1), "保存后 tab 即时重建"
         assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], "落盘"
         assert await settle(
-            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
         ), "停在原源继续可读"
 
         # 再启用：tab 即时重建、Tab 循环恢复两源
@@ -610,7 +612,7 @@ async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
         assert await settle(pilot, lambda: len(app.query(".source-tab")) == 2)
         await pilot.press("tab")
         assert await settle(
-            pilot, lambda: app.current_source.source_id == "stub2" and len(app.items) == 1
+            pilot, lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1
         ), "重新启用后 Tab 循环可达"
 
         # 管理取消：不落盘不动状态
@@ -635,7 +637,7 @@ async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
 
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
@@ -643,7 +645,7 @@ async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
         await pilot.press("down")
         await pilot.press("space")  # 停用 stub2：全不勾也允许保存
         await pilot.click("#setup-confirm")
-        assert await settle(pilot, lambda: not app.sources), "全部停用"
+        assert await settle(pilot, lambda: not app.main.sources), "全部停用"
         hint = str(app.query_one("#empty-hint").content)
         assert "没有启用的源" in hint and "F2" in hint, "空态常驻提示指路 F2"
         assert app.is_running, "零启用不退出 App（s 随时再开）"
@@ -657,7 +659,7 @@ async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
         await pilot.press("space")  # 勾回 stub
         await pilot.click("#setup-confirm")
         assert await settle(
-            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
         ), "空态可恢复"
 
 
@@ -682,8 +684,8 @@ async def _run_check_order_flow(monkeypatch, tmp_path: Path) -> None:
         assert "1 存根二" in str(sl.get_option_at_index(1).prompt), "序号跟随勾选顺序实时重排"
         assert "2 存根" in str(sl.get_option_at_index(0).prompt)
         await pilot.click("#setup-confirm")
-        assert await settle(pilot, lambda: len(app.items) == 3)
-        assert [s.source_id for s in app.sources] == ["stub2", "stub"], "展示顺序 = 勾选顺序"
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert [s.source_id for s in app.main.sources] == ["stub2", "stub"], "展示顺序 = 勾选顺序"
         assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"], (
             "落盘顺序与勾选顺序一致"
         )
@@ -703,8 +705,8 @@ async def _run_config_order_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 1), "首源是 stub2（1 条）"
-        assert [s.source_id for s in app.sources] == ["stub2", "stub"]
+        assert await settle(pilot, lambda: len(app.main.items) == 1), "首源是 stub2（1 条）"
+        assert [s.source_id for s in app.main.sources] == ["stub2", "stub"]
         assert app.query(".source-tab").nodes[0].has_class("source-tab-active"), "首位源即当前源"
 
 
@@ -719,7 +721,7 @@ async def _run_manage_reorder_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
         # 取消再勾回第一项（stub）：移到末尾 → [stub2, stub]
@@ -731,11 +733,11 @@ async def _run_manage_reorder_flow(monkeypatch, tmp_path: Path) -> None:
         assert "2 存根" in str(sl.get_option_at_index(0).prompt)
         await pilot.click("#setup-confirm")
         assert await settle(
-            pilot, lambda: [s.source_id for s in app.sources] == ["stub2", "stub"]
+            pilot, lambda: [s.source_id for s in app.main.sources] == ["stub2", "stub"]
         ), "保存后按新顺序重建站点栏"
         assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"]
         assert await settle(
-            pilot, lambda: app.current_source.source_id == "stub" and len(app.items) == 3
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
         ), "顺序变了但停在原源继续可读"
 
 
@@ -747,7 +749,7 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
     """第三层动线：问题屏 Enter 按可视位置进回答（读到哪进哪）-> 评论按需 -> Ctrl+N 翻页 -> [/] 换回答 -> Esc 返回。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
         await pilot.press("enter")
         detail = app.screen
         assert isinstance(detail, DetailScreen)
@@ -806,7 +808,7 @@ async def _run_no_comments_flow() -> None:
     误按给反馈不无声；翻页/换篇动线不受影响。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
         await pilot.press("enter")
         detail = app.screen
         assert isinstance(detail, DetailScreen)
@@ -848,38 +850,38 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
     """
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
 
         # 空间移动 + 边栏切流：列表 ← 进边栏（停当前流不换流），边栏 ↓ 切流、
         # 到尾给反馈不静默，Enter 回列表（详情屏的 ←/→ 换篇是屏级绑定另测）
         await pilot.press("left")
         await pilot.pause()
-        assert app._pane == "sidebar" and app.feed_idx == 0 and len(app.items) == 3, "列表 ← 进边栏停当前流"
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0 and len(app.main.items) == 3, "列表 ← 进边栏停当前流"
         await pilot.press("down")
-        assert await settle(pilot, lambda: app.feed_idx == 1 and app._pane == "sidebar"), "边栏 ↓ 切流"
+        assert await settle(pilot, lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar"), "边栏 ↓ 切流"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
         await pilot.press("down")
         assert await settle(pilot, lambda: "已是最后一个流" in last_notification(app)), "到边界有反馈"
         await pilot.press("up")
-        assert await settle(pilot, lambda: app.feed_idx == 0), "边栏 ↑ 切回流"
+        assert await settle(pilot, lambda: app.main.feed_idx == 0), "边栏 ↑ 切回流"
         await pilot.press("enter")
-        assert await settle(pilot, lambda: app._pane == "list" and app.feed_idx == 0), "Enter 回列表"
+        assert await settle(pilot, lambda: app.main._pane == "list" and app.main.feed_idx == 0), "Enter 回列表"
 
         # 旧字母/数字键已废弃：按下无任何效果（不被任何绑定命中）
         await pilot.press("n")
         await pilot.press("r")
         await pilot.press("1")
         await pilot.pause()
-        assert len(app.items) == 3 and app.feed_idx == 0, "n/r/1 均已废弃（无副作用）"
+        assert len(app.main.items) == 3 and app.main.feed_idx == 0, "n/r/1 均已废弃（无副作用）"
         await pilot.press("j")
         await pilot.pause()
         assert app.query_one("#feed").index == 0, "j 已废弃（选中不动，移动走 ↑/↓）"
 
         # Ctrl+N 加载更多；F5 刷新回首批
         await pilot.press("ctrl+n")
-        assert await settle(pilot, lambda: len(app.items) == 5), "Ctrl+N 加载更多"
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "Ctrl+N 加载更多"
         await pilot.press("f5")
-        assert await settle(pilot, lambda: len(app.items) == 3), "F5 刷新回首批"
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "F5 刷新回首批"
 
         # Ctrl+O 浏览器打开当前选中条目
         await pilot.press("ctrl+o")
@@ -924,18 +926,18 @@ async def _run_focus_free_flow() -> None:
     控件级绑定，焦点落位竞态时整个失灵）。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
 
         app.set_focus(None)  # 模拟焦点丢失/未落位
         assert app.focused is None
         await pilot.press("left")
-        assert await settle(pilot, lambda: app._pane == "sidebar" and app.feed_idx == 0), (
+        assert await settle(pilot, lambda: app.main._pane == "sidebar" and app.main.feed_idx == 0), (
             "焦点不在列表上 → ← 仍进边栏（停当前流）"
         )
         await pilot.press("ctrl+n")
-        assert await settle(pilot, lambda: len(app.items) == 5), "焦点不在列表上 → Ctrl+N 仍生效"
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "焦点不在列表上 → Ctrl+N 仍生效"
         await pilot.press("enter")
-        assert await settle(pilot, lambda: app._pane == "list" and len(app.items) == 5), "Enter 回列表"
+        assert await settle(pilot, lambda: app.main._pane == "list" and len(app.main.items) == 5), "Enter 回列表"
 
 
 def test_keys_focus_free(stub_registry) -> None:
@@ -953,8 +955,8 @@ async def _run_pane_navigation_flow() -> None:
     键盘先落边栏；Tab 连按仍一次一键地连续切站。"""
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
-        assert app._pane == "list", "默认列表态"
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert app.main._pane == "list", "默认列表态"
         tabs = app.query_one("#source-tabs")
         nav = app.query_one("#feed-nav")
         assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus")
@@ -964,12 +966,12 @@ async def _run_pane_navigation_flow() -> None:
         assert app.query_one("#feed").index == 1, "↓ 移文章"
         await pilot.press("up")  # 回首条
         await pilot.pause()
-        assert app.query_one("#feed").index == 0 and app._pane == "list", "↑ 移文章"
+        assert app.query_one("#feed").index == 0 and app.main._pane == "list", "↑ 移文章"
         await pilot.press("right")
         await pilot.pause()
-        assert app._pane == "list" and app.feed_idx == 0, "列表 → 抵右缘无事"
+        assert app.main._pane == "list" and app.main.feed_idx == 0, "列表 → 抵右缘无事"
         await pilot.press("up")  # 首条再 ↑ → 上探源栏
-        assert app._pane == "tabs", "列表首条 ↑ → 源栏"
+        assert app.main._pane == "tabs", "列表首条 ↑ → 源栏"
         assert tabs.has_class("pane-focus"), "源栏聚焦高亮"
         assert app.query_one("#feed").has_focus, "焦点留在列表（Tab 切站随时命中）"
         assert app.query_one("#feed").has_class("pane-aside"), "非列表态列表光标隐去"
@@ -977,93 +979,93 @@ async def _run_pane_navigation_flow() -> None:
 
         # 源栏态 ←/→ = 切站（与 Tab 同路径，连切不拽走）；↓ 下探边栏
         await pilot.press("right")
-        assert await settle(pilot, lambda: app.source_idx == 1 and app._pane == "tabs"), "源栏态 → 切站"
+        assert await settle(pilot, lambda: app.main.source_idx == 1 and app.main._pane == "tabs"), "源栏态 → 切站"
         await pilot.press("left")
-        assert await settle(pilot, lambda: app.source_idx == 0), "源栏态 ← 切回"
+        assert await settle(pilot, lambda: app.main.source_idx == 0), "源栏态 ← 切回"
         await pilot.press("down")
-        assert app._pane == "sidebar" and nav.has_class("pane-focus"), "源栏 ↓ → 边栏（唯一的纵向区域移动）"
+        assert app.main._pane == "sidebar" and nav.has_class("pane-focus"), "源栏 ↓ → 边栏（唯一的纵向区域移动）"
         await pilot.press("right")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "边栏 → 回列表"
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "边栏 → 回列表"
         assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus"), "聚焦高亮随返回摘除"
         assert not app.query_one("#feed").has_class("pane-aside"), "列表光标恢复亮态"
 
         # 边栏 ↑/↓ 就地切流、到边即停给反馈（不跳出区域），侧栏高亮跟随
         await pilot.press("left")  # 列表 ← 进边栏（停当前流）
-        assert app._pane == "sidebar", "列表 ← 进边栏"
+        assert app.main._pane == "sidebar", "列表 ← 进边栏"
         assert nav.has_class("pane-focus"), "边栏聚焦高亮"
         await pilot.press("down")
-        assert await settle(pilot, lambda: app.feed_idx == 1 and app._pane == "sidebar"), "边栏态 ↓ 切流"
+        assert await settle(pilot, lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar"), "边栏态 ↓ 切流"
         assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
         await pilot.press("up")  # 回首流
-        assert await settle(pilot, lambda: app.feed_idx == 0 and app._pane == "sidebar"), "边栏 ↑ 切回流"
+        assert await settle(pilot, lambda: app.main.feed_idx == 0 and app.main._pane == "sidebar"), "边栏 ↑ 切回流"
         await pilot.press("up")  # 首流再 ↑ → 上探源栏（边栏正上方，与源栏 ↓ 互逆）
-        assert app._pane == "tabs", "边栏首流 ↑ → 源栏"
+        assert app.main._pane == "tabs", "边栏首流 ↑ → 源栏"
         await pilot.press("escape")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "Esc 逐层返回：先回列表"
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Esc 逐层返回：先回列表"
 
         # 边栏里 ←/→ 是区域间移动（边栏是纵向列表，切流只走 ↑/↓）：
         # → 回列表（右边就是列表）、← 去源栏；Enter 也回列表
         await pilot.press("left")  # 列表 ← 进边栏
-        assert app._pane == "sidebar"
+        assert app.main._pane == "sidebar"
         await pilot.press("enter")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "Enter 回列表"
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Enter 回列表"
         await pilot.press("left")  # 再进边栏
-        assert app._pane == "sidebar"
+        assert app.main._pane == "sidebar"
         await pilot.press("right")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "→ 回列表（空间移动，不切流）"
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "→ 回列表（空间移动，不切流）"
         await pilot.press("left")  # 进边栏
         await pilot.press("left")  # 边栏 ← → 源栏
-        assert app._pane == "tabs", "边栏态 ← → 源栏（空间移动，不切流）"
+        assert app.main._pane == "tabs", "边栏态 ← → 源栏（空间移动，不切流）"
         await pilot.press("escape")
-        assert app._pane == "list" and app.query_one("#feed").has_focus, "Esc 回列表"
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Esc 回列表"
 
         # home/end/pageup/pagedown 是列表视口滚动键：键盘在边栏时不滚看不见的
         # 列表（键只作用在聚焦区域），回列表后照常滚动不报错
         await pilot.press("left")
-        assert app._pane == "sidebar"
+        assert app.main._pane == "sidebar"
         await pilot.press("pageup", "home", "end", "pagedown")
         await pilot.pause()
-        assert app._pane == "sidebar" and app.feed_idx == 0, "边栏态翻页键不碰列表也不动流"
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0, "边栏态翻页键不碰列表也不动流"
         await pilot.press("enter")
-        assert app._pane == "list"
+        assert app.main._pane == "list"
         await pilot.press("pageup", "home", "pagedown")
         await pilot.pause()
-        assert app._pane == "list" and len(app.items) == 3, "列表态翻页键照常（视口滚动不炸）"
+        assert app.main._pane == "list" and len(app.main.items) == 3, "列表态翻页键照常（视口滚动不炸）"
 
         # 切站落边栏：Tab/Shift+Tab 切完键盘先停在边栏（先挑流），连按一次一
         # 键地切站（焦点留在列表，不退化成焦点轮换），边栏 Enter 回列表
         await pilot.press("tab")
-        assert await settle(pilot, lambda: app.source_idx == 1 and app._pane == "sidebar"), "Tab 切站落边栏"
+        assert await settle(pilot, lambda: app.main.source_idx == 1 and app.main._pane == "sidebar"), "Tab 切站落边栏"
         assert nav.has_class("pane-focus"), "落边栏高亮"
         await pilot.press("tab")
-        assert await settle(pilot, lambda: app.source_idx == 0 and app._pane == "sidebar"), "Tab 连切不退化"
+        assert await settle(pilot, lambda: app.main.source_idx == 0 and app.main._pane == "sidebar"), "Tab 连切不退化"
         await pilot.press("shift+tab", "shift+tab")
-        assert await settle(pilot, lambda: app.source_idx == 0 and app._pane == "sidebar"), "Shift+Tab 同款"
+        assert await settle(pilot, lambda: app.main.source_idx == 0 and app.main._pane == "sidebar"), "Shift+Tab 同款"
         await pilot.press("enter")
-        assert app._pane == "list", "边栏 Enter 回列表"
+        assert app.main._pane == "list", "边栏 Enter 回列表"
 
         # 列表 ←/→ 不再切流（切流只在边栏 ↑/↓）：→ 抵右缘无事，← 进边栏停当前流
         await pilot.press("right")
         await pilot.pause()
-        assert app.feed_idx == 0 and app._pane == "list" and len(app.items) == 3, "列表 → 抵右缘无事"
+        assert app.main.feed_idx == 0 and app.main._pane == "list" and len(app.main.items) == 3, "列表 → 抵右缘无事"
         await pilot.press("left")
         await pilot.pause()
-        assert app._pane == "sidebar" and app.feed_idx == 0, "列表 ← 进边栏（停当前流不切流）"
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0, "列表 ← 进边栏（停当前流不切流）"
         await pilot.press("right")
         await pilot.pause()
-        assert app._pane == "list", "边栏 → 回列表"
+        assert app.main._pane == "list", "边栏 → 回列表"
 
         # 弹层无扰动：边栏态开 F2，屏内 ↑↓ 走 SelectionList 原生键；关层后
         # 焦点回列表、pane 保持（逻辑层与焦点解耦，不因弹层漂移）
         await pilot.press("left")  # 列表 ← 进边栏
-        assert app._pane == "sidebar"
+        assert app.main._pane == "sidebar"
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen)), "F2 弹层照常"
         await pilot.press("down")
-        assert app._pane == "sidebar", "弹层内 ↑↓ 不经 App 导航（屏内原生）"
+        assert app.main._pane == "sidebar", "弹层内 ↑↓ 不经 App 导航（屏内原生）"
         await pilot.press("escape")
-        assert await settle(pilot, lambda: app._on_main_screen()), "Esc 关弹层"
-        assert app._pane == "sidebar" and app.query_one("#feed").has_focus, "关层后 pane 保持、焦点回列表"
+        assert await settle(pilot, lambda: isinstance(app.screen, MainScreen)), "Esc 关弹层"
+        assert app.main._pane == "sidebar" and app.query_one("#feed").has_focus, "关层后 pane 保持、焦点回列表"
 
 
 def test_pane_navigation_flow(two_source_registry) -> None:
@@ -1082,7 +1084,7 @@ async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
-        assert await settle(pilot, lambda: len(app.items) == 3)
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
 
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
@@ -1117,7 +1119,7 @@ async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
         assert focused().id == "setup-confirm"
         await pilot.press("right")
         await pilot.press("enter")
-        assert await settle(pilot, lambda: app._on_main_screen()), "Enter 按下聚焦的按钮"
+        assert await settle(pilot, lambda: isinstance(app.screen, MainScreen)), "Enter 按下聚焦的按钮"
 
 
 def test_dialog_arrow_focus(two_source_registry, monkeypatch, tmp_path) -> None:
