@@ -42,9 +42,11 @@ def rss_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 def _rows(app: FeedScopeApp) -> int:
     screen = app.screen
-    return len(screen.query_one("#subs-list", ListView).children) if isinstance(
-        screen, SubscriptionsScreen
-    ) else -1
+    return (
+        len(screen.query_one("#subs-list", ListView).children)
+        if isinstance(screen, SubscriptionsScreen)
+        else -1
+    )
 
 
 async def _run_flow(cfg, monkeypatch) -> None:
@@ -112,12 +114,13 @@ def test_subs_screen_full_flow(rss_env, monkeypatch) -> None:
 
 @pytest.fixture()
 def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
-    """零订阅起步 + 版块页走 Mock + 假判登 cookie（不弹真 Chrome）。"""
+    """零订阅起步 + 版块页走假通道页签 + 假判登 cookie（不弹真 Chrome）。"""
     cfg = tmp_path / "sources.toml"
     cfg.write_text("enabled = []\n", encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
 
-    from feedscope.core import http
+    from test_reddit_source import _mock
+
     from feedscope.sources import reddit as reddit_mod
 
     async def fake_cookies(url: str) -> dict[str, str]:
@@ -129,14 +132,13 @@ def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
         token = f"{b64(b'{}')}.{b64(json.dumps({'sub': 'user'}).encode())}.sig"
         return {"reddit_session": "s", "token_v2": token}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/r/rust/":
-            return httpx.Response(200, text='<div subreddit-name="rust"></div>', request=request)
-        return httpx.Response(200, text="<html>壳页</html>", request=request)
+    def route(req) -> tuple[int | None, str]:
+        if req.path == "/r/rust/":
+            return None, '<div subreddit-name="rust"></div>'
+        return None, "<html>壳页</html>"
 
     monkeypatch.setattr(reddit_mod, "profile_cookies", fake_cookies)
-    monkeypatch.setattr(reddit_mod, "get_session", lambda: type("B", (), {"ua": "UA/1.0"})())
-    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    _mock(monkeypatch, route)  # 通道页签替身接管取数（get_session/单例/版本全复位）
     return cfg
 
 
@@ -196,7 +198,9 @@ async def _run_empty_telegram_flow(cfg, monkeypatch) -> None:
         assert cfg_mod.enabled_ids() and "telegram" in cfg_mod.enabled_ids()  # 勾选确实落盘
         assert "telegram" not in [s.source_id for s in app.sources]  # 零订阅不进 Tab（既有语义）
         notes = list(getattr(app, "_notifications", []))
-        assert any("还没有订阅" in str(n.message) for n in notes), "给下一步指引，而不是看起来没生效"
+        assert any("还没有订阅" in str(n.message) for n in notes), (
+            "给下一步指引，而不是看起来没生效"
+        )
 
 
 def test_empty_subscribable_hint_on_save(rss_env, monkeypatch) -> None:
@@ -253,7 +257,9 @@ def test_delete_all_then_keep_checked_rebuilds_without_crash(monkeypatch, tmp_pa
     asyncio.run(_run_delete_all_flow(monkeypatch, tmp_path))
 
 
-def test_open_feed_all_with_empty_table_gives_guidance(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_open_feed_all_with_empty_table_gives_guidance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """空订阅表对「全部」流：给指引，不误报「站点可能已改版」（telegram 与 rss 同修）。"""
     from feedscope.core.source import SourceError
     from feedscope.sources.rss import RssSource

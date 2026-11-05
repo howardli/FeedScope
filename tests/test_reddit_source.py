@@ -1,9 +1,10 @@
-"""Reddit 源编排层测试：JWT 判登门、列表翻页链、详情楼层/评论内存切片、
-403 版本自愈、subreddit 订阅增删（全 MockTransport + 假 profile cookie）。
+"""Reddit 源编排层测试：JWT 判登门、通道页签取数、列表翻页链、详情楼层/
+评论内存切片、403 版本自愈、subreddit 订阅增删（FakePage 替身 + 假
+profile cookie，不碰浏览器不碰网络）。
 
-- 传输是 httpx 直调网站 HTML 通道；MockTransport 按 URL 路由页面/片段，
-  编排与解析逻辑真实跑
-- 判登门 = token_v2 JWT 本地解码（sub="user"/"loid"），_reddit_session 的
+- 传输是常驻通道页签的页面 fetch（知乎同款）：FakePage.evaluate 认取数
+  JS，按 URL 路由页面/片段，编排与解析逻辑真实跑
+- 判登门 = token_v2 JWT 本地解码（sub="user"/"loid"），_require_login 的
   过门逻辑用假 profile_cookies 注入真实跑
 - 订阅表驱动的 feeds 合成照 test_rss_source.py 的配置文件模式
 """
@@ -11,18 +12,18 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlparse
 
-import httpx
 import pytest
 from test_reddit_parse import LISTING_END_HTML, LISTING_HTML, THREAD_HTML, _post
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
-from feedscope.core import http
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import get_source
 from feedscope.core.source import LoginRequired, SourceError
 from feedscope.sources import reddit as reddit_mod
 from feedscope.sources.reddit import fetch as reddit_fetch
+from feedscope.sources.reddit.fetch import _channel, fetch_listing
 
 # 两条 subreddit 订阅（feeds 合成 / 订阅流路径用）
 _CFG = """\
@@ -33,6 +34,7 @@ python = { url = "https://www.reddit.com/r/python/" }
 
 _VERSION = "2026-11-04T13:46Z~456d6f1d"
 _PARTIAL_PATH = "/svc/shreddit/feeds/popular-feed"
+_NAV_ERR = "Execution context was destroyed, most likely because of a navigation"
 
 
 def _use_config(monkeypatch: pytest.MonkeyPatch, tmp_path, text: str):
@@ -50,22 +52,19 @@ def _jwt(claims: dict) -> str:
     def b64(d: bytes) -> str:
         return base64.urlsafe_b64encode(d).rstrip(b"=").decode()
 
-    return f"{b64(b'{\"alg\":\"none\"}')}.{b64(json.dumps(claims).encode())}.sig"
+    header = b64(b'{"alg":"none"}')
+    return f"{header}.{b64(json.dumps(claims).encode())}.sig"
 
 
 def _logged_in_token() -> str:
     return _jwt({"sub": "user", "at": 1, "aid": "t2_56dpnldj"})
 
 
-class _FakeBrowser:
-    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0 Safari/537.36"
-
-
 def _fake_login(
     monkeypatch: pytest.MonkeyPatch,
     cookies: dict[str, str] | None = None,
 ) -> None:
-    """假 profile cookie + 假浏览器 UA：_reddit_session 的判登门真实跑，不起真浏览器。"""
+    """假 profile cookie：_require_login 的判登门真实跑，不起真浏览器。"""
     jar = dict(
         cookies
         if cookies is not None
@@ -76,42 +75,110 @@ def _fake_login(
         return dict(jar)
 
     monkeypatch.setattr(reddit_mod, "profile_cookies", fake_profile_cookies)
-    monkeypatch.setattr(reddit_mod, "get_session", lambda: _FakeBrowser())
 
 
 def _page(html: str) -> str:
-    """页面 HTML 里嵌版本头（收割用）。"""
+    """页面 HTML 里嵌版本头（顺手收割用）。"""
     return f"<script>var v='{_VERSION}'</script>{html}"
 
 
-def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
-    calls: list[httpx.Request] = []
+# ---- 通道页签替身（知乎 test_zhihu_fetch 的同款骨架）----
 
-    def wrapped(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return handler(request)
 
-    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(wrapped)))
-    monkeypatch.setattr(reddit_fetch, "_version", None)  # 版本缓存不跨用例
+class _Req:
+    """一次页签 fetch 的请求记录（断言 URL 与我们手动补的头）。"""
+
+    def __init__(self, url: str, accept: str, version: str | None) -> None:
+        self.url = url
+        self.accept = accept
+        self.version = version  # None = 页面请求（不带版本头）
+
+    @property
+    def path(self) -> str:
+        return urlparse(self.url).path
+
+
+class FakePage:
+    """最小 Playwright page 替身：evaluate 认页签 fetch 脚本，按 URL 路由到
+    handler -> (状态码或 None, HTML)；nav_failures>0 时前若干次 evaluate 抛
+    「执行上下文被销毁」模拟在途跳转。"""
+
+    def __init__(self, handler, nav_failures: int = 0) -> None:
+        self.url = "https://www.reddit.com/"
+        self.closed = False
+        self._handler = handler
+        self._nav = nav_failures
+
+    async def goto(self, url: str, **kw) -> None:
+        self.url = url
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def evaluate(self, script: str, arg=None):
+        if self._nav > 0:
+            self._nav -= 1
+            raise RuntimeError(_NAV_ERR)
+        if "fetch(" not in script:
+            raise AssertionError(f"FakePage 未识别的脚本：{script[:40]}…")
+        url, accept, version = arg
+        status, body = self._handler(_Req(url, accept, version))
+        return {"__status": status} if status else {"__body": body}
+
+
+class _FakeContext:
+    def __init__(self, pages: list[FakePage]) -> None:
+        self._pages = pages
+
+    async def new_page(self) -> FakePage:
+        return self._pages.pop(0) if len(self._pages) > 1 else self._pages[0]
+
+
+class _FakeSession:
+    def __init__(self, *pages: FakePage) -> None:
+        self._pages = list(pages)
+        self.pages_opened = 0
+
+    async def run(self, op, *args, **kwargs):
+        self.pages_opened += 1
+        return await op(_FakeContext(self._pages), *args, **kwargs)
+
+
+def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[_Req]:
+    """假通道页签接管取数：get_session/_channel_page/_version 全复位。"""
+    calls: list[_Req] = []
+
+    def wrapped(req: _Req) -> tuple[int | None, str]:
+        calls.append(req)
+        return handler(req)
+
+    monkeypatch.setattr(reddit_fetch, "get_session", lambda: _FakeSession(FakePage(wrapped)))
+    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
+    monkeypatch.setattr(reddit_fetch, "_version", None)
     return calls
 
 
-def _route_listing(request: httpx.Request) -> httpx.Response:
+def _route_listing(req: _Req) -> tuple[int | None, str]:
     """页面/片段路由：热门页起步、翻页一片到底。"""
-    if request.url.path == "/r/popular/":
-        return httpx.Response(200, text=_page(LISTING_HTML), request=request)
-    if request.url.path == _PARTIAL_PATH:
-        return httpx.Response(200, text=LISTING_END_HTML, request=request)
-    if request.url.path == "/":
-        return httpx.Response(200, text=_page(LISTING_HTML), request=request)
-    if request.url.path == "/r/rust/":
-        return httpx.Response(200, text=_page(LISTING_HTML), request=request)
-    return httpx.Response(404, text="gone", request=request)
+    if req.path == "/r/popular/":
+        return None, _page(LISTING_HTML)
+    if req.path == _PARTIAL_PATH:
+        return None, LISTING_END_HTML
+    if req.path == "/":
+        return None, _page(LISTING_HTML)
+    if req.path == "/r/rust/":
+        return None, _page(LISTING_HTML)
+    return 404, "gone"
 
 
 def _item(id36: str = "1abcde") -> FeedItem:
     return FeedItem(
-        source="reddit", id=id36, title="Rust 1.85 released",
+        source="reddit",
+        id=id36,
+        title="Rust 1.85 released",
         url=f"https://www.reddit.com/r/rust/comments/{id36}/slug_{id36}/",
     )
 
@@ -132,7 +199,7 @@ def test_gate_logged_in_token_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _mock(monkeypatch, _route_listing)
     loader = asyncio.run(get_source("reddit").open_feed("popular"))
     asyncio.run(loader.close())
-    assert calls[0].url.path == "/r/popular/"  # 第一个请求就是数据页
+    assert calls[0].path == "/r/popular/"  # 第一个请求就是数据页
 
 
 def test_gate_anonymous_token_prompts_login(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,7 +231,7 @@ def test_login_verified_decodes_token_in_login_context() -> None:
 # ---- 信息流：页面起步 + load-after 链翻页 ----
 
 
-def test_open_feed_headers_and_topup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_open_feed_channel_fetch_and_topup(monkeypatch: pytest.MonkeyPatch) -> None:
     """SSR 首页只嵌 2 帖：不足一批时自动跟 load-after 链补齐（首屏即一屏）。"""
     calls = _mock(monkeypatch, _route_listing)
     _fake_login(monkeypatch)
@@ -175,11 +242,11 @@ def test_open_feed_headers_and_topup(monkeypatch: pytest.MonkeyPatch) -> None:
         assert asyncio.run(loader.load_more()) == []  # 到底后翻页为空
     finally:
         asyncio.run(loader.close())
-    page = calls[0]
-    assert page.url.path == "/r/popular/"
-    assert page.headers["user-agent"] == _FakeBrowser.ua  # 真 UA 与登录会话同形
-    assert "token_v2" in page.headers["cookie"] or "reddit_session" in page.headers["cookie"]
-    assert page.headers["accept"].startswith("text/html")
+    # 页面响应顺手收割版本：首批 partial 不需要专割请求（httpx 时代要专门拉一次页面）
+    assert [c.path for c in calls] == ["/r/popular/", _PARTIAL_PATH]
+    assert calls[0].accept.startswith("text/html") and calls[0].version is None  # 页面不带版本头
+    assert calls[1].accept.startswith("text/vnd.reddit.partial")
+    assert calls[1].version == _VERSION  # 版本头是页面响应顺手收割来的
 
 
 def test_feed_loader_incremental_pages_when_batch_enough(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,10 +263,8 @@ def test_feed_loader_incremental_pages_when_batch_enough(monkeypatch: pytest.Mon
         assert loader.done
     finally:
         asyncio.run(loader.close())
-    partial = calls[2]  # [页面起步, 收割版本的页面, 首个片段]
-    assert partial.url.path == _PARTIAL_PATH and "after=dDNfMQ" in str(partial.url)
-    assert partial.headers["x-reddit-client-version"] == _VERSION  # 版本头是收割来的
-    assert partial.headers["accept"].startswith("text/vnd.reddit.partial")
+    assert [c.path for c in calls] == ["/r/popular/", _PARTIAL_PATH]
+    assert calls[1].version == _VERSION  # 片段带收割来的版本头
 
 
 def test_open_feed_unknown_name_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -210,7 +275,7 @@ def test_open_feed_unknown_name_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_open_feed_empty_children_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_login(monkeypatch)
-    _mock(monkeypatch, lambda r: httpx.Response(200, text=_page("<html>空页面</html>"), request=r))
+    _mock(monkeypatch, lambda r: (None, _page("<html>空页面</html>")))
     with pytest.raises(SourceError, match="0 条"):
         asyncio.run(get_source("reddit").open_feed("popular"))
 
@@ -221,47 +286,120 @@ def test_open_feed_empty_children_guard(monkeypatch: pytest.MonkeyPatch) -> None
 def test_partial_403_refreshes_version_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     """版本头过期导致的 403：重割版本（页面已换新）后原址重试成功。"""
     old_ver = "2026-11-01T00:00Z~0a1b2c3"
-    partial_calls: list[httpx.Request] = []
-    page_calls = [0]
+    pages = [0]  # /r/popular/ 页面被取的次数
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/r/popular/":
-            v = old_ver if page_calls[0] < 2 else _VERSION  # 前两次（起步+首割）旧版，403 后换新
-            page_calls[0] += 1
-            return httpx.Response(200, text=f"<script>var v='{v}'</script>{LISTING_HTML}", request=request)
-        if request.url.path == _PARTIAL_PATH:
-            partial_calls.append(request)
-            if len(partial_calls) == 1:
-                return httpx.Response(403, text="blocked", request=request)
-            return httpx.Response(200, text=LISTING_END_HTML, request=request)
-        return httpx.Response(404, request=request)
+    def handler(req: _Req) -> tuple[int | None, str]:
+        if req.path == "/r/popular/":
+            pages[0] += 1
+            v = old_ver if pages[0] == 1 else _VERSION  # 起步页旧版，403 后的专割换新
+            return None, f"<script>var v='{v}'</script>{LISTING_HTML}"
+        if req.path == _PARTIAL_PATH:
+            if req.version == old_ver:
+                return 403, "blocked"
+            return None, LISTING_END_HTML
+        return 404, "gone"
 
-    _mock(monkeypatch, handler)
+    calls = _mock(monkeypatch, handler)
     _fake_login(monkeypatch)
     loader = asyncio.run(get_source("reddit").open_feed("popular"))  # 补齐首屏时就会撞 403 并自愈
     asyncio.run(loader.close())
     assert [it.id for it in loader.items] == ["1abcde", "1fghij", "1end00"]  # 自愈成功出数据
-    assert partial_calls[0].headers["x-reddit-client-version"] == old_ver  # 首用旧版本
-    assert partial_calls[1].headers["x-reddit-client-version"] == _VERSION  # 重割后新版本
+    partials = [c for c in calls if c.path == _PARTIAL_PATH]
+    assert [c.version for c in partials] == [old_ver, _VERSION]  # 首用旧版本，重割后新版本
+    assert [c.path for c in calls] == ["/r/popular/", _PARTIAL_PATH, "/r/popular/", _PARTIAL_PATH]
 
 
 def test_partial_403_unhealed_gives_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """重割也没换版本（登录态失效/风控）：给人话指引，绝不清 cookie 不弹登录。"""
-    partial_n = [0]
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/r/popular/":
-            return httpx.Response(200, text=_page(LISTING_HTML), request=request)
-        if request.url.path == _PARTIAL_PATH:
-            partial_n[0] += 1
-            return httpx.Response(403, text="blocked", request=request)
-        return httpx.Response(404, request=request)
+    def handler(req: _Req) -> tuple[int | None, str]:
+        if req.path == "/r/popular/":
+            return None, _page(LISTING_HTML)  # 版本一直是同一个
+        if req.path == _PARTIAL_PATH:
+            return 403, "blocked"
+        return 404, "gone"
 
-    _mock(monkeypatch, handler)
+    calls = _mock(monkeypatch, handler)
     _fake_login(monkeypatch)
     with pytest.raises(SourceError, match="可能已过期或被风控"):
         asyncio.run(get_source("reddit").open_feed("popular"))  # 补齐首屏时撞 403 且无法自愈
-    assert partial_n[0] == 1  # 版本没换：不重试（重试只认「版本确实轮换过」）
+    assert (
+        sum(1 for c in calls if c.path == _PARTIAL_PATH) == 1
+    )  # 版本没换：不重试（重试只认「版本确实轮换过」）
+
+
+def test_partial_first_use_harvests_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缓存为空就先割再用：专割一次热门页后 partial 才发（空头发必 403）。"""
+    calls = _mock(monkeypatch, _route_listing)
+    items, _nxt = asyncio.run(
+        fetch_listing(f"https://www.reddit.com{_PARTIAL_PATH}?after=dDNfMQ%3D%3D")
+    )
+    assert [it.id for it in items] == ["1end00"]
+    assert [c.path for c in calls] == ["/r/popular/", _PARTIAL_PATH]  # 先割再用
+    assert calls[1].version == _VERSION
+
+
+# ---- 常驻通道页签（进程级单例、被关重建、在途跳转重建）----
+
+
+def test_channel_opened_once_and_reused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """通道页签进程级单例：第二次调用直接复用，不再开页。"""
+    session = _FakeSession(FakePage(_route_listing))
+    monkeypatch.setattr(reddit_fetch, "get_session", lambda: session)
+    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
+    p1 = asyncio.run(_channel())
+    p2 = asyncio.run(_channel())
+    assert p1 is p2 and session.pages_opened == 1
+    assert p1.url == "https://www.reddit.com/"
+
+
+def test_channel_reopens_when_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """页签被关：单例失效，下一次取通道重新开页。"""
+    page = FakePage(_route_listing)
+    session = _FakeSession(page)
+    monkeypatch.setattr(reddit_fetch, "get_session", lambda: session)
+    monkeypatch.setattr(reddit_fetch, "_channel_page", None)
+    asyncio.run(_channel())
+    page.closed = True
+    asyncio.run(_channel())
+    assert session.pages_opened == 2
+
+
+def test_fetch_rebuilds_channel_on_nav_destroyed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """通道在途跳转（context destroyed）：丢掉单例换新页签重试一次，不裸炸。"""
+    bad = FakePage(_route_listing, nav_failures=1)  # 首个 evaluate 抛「执行上下文被销毁」
+    good = FakePage(_route_listing)
+    calls: list[int] = []
+
+    async def _fake_channel():
+        calls.append(1)
+        return bad if len(calls) == 1 else good
+
+    monkeypatch.setattr(reddit_fetch, "_channel", _fake_channel)
+    monkeypatch.setattr(reddit_fetch, "_version", None)
+    items, _nxt = asyncio.run(fetch_listing("https://www.reddit.com/r/popular/"))
+    assert [it.id for it in items] == ["1abcde", "1fghij"]  # 第二个页签拿到了数据
+    assert len(calls) == 2
+
+
+def test_bad_payload_is_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """页签 fetch 返回非约定结构：转 SourceError（出口给 UI 提示）。"""
+    page = FakePage(_route_listing)
+
+    async def bad_eval(script: str, arg=None):
+        return "not-a-dict"
+
+    page.evaluate = bad_eval
+
+    async def fake_channel():
+        return page
+
+    monkeypatch.setattr(reddit_fetch, "_channel", fake_channel)
+    monkeypatch.setattr(reddit_fetch, "_version", None)
+    with pytest.raises(SourceError, match="结构异常"):
+        asyncio.run(
+            reddit_fetch.fetch_thread_html("https://www.reddit.com/r/rust/comments/1abcde/x/")
+        )
 
 
 # ---- feeds 混形合成（内置流 + 订阅表）----
@@ -271,7 +409,12 @@ def test_feeds_composition_builtins_plus_subs(monkeypatch: pytest.MonkeyPatch, t
     _use_config(monkeypatch, tmp_path, _CFG)
     src = get_source("reddit")
     assert src.feeds == ["home", "popular", "rust", "python"]  # 内置在前，订阅按书写序
-    assert src.feed_labels == {"home": "首页", "popular": "热门", "rust": "Rust", "python": "python"}
+    assert src.feed_labels == {
+        "home": "首页",
+        "popular": "热门",
+        "rust": "Rust",
+        "python": "python",
+    }
     assert src.subscribable
 
 
@@ -293,18 +436,18 @@ def test_open_feed_subscription_pages(monkeypatch: pytest.MonkeyPatch, tmp_path)
     _fake_login(monkeypatch)
     loader = asyncio.run(get_source("reddit").open_feed("rust"))
     asyncio.run(loader.close())
-    assert calls[0].url.path == "/r/rust/"  # 订阅 key 即 subreddit 名
+    assert calls[0].path == "/r/rust/"  # 订阅 key 即 subreddit 名
 
 
 # ---- 详情：一次请求全树，楼层/评论翻页零请求 ----
 
 
-def _thread_route(request: httpx.Request) -> httpx.Response:
-    if request.url.path.startswith("/r/rust/comments/"):
-        return httpx.Response(200, text=_page(THREAD_HTML), request=request)
-    if request.url.path == "/r/popular/":
-        return httpx.Response(200, text=_page(LISTING_HTML), request=request)
-    return httpx.Response(404, request=request)
+def _thread_route(req: _Req) -> tuple[int | None, str]:
+    if req.path.startswith("/r/rust/comments/"):
+        return None, _page(THREAD_HTML)
+    if req.path == "/r/popular/":
+        return None, _page(LISTING_HTML)
+    return 404, "gone"
 
 
 def test_open_detail_floors_and_comments(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -327,7 +470,7 @@ def test_open_detail_floors_and_comments(monkeypatch: pytest.MonkeyPatch) -> Non
             asyncio.run(cl.close())
     finally:
         asyncio.run(detail.close())
-    assert calls[0].url.path.startswith("/r/rust/comments/1abcde/")
+    assert calls[0].path.startswith("/r/rust/comments/1abcde/")
     assert len(calls) == 1  # 详情 + 评论层合计一次请求
 
 
@@ -362,9 +505,11 @@ def test_detail_and_comments_local_paging(monkeypatch: pytest.MonkeyPatch) -> No
     """楼层（15/页）与评论（20/页）的翻页都是内存切片：一次请求后零网络。"""
     calls = _mock(
         monkeypatch,
-        lambda r: httpx.Response(200, text=_page(_wide_thread()), request=r)
-        if r.url.path.startswith("/r/rust/comments/")
-        else httpx.Response(404, request=r),
+        lambda r: (
+            (None, _page(_wide_thread()))
+            if r.path.startswith("/r/rust/comments/")
+            else (404, "gone")
+        ),
     )
     _fake_login(monkeypatch)
     detail = asyncio.run(get_source("reddit").open_detail(_item("1wide")))
@@ -384,13 +529,23 @@ def test_detail_and_comments_local_paging(monkeypatch: pytest.MonkeyPatch) -> No
     assert len(calls) == 1  # 楼层翻页 + 评论翻页都没再发请求
 
 
+def test_fetch_saves_sample_for_probe(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """样本落盘沿用（httpx 时代不降级）：probe 巡检对着真实 HTML 修 parse。"""
+    monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(tmp_path))
+    _mock(monkeypatch, _thread_route)
+    asyncio.run(
+        reddit_fetch.fetch_thread_html("https://www.reddit.com/r/rust/comments/1abcde/slug/")
+    )
+    assert any("1abcde" in p.name for p in tmp_path.iterdir())
+
+
 # ---- subreddit 订阅（subscriptions 编排）----
 
 
-def _about_route(request: httpx.Request) -> httpx.Response:
-    if request.url.path == "/r/rust/":
-        return httpx.Response(200, text=_page('x<div subreddit-name="rust"></div>' + LISTING_HTML), request=request)
-    return httpx.Response(200, text=_page("<html>壳页</html>"), request=request)
+def _about_route(req: _Req) -> tuple[int | None, str]:
+    if req.path == "/r/rust/":
+        return None, _page('x<div subreddit-name="rust"></div>' + LISTING_HTML)
+    return None, _page("<html>壳页</html>")
 
 
 def test_add_subreddit_validates_and_persists(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -442,8 +597,6 @@ def test_remove_and_rename_subreddit(monkeypatch: pytest.MonkeyPatch, tmp_path) 
     from feedscope.subscriptions import remove_subreddit, rename_subreddit
 
     _use_config(monkeypatch, tmp_path, "enabled = []\n" + _CFG)
-    _fake_login(monkeypatch)
-    _mock(monkeypatch, _about_route)
 
     assert rename_subreddit("rust", "  锈  ").label == "锈"  # 顺手 strip
     assert rename_subreddit("rust", "   ") is None  # 空名不动配置
@@ -459,7 +612,9 @@ def test_remove_and_rename_subreddit(monkeypatch: pytest.MonkeyPatch, tmp_path) 
     assert config.feeds_for("reddit") == [] and config.enabled_ids() == ["reddit"]
 
 
-def test_update_feeds_roundtrip_preserved_on_save(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_update_feeds_roundtrip_preserved_on_save(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     """F2/首启保存（save_enabled 全量重渲染）不丢 reddit 订阅表。"""
     from feedscope.core import config
     from feedscope.core.config import save_enabled
@@ -473,6 +628,6 @@ def test_update_feeds_roundtrip_preserved_on_save(monkeypatch: pytest.MonkeyPatc
 def test_open_feed_home_empty_gets_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
     """空首页是新账号的正常形态（首页 = 站内关注聚合），给指引而不是改版报错。"""
     _fake_login(monkeypatch)
-    _mock(monkeypatch, lambda r: httpx.Response(200, text=_page("<html>空</html>"), request=r))
+    _mock(monkeypatch, lambda r: (None, _page("<html>空</html>")))
     with pytest.raises(SourceError, match="关注版块"):
         asyncio.run(get_source("reddit").open_feed("home"))

@@ -2,7 +2,8 @@
 
 包内分层（全项目统一的源模板）：
 - fetch.py  取数层：网站自己的 HTML 通道（shreddit SSR 页面 + faceplate
-  partial 翻页），httpx 直调、头与 SPA 同形（.json 遗留端点已全线 403）
+  partial 翻页），由常驻 reddit.com 通道页签的真 Chrome 发出（知乎同款，
+  TLS/头序/cookie 与登录会话自洽；.json 遗留端点已全线 403）
 - parse.py  解析层：shreddit HTML -> FeedItem / 帖子与评论树，纯函数可测
 - __init__.py 编排层：Source 能力声明与 open_* 分派 + 内存分页 Loader
 
@@ -29,8 +30,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from feedscope.core import config
-from feedscope.core.browser import get_session, profile_cookies
-from feedscope.core.const import DESKTOP_UA
+from feedscope.core.browser import profile_cookies
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
@@ -42,7 +42,7 @@ from feedscope.core.source import (
     SourceError,
     require_feed_items,
 )
-from feedscope.sources.reddit.fetch import RedditFeedLoader, RedditSession, fetch_thread_html
+from feedscope.sources.reddit.fetch import RedditFeedLoader, fetch_thread_html
 from feedscope.sources.reddit.parse import SOURCE_ID, ThreadDetail, parse_thread_html
 
 # 详情一次拿全树后，楼层/评论每页给多少（内存切片，不是请求）：与 HN 同宽
@@ -145,12 +145,11 @@ async def _login_verified(ctx) -> bool:
     return _token_logged_in(jar.get("token_v2"))
 
 
-async def _reddit_session(what: str) -> RedditSession:
-    """判登门 + 打 httpx 登录态：token_v2 JWT 过门后读全量 cookie 与真 UA。"""
+async def _require_login(what: str) -> None:
+    """判登门：token_v2 JWT 过门（通道页签的 cookie 由浏览器自带，无需另建会话）。"""
     cookies = await profile_cookies("https://www.reddit.com")
     if not _token_logged_in(cookies.get("token_v2")):
         raise LoginRequired(f"Reddit 需要登录后才能查看{what}")
-    return RedditSession(cookies, get_session().ua or DESKTOP_UA)
 
 
 @register
@@ -165,7 +164,9 @@ class RedditSource(Source):
     comment_unit_label = "回复"  # 楼层内的讨论（同 HN）
     login_url = "https://www.reddit.com/login"
     login_cookie = "token_v2"  # 兜底显示用（真实判据是 login_verify 的 JWT 解码）
-    login_verify = staticmethod(_login_verified)  # 登录成功 = token_v2 解码出登录态（cookie 出现不算数）
+    login_verify = staticmethod(
+        _login_verified
+    )  # 登录成功 = token_v2 解码出登录态（cookie 出现不算数）
     logout_cookies: ClassVar[list[str]] = ["reddit_session", "token_v2"]  # 登出两枚都清
 
     # 内置流：流名 -> 列表页 URL（订阅流的页面是 https://www.reddit.com/r/{key}/）
@@ -197,8 +198,11 @@ class RedditSource(Source):
         label = self.feed_labels.get(name)
         if label is None:
             raise ValueError(f"未知信息流：{name}")
-        page = self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"  # 订阅 key 即 subreddit 名
-        loader = RedditFeedLoader(await _reddit_session(f"「{label}」流"), page, label)
+        page = (
+            self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"
+        )  # 订阅 key 即 subreddit 名
+        await _require_login(f"「{label}」流")
+        loader = RedditFeedLoader(page, label)
         await loader.load_more()  # 首批（判登在此抛 LoginRequired）
         if name == "home" and not loader.items:
             # 首页是账号在 Reddit 站内「关注版块」的聚合：账号没关注任何版块
@@ -211,6 +215,6 @@ class RedditSource(Source):
         return loader
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
-        session = await _reddit_session("帖子详情")
-        html = await fetch_thread_html(session, item.url)  # 列表给的绝对 permalink（slug 全）
+        await _require_login("帖子详情")
+        html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
         return RedditDetailLoader(parse_thread_html(html, fallback_title=item.title))

@@ -96,9 +96,7 @@ def _rename(source_id: str, key: str, new_label: str) -> RssFeed | None:
     feeds = config.feeds_for(source_id)
     if key not in {f.key for f in feeds}:
         return None
-    renamed = RssFeed(
-        key=key, label=new_label, url=next(f.url for f in feeds if f.key == key)
-    )
+    renamed = RssFeed(key=key, label=new_label, url=next(f.url for f in feeds if f.key == key))
     config.update_feeds(source_id, [renamed if f.key == key else f for f in feeds])
     return renamed
 
@@ -205,13 +203,12 @@ def export_opml(feeds: list[RssFeed]) -> str:
     """订阅表 -> OPML 2.0 文本（标准阅读器都认，可再迁去别家）。"""
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        "<opml version=\"2.0\">",
+        '<opml version="2.0">',
         "  <head><title>FeedScope 订阅导出</title></head>",
         "  <body>",
     ]
     lines += [
-        f"    <outline type=\"rss\" text={_attr(f.label)} xmlUrl={_attr(f.url)} />"
-        for f in feeds
+        f'    <outline type="rss" text={_attr(f.label)} xmlUrl={_attr(f.url)} />' for f in feeds
     ]
     lines += ["  </body>", "</opml>", ""]
     return "\n".join(lines)
@@ -236,7 +233,7 @@ async def add_subreddit(text: str, *, label: str | None = None) -> RssFeed:
     重复 / 撞内置流 / about 拉不到（subreddit 不存在或未登录）→ SubscriptionError
     （不动配置）。未登录时 about 的报错消息自带「需要登录」指引。
     """
-    from feedscope.sources.reddit import _reddit_session
+    from feedscope.sources.reddit import _require_login
     from feedscope.sources.reddit.fetch import fetch_about
 
     name = parse_subreddit_input(text)
@@ -248,8 +245,8 @@ async def add_subreddit(text: str, *, label: str | None = None) -> RssFeed:
     if any(f.key == name for f in feeds):
         raise SubscriptionError(f"r/{name} 已经订阅过了")
     try:
-        session = await _reddit_session(f"r/{name}")
-        about = await fetch_about(session, name)
+        await _require_login(f"r/{name}")
+        about = await fetch_about(name)
     except SourceError as exc:  # 含 LoginRequired：订阅管理屏没有账号动线，消息自带指引
         raise SubscriptionError(f"r/{name} 加不上：{exc}") from None
     display = str(about.get("display_name") or "") or name

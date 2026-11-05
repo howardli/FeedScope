@@ -1,22 +1,28 @@
-"""取数层：Reddit 走网站自己的 HTML 通道（shreddit SSR 页面 + faceplate
-partial 翻页），httpx 直调。
+"""取数层：Reddit 走通道页签（知乎同款）——常驻 reddit.com 页签的页面 fetch。
 
-2026 年起边缘对 .json 遗留端点全线 403（第三方通道关闭的一部分），但
-网站自己的 HTML 全放行——页面（SSR，帖子/评论树直接织在 HTML 里）与
-翻页 partial（text/vnd.reddit.partial+html）httpx 都拿得到，只要请求头
-同形（2026-11 实测矩阵：UA/cookie/accept/x-reddit-client-version/referer
-齐了 200，缺了或 UA 带 Headless 一律 403 封锁页）。
+2026 年起边缘对 .json 遗留端点全线 403（第三方通道关闭的一部分），且对
+非浏览器画像（TLS/头序/HTTP2 指纹）的检查随时可能收紧——取数全部改由
+常驻页签里的真 Chrome 发出（fetch credentials include）：TLS、头序、
+cookie 与登录会话完全自洽，httpx 侧的头画像维护整体退役。网站自己的
+HTML 全放行：页面（SSR，帖子/评论树直接织在 HTML 里）与翻页 partial
+（text/vnd.reddit.partial+html）页签里都拿得到。
 
+- 通道：进程级单例页签停在 www.reddit.com 上（同源 fetch 与 cookie 的
+  前提），evaluate 撞上在途跳转/页签被关都重建重试一次（Zhihu 同款）；
+  判登门在编排层（token_v2 JWT 解码，见 __init__.py），门没过到不了这层
 - 列表：流页面起步（首页 / 、热门 /r/popular/ 、订阅 /r/{sub}/ ），翻页
   跟随页面/片段里 faceplate-partial slot="load-after" 的 src 链（服务端
   给全参 URL，feeds/*-feed 与 community-more-posts 两族不用自己认）
 - 详情：帖子 permalink 页 SSR 自带整棵评论树（1.5MB 级；深度大的树被
   服务端截断，解析层给「另有 N 条未展开」）
-- x-reddit-client-version：随 Reddit 部署轮换，不硬编码——从任意页面
-  HTML 收割、进程内缓存；403 时重割一次再试（自愈）
-- 判登在编排层（token_v2 JWT 解码，见 __init__.py）；403 且重割无效时
-  给「登录态可能已过期或被风控」的指引——绝不自动清 cookie（历史教训：
-  误清即登录死循环）
+- x-reddit-client-version：随 Reddit 部署轮换，且浏览器不会自动带
+  （SPA 自定义头）——照旧收割，但比 httpx 时代更便宜：服务端把版本织
+  进每个页面 HTML，每个页面响应顺手正则一次（进程内缓存，首批 partial
+  通常零额外请求），partial 403 时再专割一次自愈（版本确实轮换过才重试）
+- 401/403 且重割无效时给「登录态可能已过期或被风控」的指引——绝不自动
+  清 cookie（历史教训：误清即登录死循环）
+- 样本落盘沿用 samples（probe 巡检对着真实 HTML 修 parse），与 httpx
+  时代不降级
 
 请求画像：刷流 1 页面 + N-1 片段（每片段 50-90 帖）、开帖 1 请求，远在
 Reddit 登录态限流（约 100 次/分）之下。
@@ -25,15 +31,17 @@ Reddit 登录态限流（约 100 次/分）之下。
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from typing import Any
 
-from feedscope.core import http
-from feedscope.core.const import DESKTOP_UA
+from feedscope.core import samples
+from feedscope.core.browser import close_page, get_session
+from feedscope.core.const import PAGE_TIMEOUT_MS
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
 from feedscope.sources.reddit.parse import parse_next_html, parse_posts_html
 
 _API = "https://www.reddit.com"
+_CHANNEL_URL = f"{_API}/"  # 通道页签停留处：同源 fetch（referer/cookie）的前提
 
 # 一次 load_more 至少攒够的条数：SSR 页面只嵌 3-10 帖（站点首屏后自己
 # 也会续拉一批），不足就顺着 load-after 链补齐——「一屏上下、翻页有货」
@@ -41,104 +49,153 @@ _API = "https://www.reddit.com"
 _MIN_BATCH = 20
 
 # x-reddit-client-version 的形态（如 2026-11-04T13:46Z~456d6f1d）：部署时
-# 轮换，从页面 HTML 收割
+# 轮换，服务端织进每个页面的 HTML
 _VERSION_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z~[0-9a-f]{6,8}")
 
-# partial 翻页的请求头（与 SPA 自己发的同形，2026-11 抓包）；页面请求只
-# 需要 UA/cookie/Accept html
+# partial 翻页的请求头（与 SPA 自己发的同形）；页面请求只需要 Accept html。
+# referer 不手设：页签停在 www.reddit.com/ 上，同源 fetch 的自然 referer
+# 就是它（2026-11 实测矩阵里 referer 在场即可，同站即同形）
 _PARTIAL_ACCEPT = "text/vnd.reddit.partial+html, text/html;q=0.9"
 _HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9"
 
-_version: str | None = None  # 进程级缓存（403 时重割）
+_version: str | None = None  # 进程级缓存（页面响应顺手更新，403 自愈时重割）
+
+_channel_page: Any = None  # 进程级单例页签；随 BrowserSession 关闭，无需显式释放
+
+# 通道页签里执行的一次 fetch：UA/头序/cookie/TLS 全是真 Chrome 的，我们只
+# 补浏览器不会自动带的头（Accept 显式声明；partial 加版本头与 retry 头）。
+# 失败按约定回 __status/__error，正文回 __body（不抛 JS 异常穿过 evaluate）
+_FETCH_HTML_JS = """
+async ([url, accept, version]) => {
+  try {
+    const h = { "Accept": accept };
+    if (version) {
+      h["x-reddit-client-version"] = version;
+      h["x-reddit-retry"] = "attempt=0, max=2";
+    }
+    const r = await fetch(url, { headers: h, credentials: "include" });
+    if (!r.ok) return { __status: r.status };
+    return { __body: await r.text() };
+  } catch (e) { return { __error: String(e) }; }
+}
+"""
 
 
-@dataclass
-class RedditSession:
-    """httpx 直调的登录态：profile 全量 cookie + 本机 Chrome 真实 UA（X 同款）。
+async def _channel() -> Any:
+    """取（必要时创建）常驻 fetch 通道页签：停在 www.reddit.com 上，进程内复用。
 
-    cookie 与 UA 由编排层 _reddit_session 注入（判登门 token_v2 JWT 解码
-    在那层做）；Cookie 头按 jar 原顺序整串拼。
+    不查登录墙：判登门（token_v2 JWT）在编排层，没过门到不了这层；页签
+    被关/在途跳转由 _eval_fetch 的重建重试兜住。
     """
+    global _channel_page
+    if _channel_page is not None and not _channel_page.is_closed():
+        return _channel_page
 
-    cookies: dict[str, str]
-    ua: str
+    async def _open(ctx: Any) -> Any:
+        page = await ctx.new_page()
+        try:
+            await page.goto(_CHANNEL_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        except BaseException:
+            await close_page(page)
+            raise
+        return page
 
-    def headers(self, *, accept: str, referer: str, partial: bool) -> dict[str, str]:
-        h = {
-            "User-Agent": self.ua,
-            "Accept": accept,
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Referer": referer,
-            "Cookie": "; ".join(f"{k}={v}" for k, v in self.cookies.items()),
-        }
-        if partial:
-            h["x-reddit-client-version"] = _version or ""
-            h["x-reddit-retry"] = "attempt=0, max=2"
-        return h
+    _channel_page = await get_session().run(_open)
+    return _channel_page
 
 
-async def _harvest_version(session: RedditSession) -> None:
-    """从首页 HTML 收割 x-reddit-client-version（进程缓存；403 自愈时重割）。"""
+async def _eval_fetch(url: str, accept: str, version: str | None) -> dict:
+    """页签里发一次 fetch；evaluate 撞上在途跳转（context destroyed）换页签重试一次。"""
+    for attempt in range(2):
+        page = await _channel()
+        try:
+            return await page.evaluate(_FETCH_HTML_JS, [url, accept, version])
+        except Exception:
+            if attempt:
+                raise
+            global _channel_page
+            _channel_page = None  # 页签废了：换新页签再试（fetch 失败不走这层，见 JS）
+
+
+async def _raw_fetch(
+    url: str, accept: str, version: str | None, *, source: str
+) -> tuple[int | None, str]:
+    """一次通道 fetch -> (HTTP 状态码或 None, 正文)；网络/结构失败转 SourceError。
+
+    状态码原样上交（304xx 语义没有，403 的自愈决策在 _get_html），成功时
+    正文连同状态码一起返回——收割路径要 403 页不炸，取数路径才转错误。
+    """
+    try:
+        data = await _eval_fetch(url, accept, version)
+    except SourceError:
+        raise
+    except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
+        raise SourceError(f"{source} 请求失败：{exc}") from exc
+    if not isinstance(data, dict):
+        raise SourceError(f"{source} 返回结构异常")
+    if err := data.get("__error"):
+        raise SourceError(f"{source} 请求失败：{err}")
+    status = data.get("__status")
+    body = data.get("__body")
+    if status is None and not isinstance(body, str):
+        raise SourceError(f"{source} 返回结构异常")
+    return (int(status) if status else None), (body or "")
+
+
+async def _harvest_version() -> None:
+    """专割一次版本头（从热门页 HTML）；失败保留旧值。
+
+    页面响应的顺手收割（见 _get_html）让这条路通常只剩 403 自愈在走：
+    partial 首用且缓存为空、或版本轮换后的重割。
+    """
     global _version
     try:
-        r = await http.get(
-            f"{_API}/r/popular/",
-            source="Reddit",
-            headers=session.headers(accept=_HTML_ACCEPT, referer=f"{_API}/", partial=False),
-        )
+        _, body = await _raw_fetch(f"{_API}/r/popular/", _HTML_ACCEPT, None, source="Reddit")
     except SourceError:
         return  # 收割失败保留旧值（可能是网络抖动，不是版本问题）
-    if m := _VERSION_RE.search(r.text):
+    if m := _VERSION_RE.search(body):
         _version = m.group(0)
 
 
-async def _get_html(
-    session: RedditSession, url: str, *, source: str, referer: str, partial: bool = False
-) -> str:
-    """一次 GET -> HTML 文本；partial 首用前收割版本头，403 时重割自愈一次。"""
+async def _get_html(url: str, *, source: str, partial: bool = False) -> str:
+    """一次通道 fetch -> HTML 文本；partial 首用前收割版本头，403 时重割自愈一次。"""
     global _version
     if partial and not _version:
-        await _harvest_version(session)  # partial 必须带版本头：先割再用（空头发必 403）
+        await _harvest_version()  # partial 必须带版本头：先割再用（空头发必 403）
     accept = _PARTIAL_ACCEPT if partial else _HTML_ACCEPT
-    try:
-        r = await http.get(url, source=source, headers=session.headers(accept=accept, referer=referer, partial=partial))
-        return r.text
-    except SourceError as exc:
-        if "（HTTP 401）" not in str(exc) and "（HTTP 403）" not in str(exc):
-            raise
-        saved = _version
-        await _harvest_version(session)
-        if _version and _version != saved:  # 版本确实换过：旧头导致的 403，重试
-            r = await http.get(
-                url, source=source, headers=session.headers(accept=accept, referer=referer, partial=partial)
-            )
-            return r.text
-        raise SourceError(f"{exc}——登录态可能已过期或被风控，Ctrl+U 重新登录") from None
+    status, body = await _raw_fetch(url, accept, _version if partial else None, source=source)
+    if status in (401, 403):
+        if partial:  # 版本头是 partial 独有的变量：轮换过就新头原址重试一次
+            saved = _version
+            await _harvest_version()
+            if _version and _version != saved:
+                status, body = await _raw_fetch(url, accept, _version, source=source)
+        if status:
+            raise SourceError(
+                f"{source} 请求失败（HTTP {status}）——登录态可能已过期或被风控，Ctrl+U 重新登录"
+            ) from None
+    samples.save(samples.url_name(source, url), body)
+    if not partial and (m := _VERSION_RE.search(body)):
+        _version = m.group(0)  # 服务端把版本织进每个页面：顺手收割，首批 partial 免一次专割
+    return body
 
 
-async def fetch_listing(
-    session: RedditSession, url: str, *, source: str = "Reddit"
-) -> tuple[list[FeedItem], str | None]:
+async def fetch_listing(url: str, *, source: str = "Reddit") -> tuple[list[FeedItem], str | None]:
     """一页列表（页面或片段 URL）-> (FeedItem, 下一页 URL)；None = 到底。"""
-    referer = url if url.startswith(f"{_API}/r/") else f"{_API}/"
-    html = await _get_html(
-        session, url, source=source, referer=referer, partial="/svc/" in url
-    )
+    html = await _get_html(url, source=source, partial="/svc/" in url)
     return parse_posts_html(html), parse_next_html(html)
 
 
-async def fetch_thread_html(session: RedditSession, permalink: str, *, source: str = "Reddit 帖子") -> str:
+async def fetch_thread_html(permalink: str, *, source: str = "Reddit 帖子") -> str:
     """帖子 permalink 页的 SSR HTML（解析见 parse.parse_thread_html）。"""
-    return await _get_html(session, permalink, source=source, referer=f"{_API}/")
+    return await _get_html(permalink, source=source)
 
 
-async def fetch_about(session: RedditSession, name: str) -> dict:
+async def fetch_about(name: str) -> dict:
     """r/{name} 页面校验存在性；返回 {"display_name": 名}（订阅添加用）。"""
     from feedscope.sources.reddit.parse import parse_subreddit_page
 
-    html = await _get_html(
-        session, f"{_API}/r/{name}/", source=f"Reddit r/{name}", referer=f"{_API}/"
-    )
+    html = await _get_html(f"{_API}/r/{name}/", source=f"Reddit r/{name}")
     real = parse_subreddit_page(html)
     if not real:
         raise SourceError(f"r/{name} 不存在或不可访问")
@@ -150,11 +207,11 @@ class RedditFeedLoader(FeedLoader):
 
     SSR 页面只内嵌 3-10 帖（站点自己也这样：首屏渲染几帖，余下靠前端
     续拉），一批不足 _MIN_BATCH 就顺着链继续拉到够——用户视角「首屏即
-    一屏」，稀疏首屏只在链尽（真没更多）时出现。
+    一屏」，稀疏首屏只在链尽（真没更多）时出现。不持有页签（通道是
+    进程级单例，随会话生灭）。
     """
 
-    def __init__(self, session: RedditSession, page_url: str, label: str) -> None:
-        self._session = session
+    def __init__(self, page_url: str, label: str) -> None:
         self._page_url = page_url
         self._label = label
         self.items: list[FeedItem] = []
@@ -173,16 +230,11 @@ class RedditFeedLoader(FeedLoader):
                 self.done = True
                 break
             self._started = True
-            items, nxt = await fetch_listing(self._session, url, source=f"Reddit「{self._label}」")
+            items, nxt = await fetch_listing(url, source=f"Reddit「{self._label}」")
             self._next = nxt
             self.done = nxt is None
             added.extend(dedup_append(self.items, self._seen, items))
         return added
 
     async def close(self) -> None:
-        pass  # 连接池由 core/http 进程级持有，无源内资源
-
-
-def fallback_ua() -> str:
-    """编排层兜底 UA（探针不可得时；正常路径用 BrowserSession 探针版）。"""
-    return DESKTOP_UA
+        pass  # 通道页签进程级共享，不归单个 Loader 关
