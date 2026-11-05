@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, ClassVar
 
 from feedscope.core.config import hidden_feeds
@@ -83,6 +84,51 @@ def require_feed_items(items: list[FeedItem], label: str, feed: str = "") -> lis
     return items
 
 
+_MERGE_PARALLEL = 8  # 「全部」聚合的并发上限：太猛会被源侧限流（RSS 站点普遍小水管）
+
+
+async def merge_feeds(
+    feeds: Sequence[Any],
+    fetch_one: Callable[[Any], Awaitable[list[FeedItem]]],
+    *,
+    error_label: Callable[[Any], str],
+    sort_key: Callable[[FeedItem], Any],
+    dedup_urls: bool = False,
+) -> tuple[list[FeedItem], list[str]]:
+    """「全部」聚合流的共享编排（RSS / Telegram 共用）：并发拉全部订阅、按发布
+    时间倒序合并，返回 (合并条目, 失败订阅的短消息列表)。
+
+    - 单订阅失败隔离：一个死源只损失自己的条目（宽捕获——取数/解析的任何
+      失败都转短消息上交），全部失败由调用方决定报错
+    - 倒序合并用稳定排序：缺时间的条目沉底且保持订阅书写顺序
+    - dedup_urls 剔除跨订阅的重复 URL（转载/聚合源常见），保留书写顺序靠前
+      的订阅版本；按次注入的差异（怎么拉、怎么排、错误标签叫什么）走参数
+    - 一次性快照：与各单订阅流的增量 Loader 相对（聚合流不做翻页）
+    """
+    sem = asyncio.Semaphore(_MERGE_PARALLEL)
+
+    async def one(feed: Any) -> tuple[list[FeedItem], str | None]:
+        async with sem:
+            try:
+                return await fetch_one(feed), None
+            except Exception as exc:  # 单订阅失败隔离：错误上交，不拖垮聚合
+                return [], f"{error_label(feed)}：{exc}"
+
+    pairs = await asyncio.gather(*(one(f) for f in feeds))
+    errors = [err for _, err in pairs if err]
+    merged: list[FeedItem] = []
+    seen: set[str] = set()
+    for items, _ in pairs:
+        for it in items:
+            if dedup_urls and it.url:
+                if it.url in seen:
+                    continue
+                seen.add(it.url)
+            merged.append(it)
+    merged.sort(key=sort_key, reverse=True)
+    return merged, errors
+
+
 class DetailLoader(ABC):
     """详情加载器：可能持有浏览器页签等资源，UI 用完必须 close()。
 
@@ -144,23 +190,27 @@ class Source(ABC):
     - detail_kinds：Enter 进终端详情屏的 kind，其余一律跳浏览器。
     """
 
-    source_id: ClassVar[str]                    # 注册键，如 "zhihu"
-    label: ClassVar[str]                        # 展示名，如 "知乎"
-    feeds: ClassVar[list[str]] = []             # 命名信息流；空 = 只有默认流（name=""）
+    source_id: ClassVar[str]  # 注册键，如 "zhihu"
+    label: ClassVar[str]  # 展示名，如 "知乎"
+    feeds: ClassVar[list[str]] = []  # 命名信息流；空 = 只有默认流（name=""）
     feed_labels: ClassVar[dict[str, str]] = {}  # 信息流显示名，缺省用 name 本身
-    supports_detail: ClassVar[bool] = False     # 决定 Enter 是否可能进详情屏
-    supports_comments: ClassVar[bool] = False   # 决定详情屏 Enter 是否可能进评论层
-    subscribable: ClassVar[bool] = False        # 信息流来自用户订阅：F2 里 Enter 进订阅管理屏
+    supports_detail: ClassVar[bool] = False  # 决定 Enter 是否可能进详情屏
+    supports_comments: ClassVar[bool] = False  # 决定详情屏 Enter 是否可能进评论层
+    subscribable: ClassVar[bool] = False  # 信息流来自用户订阅：F2 里 Enter 进订阅管理屏
     kind_labels: ClassVar[dict[str, str]] = {}  # kind -> 元信息列标签
     detail_kinds: ClassVar[frozenset[str]] = frozenset({""})
-    detail_unit_label: ClassVar[str] = "回答"   # 详情屏楼层单位词（X 覆写为"回复"）
+    detail_unit_label: ClassVar[str] = "回答"  # 详情屏楼层单位词（X 覆写为"回复"）
     comment_unit_label: ClassVar[str] = "评论"  # 楼层内评论子区的单位词（无评论产出的源用不到）
-    login_url: ClassVar[str] = ""               # 有登录需求的源声明登录页；空 = 无需登录
-    login_cookie: ClassVar[str] = ""            # 登录成功写入 profile 的 cookie 名（feedscope login 判登依据）
-    login_verify: ClassVar[Any] | None = None   # async (browser_context) -> bool；登录成功的浏览器级判据
+    login_url: ClassVar[str] = ""  # 有登录需求的源声明登录页；空 = 无需登录
+    login_cookie: ClassVar[str] = (
+        ""  # 登录成功写入 profile 的 cookie 名（feedscope login 判登依据）
+    )
+    login_verify: ClassVar[Any] | None = (
+        None  # async (browser_context) -> bool；登录成功的浏览器级判据
+    )
     # （cookie 判登不可靠的源覆盖此钩子，如 Reddit：token_v2 匿名访客也发，
     #   登录成功以 me.json 答出用户名为准；None = 沿用 login_cookie 轮询）
-    logout_cookies: ClassVar[list[str]] = []    # 登出要清的 cookie 名（判登全集）；空 = 无需登出
+    logout_cookies: ClassVar[list[str]] = []  # 登出要清的 cookie 名（判登全集）；空 = 无需登出
 
     def __init__(self) -> None:
         """按用户配置合成实例视图：feeds 在类默认之上剔除被隐藏的流。

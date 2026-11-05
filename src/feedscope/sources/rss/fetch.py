@@ -1,25 +1,21 @@
-"""取数层：订阅抓取（httpx 条件请求）+「全部」聚合流的并发编排。
+"""取数层：订阅抓取（httpx 条件请求）+「全部」聚合流（共享编排）。
 
 - 条件请求（ETag / Last-Modified）：模块级缓存按 URL 记验证器与上次响应体，
   304 直接回放缓存正文——F5 反复刷新对源友好，也省流量。缓存只在进程内：
   重启后第一次仍是无条件 GET，语义最简单也够用（阅读器不是离线仓库）。
-- 聚合拉取：信号量限并发（对源礼貌），单订阅失败隔离——一个死源只损失
-  自己的条目，错误以短消息列表上交编排层决定报错还是降级。
+- 聚合编排（并发/失败隔离/倒序合并）见 core.source.merge_feeds；RSS 的差异
+  是聚合视图解析、跨订阅 URL 去重、按发布时间（unix 秒）倒序。
 """
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from feedscope.core import http
 from feedscope.core.config import RssFeed
 from feedscope.core.models import FeedItem
-from feedscope.core.source import SourceError
+from feedscope.core.source import SourceError, merge_feeds
 from feedscope.sources.rss.parse import parse_feed
-
-# 同步拉多少个订阅：并发太猛会被源侧限流（RSS 站点普遍小水管）
-MAX_PARALLEL = 8
 
 # RSS 专用 Accept：部分源对浏览器 UA + */* 的组合反而回 HTML 页，声明清楚要 feed
 _ACCEPT = "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*"
@@ -72,29 +68,19 @@ async def fetch_body(feed: RssFeed) -> bytes:
 async def fetch_merged(feeds: list[RssFeed]) -> tuple[list[FeedItem], list[str]]:
     """全部订阅并发拉取并聚合成一条时间线：(合并条目, 失败订阅的短消息列表)。
 
-    合并规则：按发布时间倒序（缺时间沉底，保持订阅书写顺序）；同一 URL
-    多源出现只留一份（转载/聚合源常见），保留书写顺序靠前的订阅版本。
+    编排（并发/失败隔离/倒序合并）见 core.source.merge_feeds；RSS 的差异：
+    聚合视图解析（all_view，订阅名进元信息列）、跨订阅 URL 去重（同一 URL
+    多源覆盖只留书写顺序靠前的一份）、按发布时间（unix 秒）倒序。
     """
-    sem = asyncio.Semaphore(MAX_PARALLEL)
 
-    async def one(feed: RssFeed) -> tuple[list[FeedItem], str | None]:
-        async with sem:
-            try:
-                body = await fetch_body(feed)
-            except Exception as exc:  # 单订阅失败隔离：错误上交，不拖垮聚合
-                return [], f"{feed.label}：{exc}"
-            return parse_feed(body, feed_key=feed.key, feed_label=feed.label, all_view=True), None
+    async def one(feed: RssFeed) -> list[FeedItem]:
+        body = await fetch_body(feed)
+        return parse_feed(body, feed_key=feed.key, feed_label=feed.label, all_view=True)
 
-    pairs = await asyncio.gather(*(one(f) for f in feeds))
-    errors = [err for _, err in pairs if err]
-    merged: list[FeedItem] = []
-    seen_urls: set[str] = set()
-    for items, _ in pairs:
-        for it in items:
-            if it.url:
-                if it.url in seen_urls:
-                    continue
-                seen_urls.add(it.url)
-            merged.append(it)
-    merged.sort(key=lambda it: -float(it.extra.get("published") or 0.0))
-    return merged, errors
+    return await merge_feeds(
+        feeds,
+        one,
+        error_label=lambda f: f.label,
+        sort_key=lambda it: float(it.extra.get("published") or 0.0),
+        dedup_urls=True,
+    )

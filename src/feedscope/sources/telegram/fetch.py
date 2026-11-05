@@ -1,24 +1,19 @@
-"""取数层：t.me/s 频道预览页抓取 + 「全部」聚合流的并发编排。
+"""取数层：t.me/s 频道预览页抓取 + 「全部」聚合流（共享编排）。
 
 - 单频道：GET https://t.me/s/<名>（可选 ?before=<最小id> 翻更旧一页，页内
   ~20 条）；纯 HTML 无 JSON，免登录免 JS。预览页没有 ETag/Last-Modified
   （不走 RSS 的条件请求），刷新就是整页重拉——一页 148KB 级，阅读节奏下无害
-- 聚合「全部」：并发拉全部频道（信号量限并发对源礼貌），单频道失败只损失
-  自己的条目（同 RSS fetch_merged 的失败隔离哲学）
+- 聚合「全部」的编排（并发/失败隔离/倒序合并）见 core.source.merge_feeds；
+  Telegram 的差异是按发布时间（ISO 字符串）倒序、错误标签带 @
 """
 
 from __future__ import annotations
 
-import asyncio
-
 from feedscope.core import http
 from feedscope.core.config import RssFeed
 from feedscope.core.models import FeedItem
-from feedscope.core.source import FeedLoader, SourceError, dedup_append
+from feedscope.core.source import FeedLoader, dedup_append, merge_feeds
 from feedscope.sources.telegram.parse import parse_channel_html
-
-# 同步拉多少个频道：并发太猛对 t.me 不礼貌（RSS 同款上限）
-MAX_PARALLEL = 8
 
 _SITE = "https://t.me/s"
 
@@ -65,23 +60,14 @@ async def _fetch_one(feed: RssFeed) -> list[FeedItem]:
 
 
 async def fetch_merged(feeds: list[RssFeed]) -> tuple[list[FeedItem], list[str]]:
-    """并发拉全部频道 ->「全部」聚合：按发布时间倒序合并。
+    """并发拉全部频道 ->「全部」聚合：(条目, 失败原因列表)。
 
-    返回 (条目, 失败原因列表)；单频道失败隔离（只损失自己），全部失败由
-    调用方决定报错。时间缺失的条目垫底（罕见，预览页都有 datetime）。
+    编排见 core.source.merge_feeds；Telegram 的差异：按发布时间（ISO 字符串）
+    倒序、错误标签带 @（时间缺失的条目垫底，罕见，预览页都有 datetime）。
     """
-    sem = asyncio.Semaphore(MAX_PARALLEL)
-    errors: list[str] = []
-
-    async def guarded(feed: RssFeed) -> list[FeedItem]:
-        async with sem:
-            try:
-                return await _fetch_one(feed)
-            except SourceError as exc:
-                errors.append(f"@{feed.key}：{exc}")
-                return []
-
-    batches = await asyncio.gather(*(guarded(f) for f in feeds))
-    items = [it for batch in batches for it in batch]
-    items.sort(key=lambda it: str(it.extra.get("published") or ""), reverse=True)
-    return items, errors
+    return await merge_feeds(
+        feeds,
+        _fetch_one,
+        error_label=lambda f: f"@{f.key}",
+        sort_key=lambda it: str(it.extra.get("published") or ""),
+    )
