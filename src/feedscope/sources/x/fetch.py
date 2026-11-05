@@ -1,9 +1,10 @@
 """X 取数层：通道页签（知乎/Reddit 同款）——常驻 x.com 页签的页面 fetch 直调 GraphQL。
 
-请求由真 Chrome 发出：TLS/头序/cookie 与登录会话完全自洽，cf_clearance
-与 Chrome TLS 绑定的封锁（搜索端点已兑现过）对页内 fetch 天然不存在——
-手动只补浏览器不会自动带的头：公开网页端 Bearer（多年稳定的公开常量）
-+ X-Csrf-Token（页内从 ct0 cookie 就地读，与 X 自己的 SPA 同一动作）。
+请求由真 Chrome 发出（取数原语见 core/browser.ChannelTab.fetch）：TLS/头序/
+cookie 与登录会话完全自洽，cf_clearance 与 Chrome TLS 绑定的封锁（搜索端点
+已兑现过）对页内 fetch 天然不存在——手动只补浏览器不会自动带的头：公开
+网页端 Bearer（多年稳定的公开常量）+ X 系声明头；csrf 由统一原语的
+cookie_headers 把 ct0 页内就地提升为 X-Csrf-Token（与 SPA 同一动作）。
 
 请求形状（queryId/variables/features）以种子常量起步（快照，零收割成本
 零启动延迟），失效自动收割自愈（x_probe.py 的人工收割内建为自动）——
@@ -41,7 +42,7 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
-from feedscope.core import http, samples
+from feedscope.core import http
 from feedscope.core.browser import ChannelTab, drop_profile_cookies, get_session, run_page
 from feedscope.core.const import PAGE_TIMEOUT_MS
 from feedscope.core.models import Answer, DetailDoc, FeedItem
@@ -181,27 +182,17 @@ _harvest: dict[str, _Op] = {}  # operationName -> _Op（收割成果，覆盖同
 _HARVEST_WAIT = 1.0  # 重开页签后等数据 chunk 挂进 resource entries 的时长（测试置 0）
 
 
-# ---- 页签里执行的 JS（页面 fetch / 收集 SPA 自己发过的 GraphQL URL / 收集 chunk URL）----
+# ---- 页签里执行的 JS（收集 chunk URL；取数走 ChannelTab.fetch 统一原语）----
 
-# GraphQL fetch：cookie/TLS/头序是真 Chrome 的，只补 Bearer 与 csrf（ct0 页内
-# 就地读，X 自己的 SPA 同一动作）。失败按约定回 __status/__error 不抛异常
-_FETCH_GQL_JS = """
-async ([url, bearer]) => {
-  try {
-    const ct0 = (document.cookie.match(/(?:^|;\\s*)ct0=([^;]+)/) || [])[1] || "";
-    const h = {
-      "Authorization": "Bearer " + bearer,
-      "X-Csrf-Token": ct0,
-      "X-Twitter-Active-User": "yes",
-      "X-Twitter-Client-Language": "zh-cn",
-      "X-Twitter-Auth-Type": "OAuth2Session",
-    };
-    const r = await fetch(url, { headers: h, credentials: "include" });
-    if (!r.ok) return { __status: r.status };
-    return { __body: await r.json() };
-  } catch (e) { return { __error: String(e) }; }
+# GraphQL 的手动头：Bearer（公开常量）+ X 系声明头；csrf 走 cookie_headers
+# 把 ct0 页内就地提升为 X-Csrf-Token（永远新鲜，X 自己的 SPA 同一动作）
+_GQL_HEADERS: dict[str, str] = {
+    "Authorization": f"Bearer {_BEARER}",
+    "X-Twitter-Active-User": "yes",
+    "X-Twitter-Client-Language": "zh-cn",
+    "X-Twitter-Auth-Type": "OAuth2Session",
 }
-"""
+_CSRF_FROM_COOKIE = {"X-Csrf-Token": "ct0"}
 
 # 当前部署加载过的 JS chunk URL 三路并集：resource entries（运行时动态
 # 加载的 chunk 只有这里可见——2026-11 实测 X 把自己的 GraphQL 请求从
@@ -349,20 +340,11 @@ async def _deep_capture_detail() -> _Op | None:
 
 
 async def _raw(url: str, *, source: str) -> tuple[int | None, dict]:
-    """一次页签 fetch -> (状态码或 None, body)；网络/结构失败转 SourceError。"""
-    try:
-        data = await _tab.eval(_FETCH_GQL_JS, [url, _BEARER])
-    except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
-        raise SourceError(f"{source} 请求失败：{exc}") from exc
-    if not isinstance(data, dict):
-        raise SourceError(f"{source} 返回结构异常")
-    if err := data.get("__error"):
-        raise SourceError(f"{source} 请求失败：{err}")
-    status = data.get("__status")
-    body = data.get("__body")
-    if status is None and not isinstance(body, dict):
-        raise SourceError(f"{source} 返回结构异常")
-    return (int(status) if status else None), (body or {})
+    """一次页签 fetch -> (状态码或 None, body)；解包/报错/样本落盘见 ChannelTab.fetch。"""
+    status, body = await _tab.fetch(
+        url, source=source, headers=_GQL_HEADERS, cookie_headers=_CSRF_FROM_COOKIE
+    )
+    return status, (body or {})
 
 
 def _url(op_name: str, op: _Op, extra_vars: dict | None) -> str:
@@ -399,7 +381,6 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
                 f"{source} 请求失败（HTTP {status}）：接口限流或抖动，稍后再试"
             ) from None
         if not status and not body.get("errors"):
-            samples.save(samples.url_name(source, url), json.dumps(body, ensure_ascii=False))
             return body
         if attempt == 0:  # 形状腐烂（errors/400/404/422）：重割一次，形状确实换过才重试
             healed = await _deep_capture_detail() if op_name == _DETAIL_OP else None

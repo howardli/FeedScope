@@ -10,6 +10,7 @@ import json
 import urllib.parse
 
 import pytest
+from conftest import FakeTab
 from test_parsers import _conv_data, _entry, _item_content, _tweet_result
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
@@ -70,40 +71,17 @@ def _gql_url(op: str, qid: str, variables: dict | None = None, features: dict | 
     return f"https://x.com/i/api/graphql/{qid}/{op}?{urllib.parse.urlencode(params)}"
 
 
-class FakeTab:
-    """X 通道页签替身：evaluate 按脚本内容分派——chunk 收集（script[src] 标记
-    的 JS）/ fetch（取数，handler 按 URL 路由）。"""
-
-    def __init__(self, handler, *, script_urls: list[str] | None = None) -> None:
-        self._handler = handler
-        self.script_urls = list(script_urls or [])
-        self.resets = 0
-        self.opened = 0
-        self.fetches: list[str] = []
-
-    async def get(self):
-        self.opened += 1  # harvest 前的重开页签（goto 完成才收割）
-
-    async def eval(self, script: str, arg=None):
-        if "script[src]" in script:  # chunk 收集（resource entries ∪ HTML ∪ 标签）
-            return list(self.script_urls)
-        if "fetch(" in script:
-            self.fetches.append(arg[0])
-            status, body = self._handler(arg[0])
-            return {"__status": status} if status else {"__body": body}
-        raise AssertionError(f"FakeTab 未识别的脚本：{script[:40]}…")
-
-    def reset(self) -> None:
-        self.resets += 1
-
-
 def _mock(
     monkeypatch: pytest.MonkeyPatch,
     handler,
     *,
     script_urls: list[str] | None = None,
 ) -> FakeTab:
-    tab = FakeTab(handler, script_urls=script_urls)
+    """conftest 共享 FakeTab 接管取数（chunk 收集走 markers）；_harvest/_HARVEST_WAIT 复位。"""
+    tab = FakeTab(
+        on_fetch=lambda req: handler(req.url),
+        markers=[("script[src]", lambda arg: list(script_urls or []))],
+    )
     monkeypatch.setattr(x_fetch, "_tab", tab)
     monkeypatch.setattr(x_fetch, "_harvest", {})
     monkeypatch.setattr(x_fetch, "_HARVEST_WAIT", 0)
@@ -139,10 +117,10 @@ def test_timeline_happy_path_uses_seed(monkeypatch: pytest.MonkeyPatch) -> None:
     tab = _mock(monkeypatch, handler)
     entries, cursor = asyncio.run(_fetch_entries("foryou", None))
     assert len(entries) == 3 and cursor == "cur-1"  # 2 推 + 1 游标条目
-    assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0]  # 种子 qid
+    assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0].url  # 种子 qid
     assert tab.resets == 0  # happy path 不收割
     asyncio.run(_fetch_entries("foryou", "cur-1"))
-    assert "cur-1" in urllib.parse.unquote(tab.fetches[1])  # 翻页 cursor 进 variables
+    assert "cur-1" in urllib.parse.unquote(tab.fetches[1].url)  # 翻页 cursor 进 variables
 
 
 def test_parse_graphql_url_strips_per_call_vars() -> None:
@@ -174,10 +152,10 @@ def test_shape_rot_self_heals_via_chunk_grep(monkeypatch: pytest.MonkeyPatch) ->
             return None, {"errors": [{"message": "Intentionally invalid queryId"}]}
         return None, _tl_payload(["1"], None)
 
-    tab._handler = handler
+    tab._on_fetch = lambda req: handler(req.url)
     entries, _cursor = asyncio.run(_fetch_entries("foryou", None))
     assert entries
-    assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0] and fresh in tab.fetches[1]
+    assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0].url and fresh in tab.fetches[1].url
     assert tab.resets == 1 and tab.opened == 1  # 重割重开了页签
 
 
@@ -201,9 +179,9 @@ def test_shape_rot_heals_via_plain_chunk(monkeypatch: pytest.MonkeyPatch) -> Non
             return None, {"errors": [{"message": "stale"}]}  # 种子腐烂
         return None, _tl_payload(["1"], None)
 
-    tab._handler = handler
+    tab._on_fetch = lambda req: handler(req.url)
     entries, _cursor = asyncio.run(_fetch_entries("following", None))
-    assert entries and grep_qid in tab.fetches[1]  # 普通 chunk 里 grep 出的新 qid 救场
+    assert entries and grep_qid in tab.fetches[1].url  # 普通 chunk 里 grep 出的新 qid 救场
 
 
 def test_unhealed_shape_rot_gives_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,7 +242,7 @@ def test_detail_uses_seed_then_deep_capture_heals(monkeypatch: pytest.MonkeyPatc
             return None, {"errors": [{"message": "stale"}]}
         return None, _detail_payload("20", ["101", "102"])
 
-    tab._handler = handler
+    tab._on_fetch = lambda req: handler(req.url)
 
     async def fake_capture() -> _Op:
         return captured
@@ -272,7 +250,9 @@ def test_detail_uses_seed_then_deep_capture_heals(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(x_fetch, "_deep_capture_detail", fake_capture)
     _entries, cursor = asyncio.run(_fetch_conversation("20", None))
     assert cursor == "more"
-    assert seed.qid in tab.fetches[0] and "capQID" in tab.fetches[1]  # 种子失败、截获形状成功
+    assert (
+        seed.qid in tab.fetches[0].url and "capQID" in tab.fetches[1].url
+    )  # 种子失败、截获形状成功
 
 
 def test_deep_capture_parses_and_strips(monkeypatch: pytest.MonkeyPatch) -> None:

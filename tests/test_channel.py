@@ -118,3 +118,84 @@ def test_check_failure_closes_page_and_propagates(make_tab) -> None:
     with pytest.raises(RuntimeError, match="login wall"):
         asyncio.run(tab.get())
     assert page.closed
+
+
+# ---- ChannelTab.fetch：统一页内取数原语（解包约定 / 报错转译 / 样本落盘）----
+
+
+class FetchPage(FakePage):
+    """evaluate 回放固定结果（__body / __status / __error / 非 dict 垃圾）的页。"""
+
+    def __init__(self, result) -> None:
+        super().__init__()
+        self._result = result
+        self.args: list = []
+
+    async def evaluate(self, script: str, arg=None):
+        self.evals += 1
+        self.args.append(arg)
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _fetch_tab(monkeypatch: pytest.MonkeyPatch, result) -> tuple[ChannelTab, FetchPage]:
+    page = FetchPage(result)
+    monkeypatch.setattr(browser, "get_session", lambda: FakeSession(page))
+    return ChannelTab(_PARK, name="test"), page
+
+
+def test_fetch_json_body_and_args(monkeypatch) -> None:
+    """成功路径：__body 解包、(None, 正文) 返回、参数原样透传给页签 JS。"""
+    tab, page = _fetch_tab(monkeypatch, {"__body": {"data": [1]}})
+    status, body = asyncio.run(
+        tab.fetch("https://x/api", source="测试", headers={"a": "1"}, referrer="https://r/")
+    )
+    assert status is None and body == {"data": [1]}
+    url, headers, cookie_headers, referrer, as_text = page.args[0]
+    assert (
+        url == "https://x/api"
+        and headers == {"a": "1"}
+        and cookie_headers == {}
+        and referrer == "https://r/"
+    )
+    assert as_text is False
+
+
+def test_fetch_text_body_saves_sample(monkeypatch, tmp_path) -> None:
+    """as_text 拿 HTML 正文并顺手落样本（probe 改版修复流水线三源同权）。"""
+    monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(tmp_path))
+    tab, _page = _fetch_tab(monkeypatch, {"__body": "<html>x</html>"})
+    status, body = asyncio.run(tab.fetch("https://x/a", source="测试", as_text=True))
+    assert status is None and body == "<html>x</html>"
+    assert any("a" in p.name for p in tmp_path.iterdir())
+
+
+def test_fetch_status_surfaces_no_sample(monkeypatch, tmp_path) -> None:
+    """非 2xx：状态码原样上交（语义转译归各源），正文空不落样本。"""
+    monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(tmp_path))
+    tab, _page = _fetch_tab(monkeypatch, {"__status": 403})
+    status, body = asyncio.run(tab.fetch("https://x/a", source="测试"))
+    assert status == 403 and body is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fetch_error_and_garbage_are_source_error(monkeypatch) -> None:
+    """__error（网络/解析失败）与非约定结构：转 SourceError（出口给 UI 提示）。"""
+    from feedscope.core.source import SourceError
+
+    tab, _page = _fetch_tab(monkeypatch, {"__error": "boom"})
+    with pytest.raises(SourceError, match="boom"):
+        asyncio.run(tab.fetch("https://x/a", source="测试"))
+    tab, _page = _fetch_tab(monkeypatch, "not-a-dict")
+    with pytest.raises(SourceError, match="结构异常"):
+        asyncio.run(tab.fetch("https://x/a", source="测试"))
+
+
+def test_fetch_playwright_failure_wrapped(monkeypatch) -> None:
+    """evaluate 层失败（重建重试也没救）：包成 SourceError，不裸抛。"""
+    from feedscope.core.source import SourceError
+
+    tab, _page = _fetch_tab(monkeypatch, RuntimeError(_NAV_ERR))
+    with pytest.raises(SourceError, match="请求失败"):
+        asyncio.run(tab.fetch("https://x/a", source="测试"))

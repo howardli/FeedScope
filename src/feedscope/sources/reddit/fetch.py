@@ -22,8 +22,8 @@ HTML 全放行：页面（SSR，帖子/评论树直接织在 HTML 里）与翻�
   通常零额外请求），partial 403 时再专割一次自愈（版本确实轮换过才重试）
 - 401/403 且重割无效时给「登录态可能已过期或被风控」的指引——绝不自动
   清 cookie（历史教训：误清即登录死循环）
-- 样本落盘沿用 samples（probe 巡检对着真实 HTML 修 parse），与 httpx
-  时代不降级
+- 样本落盘在 ChannelTab.fetch 里统一做（probe 巡检对着真实 HTML 修
+  parse）
 
 请求画像：刷流 1 页面 + N-1 片段（每片段 50-90 帖）、开帖 1 请求，远在
 Reddit 登录态限流（约 100 次/分）之下。
@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import re
 
-from feedscope.core import samples
 from feedscope.core.browser import ChannelTab
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
@@ -41,7 +40,9 @@ from feedscope.sources.reddit.parse import parse_next_html, parse_posts_html
 
 _API = "https://www.reddit.com"
 
-_tab = ChannelTab(f"{_API}/", name="reddit")  # 停靠 www.reddit.com/：同源 fetch（referer/cookie）的前提
+_tab = ChannelTab(
+    f"{_API}/", name="reddit"
+)  # 停靠 www.reddit.com/：同源 fetch（referer/cookie）的前提
 
 # 一次 load_more 至少攒够的条数：SSR 页面只嵌 3-10 帖（站点首屏后自己
 # 也会续拉一批），不足就顺着 load-after 链补齐——「一屏上下、翻页有货」
@@ -60,47 +61,22 @@ _HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9"
 
 _version: str | None = None  # 进程级缓存（页面响应顺手更新，403 自愈时重割）
 
-# 通道页签里执行的一次 fetch：UA/头序/cookie/TLS 全是真 Chrome 的，我们只
-# 补浏览器不会自动带的头（Accept 显式声明；partial 加版本头与 retry 头）。
-# 失败按约定回 __status/__error，正文回 __body（不抛 JS 异常穿过 evaluate）
-_FETCH_HTML_JS = """
-async ([url, accept, version]) => {
-  try {
-    const h = { "Accept": accept };
-    if (version) {
-      h["x-reddit-client-version"] = version;
-      h["x-reddit-retry"] = "attempt=0, max=2";
-    }
-    const r = await fetch(url, { headers: h, credentials: "include" });
-    if (!r.ok) return { __status: r.status };
-    return { __body: await r.text() };
-  } catch (e) { return { __error: String(e) }; }
-}
-"""
-
 
 async def _raw_fetch(
     url: str, accept: str, version: str | None, *, source: str
 ) -> tuple[int | None, str]:
-    """一次通道 fetch -> (HTTP 状态码或 None, 正文)；网络/结构失败转 SourceError。
+    """一次通道 fetch -> (HTTP 状态码或 None, HTML 正文)；解包/报错/样本落盘见 ChannelTab.fetch。
 
-    状态码原样上交（304xx 语义没有，403 的自愈决策在 _get_html），成功时
-    正文连同状态码一起返回——收割路径要 403 页不炸，取数路径才转错误。
-    页签失效（在途跳转/被关）由 ChannelTab.eval 重建重试兜住。
+    状态码原样上交（403 的自愈决策在 _get_html），成功时正文连同状态码
+    一起返回——收割路径要 403 页不炸，取数路径才转错误。手动头只有
+    Accept 与 partial 的版本头/retry 头（浏览器不会自动带的）。
     """
-    try:
-        data = await _tab.eval(_FETCH_HTML_JS, [url, accept, version])
-    except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
-        raise SourceError(f"{source} 请求失败：{exc}") from exc
-    if not isinstance(data, dict):
-        raise SourceError(f"{source} 返回结构异常")
-    if err := data.get("__error"):
-        raise SourceError(f"{source} 请求失败：{err}")
-    status = data.get("__status")
-    body = data.get("__body")
-    if status is None and not isinstance(body, str):
-        raise SourceError(f"{source} 返回结构异常")
-    return (int(status) if status else None), (body or "")
+    headers = {"Accept": accept}
+    if version:
+        headers["x-reddit-client-version"] = version
+        headers["x-reddit-retry"] = "attempt=0, max=2"
+    status, body = await _tab.fetch(url, source=source, headers=headers, as_text=True)
+    return status, (body or "")
 
 
 async def _harvest_version() -> None:
@@ -135,7 +111,6 @@ async def _get_html(url: str, *, source: str, partial: bool = False) -> str:
             raise SourceError(
                 f"{source} 请求失败（HTTP {status}）——登录态可能已过期或被风控，Ctrl+U 重新登录"
             ) from None
-    samples.save(samples.url_name(source, url), body)
     if not partial and (m := _VERSION_RE.search(body)):
         _version = m.group(0)  # 服务端把版本织进每个页面：顺手收割，首批 partial 免一次专割
     return body

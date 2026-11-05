@@ -20,7 +20,9 @@ from typing import Any, TypeVar
 
 from platformdirs import user_cache_path
 
+from feedscope.core import samples
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
+from feedscope.core.source import SourceError
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +70,22 @@ async def close_page(page: Any) -> None:
 
 
 class ChannelTab:
-    """常驻取数通道页签：停靠某 URL 的进程级单例 + evaluate 自愈。
+    """常驻取数通道页签：停靠某 URL 的进程级单例 + evaluate 自愈 + 页内 fetch 原语。
 
     敌意源（知乎/Reddit/X）共用的取数通道形态——请求由真 Chrome 的页面
-    fetch 发出，TLS/头序/cookie 与登录会话完全自洽。fetch 层只声明停靠
-    URL（同源 fetch 与 cookie 的前提）与开页校验（如登录墙），生命周期
-    全在这里：单例复用、页签被关重建、evaluate 撞上在途跳转（context
-    destroyed）换页签重试一次。页签随 BrowserSession 生灭，无需显式释放。
+    fetch 发出，TLS/头序/cookie 与登录会话完全自洽。生命周期全在这里：
+    单例复用、页签被关重建、evaluate 撞上在途跳转（context destroyed）
+    换页签重试一次。页签随 BrowserSession 生灭，无需显式释放。
+
+    各源差异走四个显式扩展点，不往本类里加源名分支：
+    - check：开页校验钩子（知乎的登录墙）
+    - fetch() 的 headers / cookie_headers / referrer / as_text：每次请求的
+      头形状与正文形态（Reddit 的 Accept+版本头、X 的 Bearer+ct0 csrf、
+      知乎的 x-zse-93 与 referer）
+    - eval()：任意复合脚本的逃生口（知乎的开题并行拉取/子回复补全——
+      多请求一 evaluate 的形态单次 fetch 表达不了）
+    - 登录/自愈语义（401/403 转译、版本头与 queryId 的收割重试）留在
+      各源 fetch 层：策略各站不同，统一反而互相缠绕
     """
 
     def __init__(
@@ -125,9 +136,73 @@ class ChannelTab:
                     raise
                 self._page = None
 
+    async def fetch(
+        self,
+        url: str,
+        *,
+        source: str,
+        headers: dict[str, str] | None = None,
+        cookie_headers: dict[str, str] | None = None,
+        referrer: str | None = None,
+        as_text: bool = False,
+    ) -> tuple[int | None, Any]:
+        """页签里发一次 fetch -> (HTTP 状态码或 None, 正文)；网络/结构失败转 SourceError。
+
+        统一的页内取数原语（知乎/Reddit/X 共用，返回约定 __status/__error/
+        __body 见 _FETCH_JS）：UA/头序/cookie/TLS 全是真 Chrome 的，调用方只
+        补浏览器不会自动带的东西——headers 手动头；cookie_headers「cookie 值
+        提升为头」的映射（如 X 的 ct0 -> X-Csrf-Token，页内就地读、永远新鲜，
+        与 SPA 自己同一动作）；referrer 指定则覆盖页签自然 referer；as_text
+        拿 HTML 文本（Reddit）否则按 JSON 解析（知乎/X）。成功且正文非空时
+        顺手落样本（samples 未开启零开销，probe 改版修复流水线三源同权）。
+        状态码原样上交，401/403 的语义转译归各源。
+        """
+        try:
+            data = await self.eval(
+                _FETCH_JS, [url, headers or {}, cookie_headers or {}, referrer, as_text]
+            )
+        except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
+            raise SourceError(f"{source} 请求失败：{exc}") from exc
+        if not isinstance(data, dict):
+            raise SourceError(f"{source} 返回结构异常")
+        if err := data.get("__error"):
+            raise SourceError(f"{source} 请求失败：{err}")
+        status = data.get("__status")
+        body = data.get("__body")
+        if status is None and body is None:
+            raise SourceError(f"{source} 返回结构异常")
+        status_i = int(status) if status else None
+        if status_i is None and body is not None:
+            # 样本名用通道名（ascii：zhihu/reddit/x），source 只管错误文案——
+            # 纯中文标签过 url_name 会被清成 src，样本就没主了
+            text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+            samples.save(samples.url_name(self._name, url), text)
+        return status_i, body
+
     def reset(self) -> None:
         """弃单例（下一次 get 重开）；出错自愈路径用。"""
         self._page = None
+
+
+# 页签里执行的统一 fetch：失败按约定回 __status（非 2xx）/__error（网络或
+# 解析异常），成功回 __body（文本或 JSON）。cookie_headers 把指定 cookie 的
+# 值就地提升为请求头（页内读永远新鲜）；不抛 JS 异常穿过 evaluate
+_FETCH_JS = """
+async ([url, headers, cookieHeaders, referrer, asText]) => {
+  try {
+    const h = Object.assign({}, headers);
+    for (const [name, cookie] of Object.entries(cookieHeaders)) {
+      const v = (document.cookie.match(new RegExp("(?:^|;\\\\s*)" + cookie + "=([^;]+)")) || [])[1];
+      if (v) h[name] = decodeURIComponent(v);
+    }
+    const opts = { headers: h, credentials: "include" };
+    if (referrer) opts.referrer = referrer;
+    const r = await fetch(url, opts);
+    if (!r.ok) return { __status: r.status };
+    return { __body: asText ? await r.text() : await r.json() };
+  } catch (e) { return { __error: String(e) }; }
+}
+"""
 
 
 _UA_CACHE_TTL = 7 * 24 * 3600  # Chrome 版本几天到几周才变，探针结果落盘缓存

@@ -1,47 +1,44 @@
-"""知乎取数层离线测试：FakePage 替代 Playwright（评论/通道，不碰浏览器）
-+ 游标 API Loader（monkeypatch _api_json，不碰网络）。
+"""知乎取数层离线测试：FakePage/FakeTab 替代 Playwright（评论/通道，不碰
+浏览器）+ 游标 API Loader（monkeypatch _api_json，不碰网络）。
 
 全部数据走免签 API（请求由常驻通道页签的页面 fetch 发出，带 x-zse-93 版本
 头）：详情 = 元信息 API + 回答 feeds；评论 = comment_v5（FakePage 替身驱动
-页面 fetch/子回复补全）。通道单例/登录墙/在途跳转重建各有测试。
+页面 fetch/子回复补全）。通道页签生命周期（单例/在途跳转重建）归
+test_channel.py 集中测，这里只验知乎专属的登录墙开页校验钩子。
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
+from conftest import FakeTab
 
 import feedscope.sources.zhihu.fetch as zhihu_fetch
+from feedscope.core.browser import ChannelTab
 from feedscope.core.source import LoginRequired
 from feedscope.sources.zhihu.fetch import (
     ZhihuApiFeedLoader,
     ZhihuQuestionLoader,
     _api_json,
-    _channel,
     _fetch_hot_list,
     _open_question,
 )
 
-_NAV_ERR = "Execution context was destroyed, most likely because of a navigation"
 _FEEDS_NEXT = "https://www.zhihu.com/api/v4/questions/123/feeds?cursor=n2"
 
 
 class FakePage:
-    """最小 Playwright page 替身：evaluate 按脚本内容分派（页面 fetch /
-    子回复并发补全）；nav_failures>0 时前若干次 evaluate 抛「执行上下文
-    被销毁」模拟在途跳转。"""
+    """评论 API 状态机（首页/翻页计数、子回复缺口），由 _tab_for 包成通道替身。"""
 
     _NEXT = "https://www.zhihu.com/api/v4/comment_v5/answers/456/root_comment?limit=10&offset=x"
 
-    def __init__(self, nav_failures: int = 0) -> None:
+    def __init__(self) -> None:
         self.url = "https://www.zhihu.com/question/123"
         self.closed = False
-        self._nav_failures = nav_failures
-        self._cm_pages = 0   # 评论 API 已 fetch 的页数（首页 + 翻页）
-        self._child_reqs = 0 # 子回复补全被调用的次数
-        self._cm_gap = 2     # 首页根评论的子回复缺口条数（可覆写）
+        self._cm_pages = 0  # 评论 API 已 fetch 的页数（首页 + 翻页）
+        self._child_reqs = 0  # 子回复补全被调用的次数
+        self._cm_gap = 2  # 首页根评论的子回复缺口条数（可覆写）
 
     def _cm_api_page(self) -> dict:
         """评论 API 两页：首页 1 条根评论（带 1 条子回复 + 1 条隐藏待补全），
@@ -61,18 +58,35 @@ class FakePage:
                         "child_comment_count": 1 + self._cm_gap,  # 带出 1 + 缺口
                         "child_comment_next_offset": "o1",
                         "child_comments": [
-                            {"id": 11609, "author": {"name": "楼中楼"}, "content": "回",
-                             "created_time": 1793491704, "like_count": 0, "child_comments": []}
+                            {
+                                "id": 11609,
+                                "author": {"name": "楼中楼"},
+                                "content": "回",
+                                "created_time": 1793491704,
+                                "like_count": 0,
+                                "child_comments": [],
+                            }
                         ],
                     },
-                    {"id": 11699, "is_delete": True, "author": {"name": "已删"}, "content": "x"},  # 已删的不算数
+                    {
+                        "id": 11699,
+                        "is_delete": True,
+                        "author": {"name": "已删"},
+                        "content": "x",
+                    },  # 已删的不算数
                 ],
                 "paging": {"is_end": False, "next": self._NEXT},
             }
         return {
             "data": [
-                {"id": 11610, "author": {"name": "翻页评论"}, "content": "新",
-                 "created_time": 1793500000, "like_count": 1, "child_comments": []}
+                {
+                    "id": 11610,
+                    "author": {"name": "翻页评论"},
+                    "content": "新",
+                    "created_time": 1793500000,
+                    "like_count": 1,
+                    "child_comments": [],
+                }
             ],
             "paging": {"is_end": True, "next": ""},
         }
@@ -86,26 +100,30 @@ class FakePage:
     async def close(self) -> None:
         self.closed = True
 
-    async def evaluate(self, script: str, arg=None):
-        if self._nav_failures > 0:
-            self._nav_failures -= 1
-            raise RuntimeError(_NAV_ERR)
-        if "metaUrl" in script:  # 开题并行 JS（Promise.all 拉元信息+首批回答）
-            return getattr(self, "_open_payload", None) or {"meta": dict(_Q_META), "feeds": _feeds_top()}
-        if "Promise.all" in script:  # 隐藏子回复并发补全（按缺口条数返回，拉齐为止）
-            self._child_reqs += 1
-            gap = self._cm_gap
-            return {
-                str(roots[0]["id"]): [
-                    {"id": 11610 + i, "author": {"name": f"补全子回复{i}"}, "content": f"齐{i}",
-                     "created_time": 1793492000 + i, "like_count": i, "child_comments": []}
-                    for i in range(1, gap + 1)
-                ]
-                for roots in [arg or []]
-            }
-        if "fetch(" in script:  # 页面 fetch（评论 API：首页/翻页按页数推进）
-            return self._cm_api_page()
-        raise AssertionError(f"FakePage 未识别的脚本：{script[:40]}…")
+    def _open_question(self, _arg) -> dict:
+        """开题并行 JS 的返回（metaUrl 标记路由；_open_payload 可覆写）。"""
+        return getattr(self, "_open_payload", None) or {
+            "meta": dict(_Q_META),
+            "feeds": _feeds_top(),
+        }
+
+    def _complete_children(self, roots) -> dict:
+        """隐藏子回复并发补全的返回（Promise.all 标记；按缺口条数返回，拉齐为止）。"""
+        self._child_reqs += 1
+        return {
+            str(roots[0]["id"]): [
+                {
+                    "id": 11610 + i,
+                    "author": {"name": f"补全子回复{i}"},
+                    "content": f"齐{i}",
+                    "created_time": 1793492000 + i,
+                    "like_count": i,
+                    "child_comments": [],
+                }
+                for i in range(1, self._cm_gap + 1)
+            ]
+            for roots in [roots or []]
+        }
 
 
 class FakeContext:
@@ -116,7 +134,16 @@ class FakeContext:
         return self._page
 
 
-# ---- 问题详情（纯 API：monkeypatch _api_json + _channel，不碰网络/浏览器）----
+def _tab_for(page: FakePage) -> FakeTab:
+    """conftest 共享 FakeTab 包 FakePage 状态机：单请求走 _cm_api_page（评论翻页
+    计数），复合脚本（开题/子回复补全）按 markers 路由到 FakePage 方法。"""
+    return FakeTab(
+        on_fetch=lambda req: (None, page._cm_api_page()),
+        markers=[("metaUrl", page._open_question), ("Promise.all", page._complete_children)],
+    )
+
+
+# ---- 问题详情（纯 API：monkeypatch _api_json + 假通道页签，不碰网络/浏览器）----
 
 _Q_META = {  # 元信息 API 响应（实测形态裁剪）
     "title": "问题",
@@ -149,17 +176,22 @@ def _feeds_top(next_url: str = _FEEDS_NEXT, aid: int = 456) -> dict:
     return {"data": [_feeds_answer_dict(aid)], "paging": {"is_end": False, "next": next_url}}
 
 
-def _open_loader(monkeypatch, page: FakePage | None = None, *, meta: dict | None = None, feeds: dict | None = None) -> ZhihuQuestionLoader:
+def _open_loader(
+    monkeypatch,
+    page: FakePage | None = None,
+    *,
+    meta: dict | None = None,
+    feeds: dict | None = None,
+) -> ZhihuQuestionLoader:
     """monkeypatch 出纯 API 的 _open_question（并行开题 payload 走 FakePage），
     评论层与后续 load_more 翻页走各自通道。"""
     page = page or FakePage()
-    page._open_payload = {"meta": dict(_Q_META) if meta is None else meta,
-                          "feeds": _feeds_top() if feeds is None else feeds}
+    page._open_payload = {
+        "meta": dict(_Q_META) if meta is None else meta,
+        "feeds": _feeds_top() if feeds is None else feeds,
+    }
 
-    async def fake_channel() -> FakePage:
-        return page
-
-    monkeypatch.setattr("feedscope.sources.zhihu.fetch._channel", fake_channel)
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
     return asyncio.run(_open_question("123"))
 
 
@@ -195,7 +227,11 @@ def test_open_comments_api_first_page(monkeypatch) -> None:
     assert top.votes == "赞 3"
     assert top.raw_id == "11608"
     assert top.time == fmt_unix(1793491084)  # unix 秒 -> 北京时间绝对时间
-    assert [r.author for r in top.replies] == ["楼中楼", "补全子回复1", "补全子回复2"]  # 隐藏子回复已拉齐
+    assert [r.author for r in top.replies] == [
+        "楼中楼",
+        "补全子回复1",
+        "补全子回复2",
+    ]  # 隐藏子回复已拉齐
     assert top.more_replies == 0  # 补全后没有剩余
     assert top.replies[0].votes == ""  # like_count 0 = 无赞为空
     assert len(cm.comments) == 1  # is_delete 的不进列表
@@ -246,16 +282,10 @@ def test_open_comments_zero_comments(monkeypatch) -> None:
 def test_open_comments_http_error_is_source_error(monkeypatch) -> None:
     """接口非 2xx：open_comments 转 SourceError（出口给 UI 提示）。"""
     from feedscope.core.source import SourceError
+    from feedscope.sources.zhihu import fetch as zf
 
-    page = FakePage()
-    loader = _open_loader(monkeypatch, page)
-
-    async def err_page(script, arg=None):
-        if "fetch(" in script:
-            return {"__status": 403}
-        return await type(page).evaluate(page, script, arg)
-
-    page.evaluate = err_page
+    loader = _open_loader(monkeypatch, FakePage())
+    zf._tab._on_fetch = lambda req: (403, None)  # 开题已装好替身：就地注入接口 403
     with pytest.raises(SourceError, match="403"):
         asyncio.run(loader.open_comments(0))
     asyncio.run(loader.close())
@@ -280,9 +310,17 @@ def test_question_loader_load_more_via_feeds_api(monkeypatch) -> None:
     async def _fake(url: str, referer: str) -> dict:
         calls.append(url)
         if len(calls) == 1:
-            return {"data": [_feeds_answer_dict(789)],
-                    "paging": {"is_end": False, "next": "https://www.zhihu.com/api/v4/questions/123/feeds?cursor=n3"}}
-        return {"data": [_feeds_answer_dict(789)], "paging": {"is_end": True, "next": ""}}  # 重复 789
+            return {
+                "data": [_feeds_answer_dict(789)],
+                "paging": {
+                    "is_end": False,
+                    "next": "https://www.zhihu.com/api/v4/questions/123/feeds?cursor=n3",
+                },
+            }
+        return {
+            "data": [_feeds_answer_dict(789)],
+            "paging": {"is_end": True, "next": ""},
+        }  # 重复 789
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._api_json", _fake)
     new = asyncio.run(loader.load_more())
@@ -302,10 +340,7 @@ def test_question_deleted_404_is_friendly(monkeypatch) -> None:
     page = FakePage()
     page._open_payload = {"meta": {"__status": 404}, "feeds": {}}
 
-    async def fake_channel() -> FakePage:
-        return page
-
-    monkeypatch.setattr("feedscope.sources.zhihu.fetch._channel", fake_channel)
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
     with pytest.raises(SourceError, match="已被删除或不存在"):
         asyncio.run(_open_question("999999999999999999"))
 
@@ -313,24 +348,19 @@ def test_question_deleted_404_is_friendly(monkeypatch) -> None:
 def test_api_json_401_is_login_required(monkeypatch) -> None:
     """会话过期（401）：转 LoginRequired 触发 UI 登录引导（403 可能是风控，不并入）。"""
 
-    page = FakePage()
-
-    async def err_fetch(script, arg=None):
-        return {"__status": 401}
-
-    page.evaluate = err_fetch
-
-    async def fake_channel() -> FakePage:
-        return page
-
-    monkeypatch.setattr("feedscope.sources.zhihu.fetch._channel", fake_channel)
+    tab = _tab_for(FakePage())
+    tab._on_fetch = lambda req: (401, None)  # 会话过期
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", tab)
     with pytest.raises(LoginRequired, match="重新登录"):
         asyncio.run(_api_json("https://www.zhihu.com/api/v4/questions/1", "https://www.zhihu.com/"))
 
 
 def test_question_loader_without_next_done_at_open(monkeypatch) -> None:
     """feeds 首批即到底（无 next）：首批可用，loader 即 done。"""
-    loader = _open_loader(monkeypatch, feeds={"data": [_feeds_answer_dict(456)], "paging": {"is_end": True, "next": ""}})
+    loader = _open_loader(
+        monkeypatch,
+        feeds={"data": [_feeds_answer_dict(456)], "paging": {"is_end": True, "next": ""}},
+    )
     assert len(loader.doc.answers) == 1
     assert loader.done
     assert asyncio.run(loader.load_more()) == []
@@ -366,8 +396,12 @@ def test_hot_list_from_api(monkeypatch) -> None:
             "data": [
                 {
                     "detail_text": "2606 万热度",
-                    "target": {"id": 2100, "type": "question", "title": "热题",
-                               "url": "https://api.zhihu.com/questions/2100"},
+                    "target": {
+                        "id": 2100,
+                        "type": "question",
+                        "title": "热题",
+                        "url": "https://api.zhihu.com/questions/2100",
+                    },
                 }
             ]
         }
@@ -388,11 +422,18 @@ def test_api_feed_loader_pages_and_dedup(monkeypatch) -> None:
         calls.append(url)
         if url == "first":
             return _rec_page(
-                [_answer_item(1, 11), {"type": "feed_group", "verb": None}, _answer_item(2, 22, author="乙")],
+                [
+                    _answer_item(1, 11),
+                    {"type": "feed_group", "verb": None},
+                    _answer_item(2, 22, author="乙"),
+                ],
                 next_url="second",
             )
-        return _rec_page([_answer_item(2, 99, title="重复问题（另一回答）"), _answer_item(3, 33)],
-                         next_url="third", is_end=True)
+        return _rec_page(
+            [_answer_item(2, 99, title="重复问题（另一回答）"), _answer_item(3, 33)],
+            next_url="third",
+            is_end=True,
+        )
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._api_json", _fake)
     loader = ZhihuApiFeedLoader("first", "https://www.zhihu.com/")
@@ -420,55 +461,38 @@ def test_api_feed_loader_empty_page_keeps_going(monkeypatch) -> None:
     assert not loader.done and loader.items == []
 
 
-# ---- 常驻通道页签（fetch 通道：进程级单例、登录墙、在途跳转重建）----
+# ---- 常驻通道页签（生命周期归 test_channel.py；这里只验知乎专属的登录墙钩子）----
 
 
-class _FakeSession:
+class _FakeCtx2:
     def __init__(self, page: FakePage) -> None:
-        self._ctx = FakeContext(page)
-        self.pages_opened = 0
+        self._page = page
+
+    async def new_page(self) -> FakePage:
+        return self._page
+
+
+class _FakeSession2:
+    def __init__(self, page: FakePage) -> None:
+        self._ctx = _FakeCtx2(page)
 
     async def run(self, op, *args, **kwargs):
-        self.pages_opened += 1
         return await op(self._ctx, *args, **kwargs)
 
 
-def test_channel_opened_once_and_reused(monkeypatch) -> None:
-    """通道页签进程级单例：第二次调用直接复用，不再开页。"""
-    session = _FakeSession(FakePage())
-    monkeypatch.setattr(zhihu_fetch, "get_session", lambda: session)
-    monkeypatch.setattr(zhihu_fetch, "_channel_page", None)
-    p1 = asyncio.run(_channel())
-    p2 = asyncio.run(_channel())
-    assert p1 is p2 and session.pages_opened == 1
-    assert p1.url == "https://www.zhihu.com/"
-
-
 def test_channel_login_wall_is_login_required(monkeypatch) -> None:
-    """通道页签撞登录墙：LoginRequired（与详情页签同一判登路径）。"""
+    """通道页签撞登录墙（goto 落到 signin）：ChannelTab 开页校验钩子抛 LoginRequired。"""
+    page = FakePage()
 
-    class _SignInPage(FakePage):
-        async def goto(self, url: str, **kw) -> None:
-            self.url = "https://www.zhihu.com/signin?next=%2F"
+    async def goto_signin(url: str, **kw) -> None:
+        page.url = "https://www.zhihu.com/signin?next=%2F"
 
-    monkeypatch.setattr(zhihu_fetch, "get_session", lambda: _FakeSession(_SignInPage()))
-    monkeypatch.setattr(zhihu_fetch, "_channel_page", None)
+    page.goto = goto_signin
+    monkeypatch.setattr("feedscope.core.browser.get_session", lambda: _FakeSession2(page))
+    monkeypatch.setattr(
+        zhihu_fetch,
+        "_tab",
+        ChannelTab("https://www.zhihu.com/", check=zhihu_fetch._login_wall, name="zhihu"),
+    )
     with pytest.raises(LoginRequired):
-        asyncio.run(_channel())
-
-
-def test_api_json_rebuilds_channel_on_nav_destroyed(monkeypatch) -> None:
-    """通道在途跳转（context destroyed）：丢掉单例换新页签重试一次，不裸炸。"""
-    bad = FakePage(nav_failures=1)  # 首个 evaluate 抛「执行上下文被销毁」
-    monkeypatch.setattr(zhihu_fetch, "_channel_page", bad)
-    good = FakePage()
-    calls: list[Any] = []
-
-    async def _fake_channel() -> FakePage:
-        calls.append(1)
-        return bad if len(calls) == 1 else good
-
-    monkeypatch.setattr(zhihu_fetch, "_channel", _fake_channel)
-    data = asyncio.run(_api_json("https://www.zhihu.com/x", "https://www.zhihu.com/"))
-    assert data is not None  # 第二次经好页签拿到 FakePage 的评论 fixture（证明重试成功）
-    assert len(calls) == 2
+        asyncio.run(zhihu_fetch._tab.get())

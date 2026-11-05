@@ -1,4 +1,5 @@
-"""知乎取数层：信息流走免签 API（常驻页签的页面 fetch），详情纯 API。
+"""知乎取数层：信息流走免签 API（常驻页签的页面 fetch，统一原语见
+core/browser.ChannelTab.fetch），详情纯 API。
 
 热榜/推荐/关注 2026-11 实测都有免签接口（只认 cookie，推荐/关注就是页面
 自己在调的），请求由常驻 zhihu.com 通道页签的 fetch 发出——真 Chrome 的
@@ -13,8 +14,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from feedscope.core.browser import close_page, get_session
-from feedscope.core.const import PAGE_TIMEOUT_MS
+from feedscope.core.browser import ChannelTab
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.source import (
     CommentLoader,
@@ -43,21 +43,6 @@ from feedscope.sources.zhihu.parse import (
 # （1-2 条），其余靠 comment/{id}/child_comment 游标分页补全。
 _CM_FIRST_URL = "https://www.zhihu.com/api/v4/comment_v5/answers/{aid}/root_comment?order_by=score&limit=20&offset="
 
-_FETCH_JSON_JS = """
-async ([url, referrer, zse93]) => {
-  try {
-    const h = { "x-requested-with": "fetch" };
-    if (zse93) h["x-zse-93"] = "101_3_3.0";
-    const opts = { headers: h, credentials: "include" };
-    if (referrer) opts.referrer = referrer;  // 信息流按所在页面指定 referer（评论留空=自然 referer）
-    const r = await fetch(url, opts);
-    if (!r.ok) return { __status: r.status };
-    return await r.json();
-  } catch (e) { return { __error: String(e) }; }
-}
-"""
-
-
 # 子回复补全（一条根评论一串游标翻页，根与根之间 Promise.all 并发——
 # 串行 fetch 时热门楼层几十条子回复能把首页拖到 20s+）。offset 为空 =
 # 从头拉（与 root 首页同语义）；seen 过滤已带出的热门子回复防重复。
@@ -85,8 +70,12 @@ async (roots) => {
 """
 
 
-def _raise_fetch_error(data: Any) -> None:
-    """页面 fetch 的返回按约定自检：__status/__error 键转 SourceError。"""
+def _raise_compound_error(data: Any) -> None:
+    """复合脚本（一次 evaluate 多请求）的返回自检：__status/__error 键转 SourceError。
+
+    单请求已走 ChannelTab.fetch 的统一解包；这里只剩 _OPEN_QUESTION_JS 的
+    嵌套形态（{meta: {...}, feeds: {...}}，各自的 __status 分开查）。
+    """
     if not isinstance(data, dict):
         raise SourceError(f"接口返回异常：{type(data).__name__}")
     if status := data.get("__status"):
@@ -95,18 +84,28 @@ def _raise_fetch_error(data: Any) -> None:
         raise SourceError(f"接口请求失败：{err}")
 
 
-async def _fetch_json(page: Any, url: str, referrer: str | None = None, zse93: bool = False) -> dict:
-    """页面上下文 fetch JSON API；非 2xx / 网络失败转 SourceError。
+def _headers(zse93: bool) -> dict[str, str]:
+    """知乎 API 的手动头（浏览器不会自动带的）：x-zse-93 按端点区别对待，见上注释。"""
+    h = {"x-requested-with": "fetch"}
+    if zse93:
+        h["x-zse-93"] = "101_3_3.0"
+    return h
 
-    referrer 不传 = 页签自然 referer（评论用：通道页 URL）；信息流传对应页面
-    URL，与页面请求同形。zse93 见 _FETCH_JSON_JS 注释（按端点区别对待）。
+
+async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False) -> dict:
+    """通道页签里 fetch JSON API -> (状态码, body)；网络/结构失败转 SourceError。
+
+    取数原语与解包约定见 ChannelTab.fetch（知乎/Reddit/X 三源共用）。referrer
+    不传 = 页签自然 referer（评论用：通道页 URL）；信息流传对应页面 URL，
+    与页面请求同形。401/403 的语义转译归 _api_json/调用方。
     """
-    data = await page.evaluate(_FETCH_JSON_JS, [url, referrer, zse93])
-    _raise_fetch_error(data)
-    return data
+    status, body = await _tab.fetch(url, source="知乎", headers=_headers(zse93), referrer=referrer)
+    if status:
+        raise SourceError(f"接口请求失败（HTTP {status}）")
+    return body or {}
 
 
-async def _comment_page(page: Any, url: str) -> tuple[list[Comment], str, bool]:
+async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
     """拉一页根评论（先把带隐藏子回复的根并发补全）；返回 (评论, next_url, is_end)。
 
     「还有没有子评论可拉」没有现成标识（2026-11 实测）：can_unfold 在
@@ -119,7 +118,7 @@ async def _comment_page(page: Any, url: str) -> tuple[list[Comment], str, bool]:
     就拉全（并发下一次请求，留着「另有 1 条回复」的尾巴比多花一次请求
     更伤阅读）；more_replies 仅在补全失败（限流/风控）时兜底提示。
     """
-    data = await _fetch_json(page, url)
+    data = await _fetch_json(url)
 
     def _gap(r: dict) -> int:
         if r.get("is_delete"):
@@ -137,7 +136,7 @@ async def _comment_page(page: Any, url: str) -> tuple[list[Comment], str, bool]:
     ]
     if pending:
         try:
-            filled: dict = await page.evaluate(_COMPLETE_CHILDREN_JS, pending) or {}
+            filled: dict = await _tab.eval(_COMPLETE_CHILDREN_JS, pending) or {}
             for r in data.get("data") or []:
                 kids = filled.get(str(r.get("id"))) or filled.get(r.get("id"))
                 if kids:
@@ -146,6 +145,7 @@ async def _comment_page(page: Any, url: str) -> tuple[list[Comment], str, bool]:
             pass  # 补全失败：热门子集兜底
     paging = data.get("paging") or {}
     return _api_comments(data), paging.get("next") or "", bool(paging.get("is_end"))
+
 
 # ---- 信息流 API（热榜/推荐/关注：v3 免签接口，只认 cookie）----
 # 2026-11 实测：这几个接口不查 x-zse-96 签名（那是 v4 的要求），页面自己
@@ -162,49 +162,26 @@ FOLLOW_API = "https://www.zhihu.com/api/v3/moments?limit=10&desktop=true"
 # 各流的 referer = 页面自己发该请求时所在页面（fetch 的 referrer 选项指定）。
 _CHANNEL_URL = "https://www.zhihu.com/"  # 通道页签停在 www 源上（cookie/CORS 的前提）
 
-_channel_page: Any = None  # 进程级单例页签；随 BrowserSession 关闭，无需显式释放
+
+async def _login_wall(page: Any) -> None:
+    """通道页签开页校验：goto 后确认没撞上登录墙（2026 起热榜也在墙后）。"""
+    if "signin" in page.url:
+        raise LoginRequired("知乎需要登录后才能查看此内容")
 
 
-async def _channel() -> Any:
-    """取（必要时创建）常驻 fetch 通道页签：停在 zhihu.com 上，进程内复用。
-
-    请求由真 Chrome 发出（TLS/自动头/最新 cookie 与浏览器会话完全自洽，
-    风控一致性优先于 httpx 直调的速度差）。撞登录墙/页签被关都重建。
-    """
-    global _channel_page
-    if _channel_page is not None and not _channel_page.is_closed():
-        return _channel_page
-
-    async def _open(ctx: Any) -> Any:
-        page = await ctx.new_page()
-        try:
-            await _goto_logged_in(page, _CHANNEL_URL)  # goto + 登录墙检测
-        except BaseException:
-            await close_page(page)
-            raise
-        return page
-
-    _channel_page = await get_session().run(_open)
-    return _channel_page
+_tab = ChannelTab(
+    _CHANNEL_URL, check=_login_wall, name="zhihu"
+)  # 单例/重建/在途跳转重试见 core.browser
 
 
 async def _api_json(url: str, referer: str, zse93: bool = False) -> dict:
-    """API 一次页面 fetch -> JSON；通道页签在途跳转时重建重试一次。"""
-    for attempt in range(2):
-        page = await _channel()
-        try:
-            return await _fetch_json(page, url, referer, zse93)
-        except SourceError as exc:
-            # 401 = 会话过期：转 LoginRequired 触发 UI 的登录引导（403 可能是
-            # 风控不是过期，不并入）；其余接口层失败重建通道没用，原样抛
-            if "HTTP 401" in str(exc):
-                raise LoginRequired("知乎 登录已过期，需要重新登录") from exc
-            raise
-        except Exception:
-            if attempt:
-                raise
-            global _channel_page
-            _channel_page = None  # evaluate 撞上在途跳转（context destroyed）等：换页签再试
+    """API 一次通道页签 fetch -> JSON；401 = 会话过期转 LoginRequired（403 可能是风控，不并入）。"""
+    try:
+        return await _fetch_json(url, referrer=referer, zse93=zse93)
+    except SourceError as exc:
+        if "HTTP 401" in str(exc):
+            raise LoginRequired("知乎 登录已过期，需要重新登录") from exc
+        raise
 
 
 async def _fetch_hot_list(referer: str) -> list[FeedItem]:
@@ -257,13 +234,6 @@ async ([metaUrl, feedsUrl, referer]) => {
 # ---- 页面操作 ----
 
 
-async def _goto_logged_in(page: Any, url: str) -> None:
-    """在已打开的页上导航，确认没撞上登录墙（2026 起热榜也在墙后）。"""
-    await page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
-    if "signin" in page.url:
-        raise LoginRequired("知乎需要登录后才能查看此内容")
-
-
 async def _open_question(qid: str) -> DetailLoader:
     """问题详情纯 API：元信息 questions API + 首批回答 feeds 无 cursor 从头拉。
 
@@ -272,23 +242,14 @@ async def _open_question(qid: str) -> DetailLoader:
     """
     referer = f"https://www.zhihu.com/question/{qid}"
     args = [QUESTION_API.format(qid=qid), _ANSWERS_FEEDS_TOP.format(qid=qid), referer]
-    for attempt in range(2):
-        page = await _channel()
-        try:
-            r = await page.evaluate(_OPEN_QUESTION_JS, args)
-            break
-        except Exception:
-            if attempt:
-                raise
-            global _channel_page
-            _channel_page = None  # evaluate 撞上在途跳转等：换页签重试一次
+    r = await _tab.eval(_OPEN_QUESTION_JS, args)  # 页签失效重建重试见 ChannelTab.eval
     try:
-        _raise_fetch_error(r["meta"])
+        _raise_compound_error(r["meta"])
     except SourceError as exc:
         if "404" in str(exc):  # 元信息端点 404 = 问题本身没了，别让用户看 HTTP 码猜
             raise SourceError("知乎 该问题可能已被删除或不存在") from exc
         raise
-    _raise_fetch_error(r["feeds"])
+    _raise_compound_error(r["feeds"])
     doc = _api_question_doc(r["meta"], _feeds_answers(r["feeds"], qid))
     paging = r["feeds"].get("paging") or {}
     return ZhihuQuestionLoader(doc, paging.get("next") or None, referer)
@@ -325,7 +286,9 @@ class ZhihuApiFeedLoader(FeedLoader):
         self._next = paging.get("next") or ""
         if not self._next or paging.get("is_end"):
             self._done = True
-        return dedup_append(self.items, self._seen, (_feed_api_item(r) for r in data.get("data") or []))
+        return dedup_append(
+            self.items, self._seen, (_feed_api_item(r) for r in data.get("data") or [])
+        )
 
     async def close(self) -> None:
         pass  # 通道页签进程级共享，不归单个 Loader 关
@@ -367,7 +330,12 @@ class ZhihuQuestionLoader(DetailLoader):
         self.doc.answers.extend(new)  # 维持「doc = 已加载全部」的不变量
         paging = data.get("paging") or {}
         self._next = paging.get("next") or None
-        if not self._next or paging.get("is_end") or self._total is not None and len(self.doc.answers) >= self._total:
+        if (
+            not self._next
+            or paging.get("is_end")
+            or self._total is not None
+            and len(self.doc.answers) >= self._total
+        ):
             self._done = True
         return new
 
@@ -379,9 +347,7 @@ class ZhihuQuestionLoader(DetailLoader):
         if not m:
             raise SourceError("知乎 拿不到该回答的 id，暂时无法进评论层")
         try:
-            comments, next_url, _ = await _comment_page(
-                await _channel(), _CM_FIRST_URL.format(aid=m.group(1))
-            )
+            comments, next_url, _ = await _comment_page(_CM_FIRST_URL.format(aid=m.group(1)))
             return ZhihuCommentsLoader(comments, next_url)
         except SourceError:
             raise
@@ -412,7 +378,7 @@ class ZhihuCommentsLoader(CommentLoader):
             self._done = True
             return []
         try:
-            comments, next_url, is_end = await _comment_page(await _channel(), self._next)
+            comments, next_url, is_end = await _comment_page(self._next)
         except SourceError:
             return []  # 单页失败不判死：可以再按 Ctrl+N 重试
         new = [c for c in comments if c.raw_id not in self._ids]
