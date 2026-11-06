@@ -2,15 +2,13 @@
 
 之前是三胞胎（账号框 / 确认框 / 输入框各抄一份 compose 与底座 CSS）；
 差异本来只有三件事——提示文案、确认按钮的词、要不要多一个输入框。
-卡片 CSS 与 Esc 取消在此唯一实现，各弹层永远同形。
+卡片 CSS 与 Esc 取消在 ArrowModalScreen 唯一实现（.modal-card +
+action_cancel，各弹层永远同形），本模块只剩轻弹层自己的增量。
 """
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Label
 
@@ -18,18 +16,11 @@ from feedscope.ui.focus_nav import ArrowModalScreen
 
 
 class DialogScreen(ArrowModalScreen[object]):
-    """居中卡片弹层底座：共享卡片 CSS 与 Esc 取消；compose 留给子类。"""
+    """居中卡片弹层底座：卡片宽度约束 + 提示行样式；compose 与取消值留给子类。"""
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "取消", show=False)]
-
-    CSS = """
-    .dialog-card {
-        width: auto; max-width: 64; height: auto;
-        background: $surface; border: ascii $primary; padding: 1 2;
-    }
+    DEFAULT_CSS = """
+    .dialog-card { max-width: 64; }
     .dialog-prompt { padding-bottom: 1; }
-    .dialog-actions { height: auto; }
-    .dialog-actions Button { margin-right: 1; }
     """
 
     def action_cancel(self) -> None:
@@ -52,9 +43,9 @@ class ConfirmScreen(DialogScreen):
         self._confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog-card"):
+        with Vertical(classes="modal-card dialog-card"):
             yield Label(self._prompt, id=self.PROMPT_ID, classes="dialog-prompt")
-            with Horizontal(classes="dialog-actions"):
+            with Horizontal(classes="modal-actions"):
                 yield Button(self._confirm_label, id=self.OK_ID, variant="primary")
                 yield Button("取消", id="confirm-cancel")
 
@@ -88,10 +79,7 @@ class InputScreen(DialogScreen):
     在输入行与按钮行间移动焦点（ArrowModalScreen）。
     """
 
-    # Screen.CSS 不沿 MRO 合并（子类定义 CSS 会整体遮蔽基类的，见 reading.py
-    # 同款说明）：这里必须显式拼上 DialogScreen 的卡片样式，否则输入框弹层
-    # 只有定宽、没有边框/内边距/背景
-    CSS = DialogScreen.CSS + """
+    CSS = """
     .dialog-fixed { width: 64; }  /* 输入行要 1fr：卡片定宽，输入行才有得铺 */
     """
 
@@ -102,10 +90,10 @@ class InputScreen(DialogScreen):
         self._placeholder = placeholder
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog-card dialog-fixed"):
+        with Vertical(classes="modal-card dialog-card dialog-fixed"):
             yield Label(self._title, id="input-title", classes="dialog-prompt")
             yield Input(value=self._initial, placeholder=self._placeholder, id="input-line")
-            with Horizontal(classes="dialog-actions"):
+            with Horizontal(classes="modal-actions"):
                 yield Button("确定", id="input-ok", variant="primary")
                 yield Button("取消", id="input-cancel")
 

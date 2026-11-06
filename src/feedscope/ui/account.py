@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from feedscope import login
-from feedscope.core.browser import close_session
 from feedscope.core.source import Source
 from feedscope.ui import feedback
 from feedscope.ui.dialogs import AccountScreen
@@ -85,7 +84,7 @@ class AccountFlow:
         self.in_progress = True
         try:
             await self.app.main.release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
-            await close_session()
+            await login.yield_profile()  # 关无头会话让出 profile 锁（语义在 login 侧）
             try:
                 ok = await login.login(source.source_id, quiet=True)
             except Exception:

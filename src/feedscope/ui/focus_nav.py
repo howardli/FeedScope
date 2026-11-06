@@ -9,6 +9,10 @@
 ArrowModalScreen 的焦点链是线性的（布局顺序），←/↑ 与 →/↓ 两两同义——
 不假称空间语义；四个方向仍各留一个 action 方法，因为 → 是覆写点
 （F2 源管理里「列表上 → 进订阅管理」，见 source_setup 的 action_nav_right）。
+
+ArrowModalScreen 同时承载弹层家族的共享样式（DEFAULT_CSS 沿 MRO 合并）：
+居中卡片（.modal-card）与按钮行（.modal-actions）全弹层同形、唯一实现；
+Esc 取消也在这层声明，子类只实现 action_cancel 的取消值。
 """
 
 from __future__ import annotations
@@ -23,12 +27,13 @@ T = TypeVar("T")
 
 
 class ArrowModalScreen(ModalScreen[T]):
-    """弹层基类：←/↑ = 焦点后移、→/↓ = 焦点前移（焦点链 = 布局顺序）。
+    """弹层基类：←/↑ = 焦点后移、→/↓ = 焦点前移（焦点链 = 布局顺序）+ Esc 取消。
 
     必须是 ModalScreen 子类才能进绑定的 MRO 合并（裸 mixin 的 BINDINGS
     会被 _merge_bindings 跳过）；列表类控件自己绑 ↑/↓ 优先在列表内移动，
     这里的屏级绑定只在聚焦控件不消费方向键（按钮/输入框空档）时命中。
-    需要给 → 留屏内语义的（F2 的管理订阅）覆写 action_nav_right 即可。
+    需要给 → 留屏内语义的（F2 的管理订阅）覆写 action_nav_right 即可；
+    action_cancel 的取消值（False / None / 改动标记）由子类声明。
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -36,7 +41,19 @@ class ArrowModalScreen(ModalScreen[T]):
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
+        Binding("escape", "cancel", "取消", show=False),
     ]
+
+    # 弹层卡片三件套的唯一实现（所有弹层同形）：宽度约束（min/max-width）
+    # 是各弹层差异，写在各屏自己的 CSS 里
+    DEFAULT_CSS = """
+    .modal-card {
+        width: auto; height: auto;
+        background: $surface; border: ascii $primary; padding: 1 2;
+    }
+    .modal-actions { height: auto; }
+    .modal-actions Button { margin-right: 1; }
+    """
 
     def action_nav_left(self) -> None:
         self.focus_previous()  # focus_next/previous 是 Screen 的方法
@@ -49,6 +66,9 @@ class ArrowModalScreen(ModalScreen[T]):
 
     def action_nav_down(self) -> None:
         self.focus_next()
+
+    def action_cancel(self) -> None:
+        raise NotImplementedError  # 子类声明自己的取消值（False / None / 改动标记）
 
 
 def _exit_at_end(widget, *, at_end: bool) -> None:
@@ -66,6 +86,9 @@ def _exit_at_end(widget, *, at_end: bool) -> None:
 class FocusNavSelectionList(SelectionList):
     """源勾选列表：末行再 ↓ 移交按钮行（首行 ↑ 留原生夹持——上方无可聚焦）。"""
 
+    # ↓ 绑定两族列表各声明一份：裸 mixin 的 BINDINGS 不进 Textual 的合并链
+    # （同 ArrowModalScreen docstring 的说明），共享基类省不掉这两行——
+    # 到边条件与出口统一收在 _exit_at_end，那才是可共享的部分
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("down", "cursor_down_or_exit", show=False),
     ]

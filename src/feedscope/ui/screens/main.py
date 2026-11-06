@@ -23,11 +23,9 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.widgets import Footer, Header, Label, ListView, Static
 
-from feedscope.core import config
 from feedscope.core.models import FeedItem
-from feedscope.core.registry import all_sources, get_class
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import feedback
@@ -35,16 +33,11 @@ from feedscope.ui.layout import (
     META_COL_SPARE,
     RESIZE_DEBOUNCE,
     list_title_width,
-    meta_col_text,
     score_col_width,
 )
+from feedscope.ui.list_render import build_item
 from feedscope.ui.screens.detail import DetailScreen
-from feedscope.ui.screens.source_setup import (
-    ManageSourcesScreen,
-    OnboardingScreen,
-    source_entry_text,
-)
-from feedscope.ui.wrap import wrap_display
+from feedscope.ui.screens.main_setup import MainSetupMixin
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
 
@@ -143,8 +136,10 @@ class FeedListView(ListView):
         screen = self.screen
         if not isinstance(screen, MainScreen) or not screen.items:
             return  # 首布局（尚无内容）不算；空列表重排也是空转
-        # 与详情屏一致：拖拽改宽连发 Resize，稳定后再整屏重排；若列表竟在
-        # 首布局前建好（窄宽挤压在左），首个 Resize 同样自愈
+        # 拖拽改宽连发 Resize，稳定后再整屏重排（防抖与详情屏同款）；宽度
+        # 与 _last_width 比对（初值 0），若列表竟在首布局前建好（窄宽挤压
+        # 在左），首个 Resize 也会触发重排自愈——详情屏的 rendered-width
+        # 自愈同思路，这里列表无渲染态可记，用 0 初值起比对
         if self._resize_timer is not None:
             self._resize_timer.stop()
         self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, screen.rebuild_items)
@@ -155,8 +150,12 @@ class FeedListView(ListView):
             self._resize_timer = None
 
 
-class MainScreen(Screen[None]):
-    """站点 tab 条 + 信息流边栏 + 条目列表；全部主屏键位与状态。"""
+class MainScreen(MainSetupMixin, Screen[None]):
+    """站点 tab 条 + 信息流边栏 + 条目列表；全部主屏键位与状态。
+
+    源启用编排（首启引导 / F2 管理 / 启用集生效）在 MainSetupMixin
+    （screens/main_setup.py），本类只留渲染、导航与取数。
+    """
 
     # 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
     # 中文输入法只拦字母/数字进候选框）。屏级绑定只在本屏前台时命中——
@@ -238,28 +237,6 @@ class MainScreen(Screen[None]):
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
 
-    def _enabled_sources(self) -> list[Source]:
-        """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
-
-        enabled 缺省 = 全部启用（注册顺序，老配置文件只有 hide 的不受影响）；
-        不在注册表的 id 静默略过——卸载 / 改名后的残留条目无害，doctor 会报告
-        配置概况。
-        """
-        return self._live_sources(config.enabled_ids())
-
-    @staticmethod
-    def _live_sources(ids: list[str] | None) -> list[Source]:
-        """实例化 ids（None = 全部注册源），只留当前有可选信息流的源。
-
-        无可选信息流的源不进 Tab（零订阅的 rss / 内置流全被隐藏的源）：
-        空 tab 只有噪音；配置好订阅 / 取消隐藏后 F2 重勾即回来。
-        """
-        if ids is None:
-            made = all_sources()
-        else:
-            made = [cls() for sid in ids if (cls := get_class(sid)) is not None]
-        return [s for s in made if s.feeds]
-
     def compose(self) -> ComposeResult:
         yield Header()
         yield Horizontal(id="source-tabs")  # 顶部站点 tab 条（子项由 _render_source_tabs 挂载）
@@ -271,89 +248,7 @@ class MainScreen(Screen[None]):
 
     async def on_mount(self) -> None:
         self.query_one("#feed", ListView).focus()
-        self.run_worker(self._start())
-
-    async def _start(self) -> None:
-        """启动序列：首启（配置文件不存在）先引导选源，确认落盘后才进正常渲染。
-
-        勾选是使用源的前提：引导取消（None）= 放弃本次使用，不默认全开。
-        _start 本就在 worker 里，push_screen 的 wait_for_dismiss 合法。
-        """
-        if not config.is_configured():
-            chosen = await self.app.push_screen(
-                OnboardingScreen(self._setup_entries(), [s.source_id for s in self.sources]),
-                wait_for_dismiss=True,
-            )
-            if chosen is None:
-                self.app.exit(message="未完成初始设置，重新运行 feedscope 再次选择")
-                return
-            config.save_enabled(chosen)
-            # 只重建状态，渲染统一交给 _bootstrap：_start 在 default 组里跑，
-            # 若此处走 _apply_enabled 的 action_refresh（default 组 exclusive），
-            # 会把还在 await 的自己取消在「旧子项已摘、新子项未挂」的中间态
-            self._rebuild_enabled(chosen)
-            self._hint_empty_subscribables(chosen)
-        await self._bootstrap()
-
-    async def _bootstrap(self) -> None:
-        """初始渲染：tab 条/边栏重建是异步的（等旧子项摘除），随后才开始抓取。"""
-        await self._render_source_tabs()
-        await self._render_feed_sidebar()
-        self.action_refresh()
-
-    def _setup_entries(self) -> list[tuple[str, str]]:
-        """源选择弹层的行数据：(source_id, 行文案)，注册顺序即列表顺序。
-
-        遍历实例而非类：feeds 是配置合成后的视图，rss 的流来自用户订阅表
-        （类默认为空）。文案带上各源的信息流名（超 3 个截成计数，几十个
-        订阅不至于刷屏）；无可选信息流的源不列出——勾上也只能得到空 tab，
-        例外是可订阅源（Source.subscribable）：空订阅也列出，→ 进订阅管
-        理屏就地添加（否则零订阅的 rss 永远进不了这个列表，鸡生蛋）。
-        行文案统一由 source_entry_text 生成（订阅管理返回后的同步也用它）。
-        """
-        return [
-            (source.source_id, text)
-            for source in all_sources()
-            if (text := source_entry_text(source))
-        ]
-
-    def _rebuild_enabled(self, ids: list[str]) -> None:
-        """按启用列表重建源列表与选中位（纯状态，不碰 DOM）。
-
-        展示顺序 = ids 顺序（弹屏按勾选顺序产出，落盘 enabled 同序）；尽量停
-        在原来的源——前提是它还在 self.sources 里（勾了但零订阅的源会被
-        feeds 过滤出局，「停在原源」按过滤后的实际名单找，找不到回 0 位，
-        不能按 chosen 找：否则 next() 落空直接崩，保存后的重建全断）。
-        """
-        chosen = set(ids)
-        prev_id = self.sources[self.source_idx].source_id if self.sources else None
-        self.sources = self._live_sources(ids)
-        self._feed_memory = {k: v for k, v in self._feed_memory.items() if k in chosen}
-        if prev_id is not None and any(s.source_id == prev_id for s in self.sources):
-            self.source_idx = next(i for i, s in enumerate(self.sources) if s.source_id == prev_id)
-        else:
-            self.source_idx = 0
-        self._restore_feed_idx()  # 停在该站上次的信息流（越界回 0）
-
-    async def _apply_enabled(self, ids: list[str]) -> None:
-        """启用集变化的生效路径（F2 源管理）：状态重建 + 两侧导航重渲染 + 刷新。
-
-        只在 sources 组的 worker 里调用（该组不被 default 组的 exclusive 刷新
-        取消，见 action_manage_sources）。
-        """
-        self._rebuild_enabled(ids)
-        self._hint_empty_subscribables(ids)
-        await self._render_source_tabs()
-        await self._render_feed_sidebar()
-        self.action_refresh()
-
-    def _hint_empty_subscribables(self, ids: list[str]) -> None:
-        """勾了零订阅的可订阅源：给下一步指引（rss/telegram 的 feeds 全来自
-        订阅表，零订阅 = 保存成功也不进 Tab——没有这条提示用户只看到「没生效」）。"""
-        for sid in ids:
-            cls = get_class(sid)
-            if cls is not None and cls.subscribable and not cls().feeds:
-                feedback.info(self, f"{cls.label} 已启用但还没有订阅——F2 里选中它按 → 添加")
+        self.run_worker(self._start())  # 启动序列（首启引导 + 初始渲染）在 MainSetupMixin
 
     # ---- 顶部 tab 条 / 左侧信息流边栏（点击与键盘共用同一条动作路径）----
 
@@ -467,7 +362,10 @@ class MainScreen(Screen[None]):
         self.items = loader.items
         self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
         width = self._wrap_width()
-        await view.extend([self._build_item(it, width) for it in self.items])  # 单次挂载 = 单次布局
+        src = source
+        await view.extend(
+            [build_item(it, width, self._score_width, src) for it in self.items]
+        )  # 单次挂载 = 单次布局
         if self.items:
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
@@ -517,7 +415,9 @@ class MainScreen(Screen[None]):
             await self.rebuild_items()
         else:
             width = self._wrap_width()
-            await view.extend([self._build_item(it, width) for it in new])  # 单次挂载 = 单次布局
+            await view.extend(
+                [build_item(it, width, self._score_width, self.current_source) for it in new]
+            )  # 单次挂载 = 单次布局
         self._hide_empty()
         self.app.sub_title = f"{len(self.items)} 条"
 
@@ -527,24 +427,6 @@ class MainScreen(Screen[None]):
         """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
         return list_title_width(self.query_one("#feed", ListView).region.width, self._score_width)
 
-    def _meta_col(self, it: FeedItem) -> str:
-        """元信息列文本（规则见 meta_col_text）。右对齐与超宽折行走 CSS（.item-score）。"""
-        text = meta_col_text(self.current_source, it)
-        return f"[dim]{escape(text)}[/dim]" if text else " "
-
-    def _build_item(self, it: FeedItem, width: int) -> ListItem:
-        # 规范版折行（避头尾 + 词不拆），逐行转义
-        title = "\n".join(escape(line) for line in wrap_display(it.title, width))
-        score = Label(self._meta_col(it), classes="item-score")
-        score.styles.width = self._score_width  # 列宽随批内容自适应（layout.py 常量说明）
-        return ListItem(
-            Horizontal(
-                score,
-                Label(title, classes="item-title"),
-                classes="item-row",
-            )
-        )
-
     async def rebuild_items(self) -> None:
         """终端宽度变化后按新宽度重新折行（只重排版，不重新抓取）。"""
         if not self.items:
@@ -553,7 +435,10 @@ class MainScreen(Screen[None]):
         idx = view.index
         view.clear()
         width = self._wrap_width()
-        await view.extend([self._build_item(it, width) for it in self.items])
+        src = self.current_source
+        await view.extend(
+            [build_item(it, width, self._score_width, src) for it in self.items]
+        )
         view.index = 0 if idx is None else min(idx, len(self.items) - 1)
 
     # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
@@ -756,41 +641,6 @@ class MainScreen(Screen[None]):
         self.app.run_worker(
             self.app.accounts.open(self.current_source), group="account", exclusive=True
         )
-
-    # ---- 源管理：F2 启用 / 停用 ----
-
-    def action_manage_sources(self) -> None:
-        """F2 源管理：勾选启用的源，保存即生效——增加 / 删除 / 修改启用集都走这里。
-
-        走 worker 因为 push_screen 的 wait_for_dismiss 只能在 worker 里用，
-        group 独立于列表加载，F2 不打断在途的 _refresh。
-        """
-        self.run_worker(self._manage_sources(), group="sources", exclusive=True)
-
-    async def _manage_sources(self) -> None:
-        current_ids = [s.source_id for s in self.sources]
-        chosen = await self.app.push_screen(
-            ManageSourcesScreen(self._setup_entries(), current_ids, self._mark_subs_dirty),
-            wait_for_dismiss=True,
-        )
-        if chosen is None:
-            # 取消：启用集不落盘，但订阅若在二级屏改过已即时生效——重建不欠着
-            if self._subs_dirty:
-                self._subs_dirty = False
-                ids = config.enabled_ids()
-                await self._apply_enabled(ids if ids is not None else current_ids)
-            return
-        config.save_enabled(chosen)
-        self._subs_dirty = False  # 确认路径 _apply_enabled 全量重建，无需再消费
-        await self._apply_enabled(chosen)
-        if chosen:
-            feedback.info(self, f"已保存：{len(chosen)} 源启用")
-        else:
-            feedback.info(self, "已保存：当前没有启用的源（F2 可再开启）")
-
-    def _mark_subs_dirty(self) -> None:
-        """订阅管理屏回调：改过信息流。F2 收尾（无论确认取消）都要重建。"""
-        self._subs_dirty = True
 
     # ---- Enter：进详情或跳浏览器 ----
 

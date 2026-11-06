@@ -774,22 +774,22 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
         assert await settle(pilot, lambda: isinstance(app.screen, AnswerScreen)), "Enter -> 回答详情屏"
         answer = app.screen
         assert answer.index == 0, "顶部 Enter 进第一个回答"
-        assert await settle(pilot, lambda: answer.cloader is not None), "评论此刻才请求（按需）"
+        assert await settle(pilot, lambda: answer.loader is not None), "评论此刻才请求（按需）"
         assert "作者0 的回答" in str(answer.query_one("#answer-title").content), "正文标题来自已加载 doc"
-        assert await settle(pilot, lambda: len(answer.query(".comment-head")) >= 3), "评论楼层（含子回复）上屏"
+        assert await settle(pilot, lambda: len(answer.query(".floor-head")) >= 3), "评论楼层（含子回复）上屏"
         assert any(
-            "楼中楼" in str(w.content) for w in answer.query(".comment-head")
+            "楼中楼" in str(w.content) for w in answer.query(".floor-head")
         ), "子回复渲染"
 
         # Ctrl+N 翻页评论；再到头
         await pilot.press("ctrl+n")
-        assert await settle(pilot, lambda: len(answer.cloader.comments) == 3), "Ctrl+N 加载更多评论"
+        assert await settle(pilot, lambda: len(answer.loader.comments) == 3), "Ctrl+N 加载更多评论"
         await pilot.press("ctrl+n")
         assert await settle(pilot, lambda: answer._exhausted), "评论到头"
 
         # [/] 换回答：换到下一条，评论重新按需请求
         await pilot.press("right")
-        assert await settle(pilot, lambda: answer.index == 1 and answer.cloader is not None), "] 换回答并重开评论"
+        assert await settle(pilot, lambda: answer.index == 1 and answer.loader is not None), "] 换回答并重开评论"
         assert "作者1 的回答" in str(answer.query_one("#answer-title").content)
 
         # Ctrl+O 打开该回答直达链接
@@ -801,7 +801,7 @@ async def _run_answer_layer_flow(opened: list[str]) -> None:
         assert app.screen is detail, "Esc 回问题屏（实例不变，位置不丢）"
 
         # 滚到第三个回答再 Enter：读到哪进哪（楼层定位）
-        heads = detail.query(".answer-head")
+        heads = detail.query(".floor-head")
         detail.query_one("#detail-body", VerticalScroll).scroll_to_widget(heads[2], top=True, animate=False)
         await pilot.pause()
         await pilot.press("enter")
@@ -836,13 +836,13 @@ async def _run_answer_empty_comments_resize_flow(monkeypatch) -> None:
         await pilot.press("enter")
         answer = app.screen
         assert isinstance(answer, AnswerScreen)
-        assert await settle(pilot, lambda: answer.cloader is not None)
-        assert len(answer.query("#cm-empty")) == 1
+        assert await settle(pilot, lambda: answer.loader is not None)
+        assert len(answer.query(".tail-empty")) == 1
 
         await pilot.resize_terminal(100, 36)
         assert await settle(
             pilot,
-            lambda: len(answer.query("#cm-empty")) == 1
+            lambda: len(answer.query(".tail-empty")) == 1
             and len(answer.query("#cm-loading")) == 0,
         ), "resize 后评论空态丢失（退回加载中）"
 
@@ -867,7 +867,7 @@ async def _run_no_comments_flow() -> None:
         assert "enter" not in shown, f"无评论层的源不预告 Enter，实际 Footer 键位 {shown}"
         # 尾行同样不列 Enter 评论段；只留 Footer 没有的语义增量——键位复读
         # （Esc 返回/← → 换篇）会让短帖读者把尾行当成正文的一部分
-        hint = str(detail.query_one("#more-hint").content)
+        hint = str(detail.query_one(".tail-hint").content)
         assert "Enter 看" not in hint, f"尾行不该预告 Enter 评论，实际 {hint.strip()!r}"
         assert "Ctrl+N 加载更多" in hint, f"加载动线保留，实际 {hint.strip()!r}"
         assert "Esc" not in hint and "换上" not in hint, f"键位复读归 Footer，实际 {hint.strip()!r}"
@@ -960,9 +960,9 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
         await pilot.press("enter")  # 进回答层（评论此刻才请求）
         answer = app.screen
         assert isinstance(answer, AnswerScreen)
-        assert await settle(pilot, lambda: answer.cloader is not None)
+        assert await settle(pilot, lambda: answer.loader is not None)
         await pilot.press("ctrl+n")
-        assert await settle(pilot, lambda: len(answer.cloader.comments) == 3), "评论层 Ctrl+N"
+        assert await settle(pilot, lambda: len(answer.loader.comments) == 3), "评论层 Ctrl+N"
 
 
 def test_ime_safe_keys(stub_registry, opened) -> None:
@@ -1195,7 +1195,7 @@ async def _run_prelayout_render_recovery_flow() -> None:
         assert await settle(
             pilot, lambda: screen._rendered_width == 100
         ), "预布局渲染后的首个 Resize 要自愈重排（不等用户手动改窗口）"
-        assert len(screen.query(".answer-head")) == 3, "重排后楼层完整"
+        assert len(screen.query(".floor-head")) == 3, "重排后楼层完整"
 
 
 async def _run_detail_initially_done_flow(monkeypatch) -> None:
@@ -1209,8 +1209,8 @@ async def _run_detail_initially_done_flow(monkeypatch) -> None:
         detail = app.screen
         assert isinstance(detail, DetailScreen)
         assert await settle(pilot, lambda: detail._rendered)
-        assert len(detail.query("#no-more")) == 1, "首批即到头要有 EOF 标记"
-        assert len(detail.query("#more-hint")) == 0, "首批即到头不再预告加载更多"
+        assert len(detail.query(".tail-eof")) == 1, "首批即到头要有 EOF 标记"
+        assert len(detail.query(".tail-hint")) == 0, "首批即到头不再预告加载更多"
 
 
 def test_detail_initially_done_shows_eof(stub_registry, monkeypatch) -> None:

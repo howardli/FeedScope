@@ -2,14 +2,12 @@
 
 多层递进的第二层：列表 -> 这里（回答流）-> 回答详情屏（评论层）。
 Enter 进「视口正在阅读」的那个回答（读到哪进哪）；评论不随首批抓取
-（首载要快），楼层头部只带评论数引导。与回答屏共享的阅读屏机械件
-（resize 重排 / hint 生命周期 / 清理）在 ReadingScreen。
+（首载要快），楼层头部只带评论数引导。翻页动线 / 尾行状态机 / ←/→ 换篇
+的机械件在 PagedReadingScreen，本屏只剩首载编排、整屏渲染与 Enter 分派。
 """
 
 from __future__ import annotations
 
-import dataclasses
-import webbrowser
 from collections.abc import Callable
 from typing import ClassVar
 
@@ -23,14 +21,19 @@ from textual.widgets import Footer, Header, Label, Markdown, Static
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, Source
 from feedscope.ui import feedback
-from feedscope.ui.layout import md_body_width
 from feedscope.ui.screens.answer import AnswerScreen
-from feedscope.ui.screens.reading import READING_CSS, ReadingScreen, dim_line, divider
+from feedscope.ui.screens.reading import (
+    PagedReadingScreen,
+    READING_CSS,
+    dim_line,
+    divider,
+    floor_head,
+)
 from feedscope.ui.wrap import wrap_markdown
 
 
-class DetailScreen(ReadingScreen):
-    """全屏阅读一个问题：Esc 返回（列表位置不变），Ctrl+N 加载更多回答，[/] 换篇。"""
+class DetailScreen(PagedReadingScreen):
+    """全屏阅读一个问题：Esc 返回（列表位置不变），Ctrl+N 加载更多回答，←/→ 换篇。"""
 
     BINDINGS: ClassVar[list[Binding]] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
@@ -43,20 +46,13 @@ class DetailScreen(ReadingScreen):
         Binding("left", "prev_article", "上一篇"),
     ]
 
+    # Markdown 标题规则必须 CSS 级（见 reading.READING_CSS 的说明），其余
+    # 共享样式走 ReadingScreen.DEFAULT_CSS
     CSS = READING_CSS + """
-    #detail-title { text-style: bold; padding: 1 2; border: ascii; width: 1fr; text-wrap: wrap; }
-    #detail-meta { padding: 0 2; }
-    #detail-desc { padding: 0 2; }
     .answers-header { padding: 0 2; text-style: bold; }
-    .answer-head { padding: 1 2 0 2; text-wrap: wrap; }  /* 窄终端长楼层头折行不裁剪 */
-    .answer-body { padding: 0 2; }
-    #more-hint, #more-loading, #no-more { padding: 1; }
     """
 
-    @property
-    def _unit(self) -> str:
-        """楼层单位词：源词汇表（知乎「回答」、X「回复」），详情屏不硬编码。"""
-        return self.source.detail_unit_label
+    _worker_group = "load"  # 首载/重试/翻页同组互斥（换篇整组取消）
 
     def __init__(
         self,
@@ -71,16 +67,18 @@ class DetailScreen(ReadingScreen):
         # （supports_comments=False，如 X/RSS）Footer 不预告——键位隐藏但保留，
         # 误按仍走 action_pick_answer 的「暂不支持」反馈，不无声（与尾行预告
         # 同一能力判定）。
-        self._bindings.key_to_bindings["enter"] = [
-            dataclasses.replace(
-                b, description=source.comment_unit_label, show=b.show and source.supports_comments
-            )
-            for b in self._bindings.key_to_bindings.get("enter", [])
-        ]
-        self._step_item = step_item  # 向 App 要相邻的可读条目（[/] 换篇，同步推进列表选中）
+        self._relabel_bindings(
+            {"enter": source.comment_unit_label},
+            hide="" if source.supports_comments else "enter",
+        )
+        self._step_item = step_item  # 向 App 要相邻的可读条目（←/→ 换篇，同步推进列表选中）
         self.loader: DetailLoader | None = None
-        self._exhausted = False       # 已到回答末尾，n 不再触发
-        self._answer_count = 0        # 回答序号，跨 load_more 递增
+        self._answer_count = 0  # 回答序号，跨 load_more 递增
+
+    @property
+    def _unit(self) -> str:
+        """楼层单位词：源词汇表（知乎「回答」、X「回复」），详情屏不硬编码。"""
+        return self.source.detail_unit_label
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -98,12 +96,7 @@ class DetailScreen(ReadingScreen):
     def _reset_render_state(self) -> None:
         self._answer_count = 0
 
-    async def _close_loader(self) -> None:
-        loader, self.loader = self.loader, None
-        if loader is not None:
-            await loader.close()
-
-    # ---- 加载与渲染 ----
+    # ---- 首载与整屏渲染 ----
 
     async def _load(self) -> None:
         body = self._body_scroll()
@@ -128,28 +121,35 @@ class DetailScreen(ReadingScreen):
         self._render_done()
         self.app.sub_title = self.loader.doc.title[:50]
 
-    def _md_width(self) -> int:
-        """正文折行宽：折行算术与 CSS 常量的对应关系集中在 ui/layout.py。"""
-        return md_body_width(self._body_scroll().region.width)
+    async def _retry(self) -> None:
+        """首载失败后的原地重试：摘掉失败行，重走一遍 _load。"""
+        for w in self.query("#detail-loading"):
+            await w.remove()
+        await self._load()
 
     async def _render_doc(self, doc: DetailDoc | None = None) -> None:
         """把整个文档渲染上屏（单次 mount = 单次布局）；重排（resize）时也走这里。"""
         if doc is None:
             doc = self.loader.doc  # 重排路径：doc 即已加载的全部内容
-        widgets: list[Widget] = [Static(escape(doc.title), id="detail-title")]
+        widgets: list[Widget] = [Static(escape(doc.title), id="detail-title", classes="read-title")]
         if doc.meta or doc.time:
             meta = " · ".join(x for x in (doc.meta, doc.time) if x)  # 正文发布时间并入元信息行
-            widgets.append(Static(f"[dim]{escape(meta)}[/dim]", id="detail-meta"))
+            widgets.append(
+                Static(f"[dim]{escape(meta)}[/dim]", id="detail-meta", classes="read-meta")
+            )
         if doc.description_md:
             widgets.append(
                 Markdown(
                     wrap_markdown(doc.description_md, self._md_width()),
                     id="detail-desc",
+                    classes="read-main",
                 )
             )
         if doc.answers:
             # 正文与楼层之间的边界：分隔线 + 区块标题
-            widgets.extend([divider(), Static(f"[b]{self._unit}[/b]", classes="answers-header")])
+            widgets.extend(
+                [divider(), Static(f"[b]{self._unit}[/b]", classes="answers-header")]
+            )
             for ans in doc.answers:
                 widgets.extend(self._answer_widgets(ans))
         if self.loader.done and not doc.answers:
@@ -158,9 +158,9 @@ class DetailScreen(ReadingScreen):
             # Footer 的职责，尾行复读键位会被短帖读者当成正文的一部分；
             # 置 exhausted 让 Ctrl+N 走「没有更多」反馈而不是空跑 load_more
             self._exhausted = True
-            widgets.append(dim_line("（完）", id="no-more"))
+            widgets.append(dim_line("（完）", classes="tail-line tail-eof"))
         elif self._exhausted:
-            widgets.append(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
+            widgets.append(dim_line(f"（没有更多{self._unit}了）", classes="tail-line tail-eof"))
         else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
@@ -173,7 +173,7 @@ class DetailScreen(ReadingScreen):
         segs = [f"Ctrl+N 加载更多{self._unit}"]
         if self.source.supports_comments:
             segs.append(f"Enter 看{self._unit}的{self.source.comment_unit_label}")
-        return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", id="more-hint")
+        return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", classes="tail-line tail-hint")
 
     def _answer_widgets(self, ans: Answer) -> list[Widget]:
         """一个楼层的完整部件（分隔线 + 头部 + 正文）；楼层序号在此推进。
@@ -181,19 +181,28 @@ class DetailScreen(ReadingScreen):
         头部 name 记楼层号：Enter 按可视位置定位楼层时用它取回。
         """
         self._answer_count += 1
-        parts = [f"[b]{self._unit} {self._answer_count}[/b]", f"[b]{escape(ans.author)}[/b]"]
-        if ans.votes:
-            parts.append(f"[dim]{escape(ans.votes)}[/dim]")
-        if ans.comment_count:
-            parts.append(f"[dim]{escape(ans.comment_count)}[/dim]")
-        if ans.time:
-            parts.append(f"[dim]{escape(ans.time)}[/dim]")
-        head = Static("  ".join(parts), classes="answer-head", name=str(self._answer_count - 1))
+        head = floor_head(
+            f"{self._unit} {self._answer_count}",
+            ans.author,
+            (ans.votes, ans.comment_count, ans.time),
+            classes="floor-head",
+            name=str(self._answer_count - 1),
+        )
         return [
             divider(),
             head,
-            Markdown(wrap_markdown(ans.content_md, self._md_width()), classes="answer-body"),
+            Markdown(wrap_markdown(ans.content_md, self._md_width()), classes="floor-body"),
         ]
+
+    async def _mount_batch(self, new: list[Answer]) -> None:
+        widgets: list[Widget] = []
+        for ans in new:
+            widgets.extend(self._answer_widgets(ans))
+        await self._body_scroll().mount(*widgets)  # 单次挂载 = 单次布局
+        # 不主动滚动：新楼层就追加在旧内容正下方，视口停在原阅读断点不动，
+        # 「衔接」靠内容连续而非视口跳转。滚动到底（scroll_end）或顶对齐
+        # （scroll_to_widget top=True）都会把刚读到的楼层顶出视野、整屏跳动，
+        # 逼用户再滚回去找位置——踩过的坑，别再引入。
 
     # ---- Enter -> 回答详情屏（多层递进的第三层入口）----
 
@@ -218,7 +227,7 @@ class DetailScreen(ReadingScreen):
         新手按键就有反馈，不用先滚）。
         """
         top = self._body_scroll().region.y
-        for head in self.query(".answer-head"):
+        for head in self.query(".floor-head"):
             if head.region.bottom > top:
                 return int(head.name)
         return 0
@@ -227,26 +236,7 @@ class DetailScreen(ReadingScreen):
         """进第 index 条回答（问题屏保持在栈底，Esc 回来阅读位置不变）。"""
         self.app.push_screen(AnswerScreen(self.source, self.item, self.loader, index))
 
-    # ---- 键位 ----
-
-    def action_open_browser(self) -> None:
-        webbrowser.open(self.item.url)
-
-    def action_more(self) -> None:
-        if self.loader is None:
-            # 首载失败（或还在途）时 Ctrl+N = 原地重试：比起 Esc 退出再进，动线不断
-            self.run_worker(self._retry(), group="load", exclusive=True)
-            return
-        if self._exhausted:
-            feedback.info(self.app, f"没有更多{self._unit}了")  # 常驻行之外再给瞬时反馈：按键不无声
-            return
-        self.run_worker(self._load_more(), group="more", exclusive=True)
-
-    async def _retry(self) -> None:
-        """首载失败后的原地重试：摘掉失败行，重走一遍 _load。"""
-        for w in self.query("#detail-loading"):
-            await w.remove()
-        await self._load()
+    # ---- ←/→ 换篇（机械件在 PagedReadingScreen._retarget）----
 
     async def action_next_article(self) -> None:
         await self._retarget(1)
@@ -254,70 +244,14 @@ class DetailScreen(ReadingScreen):
     async def action_prev_article(self) -> None:
         await self._retarget(-1)
 
-    async def _retarget(self, delta: int) -> None:
-        """[/] 换篇：向列表要相邻的可读条目，原地重载（不换屏、不闪黑）。
+    def _next_target(self, delta: int) -> FeedItem | None:
+        return self._step_item(delta)
 
-        列表选中已由 step_readable_item 同步推进，Esc 回列表时正好停在读过的
-        那一篇；沿方向没有可读条目时不动任何状态，只给反馈。
-        """
-        item = self._step_item(delta)
-        if item is None:
-            feedback.info(self.app, "后面没有可读的了" if delta > 0 else "前面没有可读的了")
-            return
-        # 首载与增量都在途时一起丢弃：旧 loader 的迟到结果不能混进新文档
-        self.workers.cancel_group(self, "load")
-        self.workers.cancel_group(self, "more")
-        loader, self.loader = self.loader, None
-        if loader is not None:
-            await loader.close()
-        self.item = item
-        self._exhausted = False
-        self._reset_render_state()
-        self._rendered = False
-        self._remove_hint()
-        body = self._body_scroll()
-        await body.remove_children()
+    def _no_target_text(self, delta: int) -> str:
+        return "后面没有可读的了" if delta > 0 else "前面没有可读的了"
+
+    async def _adopt_target(self, target: FeedItem) -> None:
+        """收下相邻条目原地重载；列表选中已由 step_readable_item 同步推进，
+        Esc 回列表时正好停在读过的那一篇。"""
+        self.item = target
         self.run_worker(self._load(), group="load", exclusive=True)
-
-    async def _load_more(self) -> None:
-        body = self._body_scroll()
-        loader = self.loader
-        if loader is None:
-            return
-        self._remove_hint()
-        loading = Label("[dim]加载更多…[/dim]", id="more-loading")
-        await body.mount(loading)
-        try:
-            new = await loader.load_more()
-        except Exception as exc:
-            # 不再静默：失败要告诉用户（否则按 Ctrl+N 无反馈，误以为按键失灵）
-            feedback.fail(self.app, self.source, exc, action="加载更多失败")
-            new = []
-        if loader is not self.loader:
-            return  # 期间换篇/关闭：旧 loader 的迟到结果直接丢弃
-        if loading.parent is not None:  # 期间可能整屏重排过，loading 已被清掉
-            loading.remove()
-        if not new:
-            self._exhausted = loader.done
-            if self._exhausted:
-                self._remove_hint()
-                await body.mount(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
-            else:
-                # 拉空但没到头（网慢/懒加载没触发）：不判死，可以再按 Ctrl+N
-                await self._mount_hint()
-            return
-        widgets: list[Widget] = []
-        for ans in new:
-            widgets.extend(self._answer_widgets(ans))
-        await body.mount(*widgets)  # 单次挂载 = 单次布局
-        # 最后一批可能正好取尽：done 当场生效，不再让用户多按一次 Ctrl+N
-        self._exhausted = loader.done
-        if self._exhausted:
-            self._remove_hint()
-            await body.mount(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
-        else:
-            await self._mount_hint()
-        # 不主动滚动：新楼层就追加在旧内容正下方，视口停在原阅读断点不动，
-        # 「衔接」靠内容连续而非视口跳转。滚动到底（scroll_end）或顶对齐
-        # （scroll_to_widget top=True）都会把刚读到的楼层顶出视野、整屏跳动，
-        # 逼用户再滚回去找位置——踩过的坑，别再引入。

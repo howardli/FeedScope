@@ -119,7 +119,7 @@ async def _run_input_dialog_style_flow() -> None:
         assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
         await app.push_screen(InputScreen("样式检查"))
         await pilot.pause()
-        card = app.screen.query_one(".dialog-card")
+        card = app.screen.query_one(".modal-card")
         assert card.styles.padding.top == 1, "输入框卡片丢了 DialogScreen 的内边距"
         assert card.styles.background.a > 0, "输入框卡片丢了 DialogScreen 的背景"
 
@@ -140,7 +140,6 @@ def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
     from test_reddit_source import _mock
 
-    from feedscope.sources import reddit as reddit_mod
 
     async def fake_cookies(url: str) -> dict[str, str]:
         import base64
@@ -156,7 +155,7 @@ def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
             return None, '<div subreddit-name="rust"></div>'
         return None, "<html>壳页</html>"
 
-    monkeypatch.setattr(reddit_mod, "profile_cookies", fake_cookies)
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", fake_cookies)
     _mock(monkeypatch, route)  # 通道页签替身接管取数（get_session/单例/版本全复位）
     return cfg
 

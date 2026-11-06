@@ -57,24 +57,21 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     prompt_text: ClassVar[str] = ""
     confirm_label: ClassVar[str] = "确认"
 
+    # Esc 取消继承自 ArrowModalScreen（action_cancel → dismiss(None)）
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape", "cancel", "取消", show=False),
         # 二级入口走 →（与主屏 → 同构）：列表上按 = 高亮源的订阅管理，
         # 按钮行上按 = 右移焦点（action_nav_right 分派）。Enter 不能用：
         # SelectionList 把它截停转成勾选切换（widget 内 event.stop()），
         # 屏级绑定与事件路径都压不过——留给勾选
     ]
 
+    # 卡片三件套在 ArrowModalScreen.DEFAULT_CSS，这里只写差异（宽度约束与
+    # 勾选列表的尺寸）
     CSS = """
-    #setup-dialog {
-        width: auto; max-width: 64;
-        background: $surface; border: ascii $primary; padding: 1 2;
-    }
-    #setup-title { text-style: bold; padding-bottom: 1; }
+    #setup-dialog { max-width: 64; }
+    #setup-title { text-style: bold; padding-bottom:  1; }
     #setup-prompt { padding-bottom: 1; }
     #setup-list { width: auto; min-width: 44; height: auto; max-height: 14; margin-bottom: 1; }
-    #setup-actions { height: auto; }
-    #setup-actions Button { margin-right: 1; }
     """
 
     def __init__(
@@ -93,7 +90,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         self._order: list[str] = list(initial_ids)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="setup-dialog"):
+        with Vertical(id="setup-dialog", classes="modal-card"):
             yield Label(self.title_text, id="setup-title")
             yield Label(self.prompt_text, id="setup-prompt")
             yield FocusNavSelectionList(
@@ -143,7 +140,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         if event.button.id == "setup-confirm":
             self.dismiss(self.selected_ids)
         else:
-            self.dismiss(None)
+            self.dismiss(None)  # 只有确认/取消两键，if/else 即分派表
 
     def action_cancel(self) -> None:
         self.dismiss(None)

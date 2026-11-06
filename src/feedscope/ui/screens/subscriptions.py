@@ -56,7 +56,7 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
         self._changed = False
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="subs-dialog"):
+        with Vertical(id="subs-dialog", classes="modal-card"):
             yield Label(f"{self._store.label} 订阅管理", id="subs-title")
             yield FocusNavListView(id="subs-list")
             yield Label("", id="subs-empty")
