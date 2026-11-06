@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
-from feedscope.core.registry import _REGISTRY, install_sources
+from feedscope.core.registry import install_sources, source_classes
 from feedscope.core.source import (
     CommentLoader,
     DetailLoader,
@@ -816,7 +816,7 @@ def main() -> None:
     cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
     os.environ["FEEDSCOPE_NO_PREWARM"] = "1"
-    saved = list(_REGISTRY.values())
+    saved = source_classes()
     install_sources([DemoZhihu, DemoX, DemoReddit, DemoHn, DemoV2ex])
     try:
         asyncio.run(_shots())
