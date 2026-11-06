@@ -82,11 +82,11 @@ def _run_rss(args: argparse.Namespace) -> int:
         return 0
 
     if args.rss_command == "remove":
-        feed = subs.remove_feed(args.key)
-        if feed is None:
+        removed = subs.remove_feed(args.key)
+        if removed is None:
             print(f"没有 key 为 {args.key!r} 的订阅（feedscope rss list 查看）")
             return 1
-        print(f"已删除 {feed.key}：{feed.label}（重启 TUI 生效）")
+        print(f"已删除 {removed.key}：{removed.label}（重启 TUI 生效）")
         return 0
 
     if args.rss_command == "import":

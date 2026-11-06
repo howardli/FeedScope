@@ -23,7 +23,7 @@ from textual.widgets import Button, Label, ListItem, ListView, Static
 
 from feedscope.core.config import Subscription  # 仅类型注解用（列表行的 key/label/url 三段）
 from feedscope.subscriptions import SubscriptionError, SubsStore
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
 
@@ -31,7 +31,7 @@ from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
 class SubscriptionsScreen(ArrowModalScreen[bool]):
     """订阅管理：dismiss(True) = 本次有过改动（调用方据此同步勾选与刷新）。"""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         Binding("escape", "back", "返回"),
         Binding("insert", "add", "添加"),
         Binding("delete", "remove", "删除"),

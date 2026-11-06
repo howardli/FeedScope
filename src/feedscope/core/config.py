@@ -289,12 +289,11 @@ def update_feeds(
     # 坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，
     # 也不把畸形值原样写回去——读侧本来就是当默认全启用；空列表是
     # 合法状态（零启用），保留
+    enabled: list[str] | None = None
     if isinstance(raw_enabled, list):
-        enabled = list(dict.fromkeys(x for x in raw_enabled if isinstance(x, str)))
-        if raw_enabled and not enabled:
-            enabled = None
-    else:
-        enabled = None
+        kept = list(dict.fromkeys(x for x in raw_enabled if isinstance(x, str)))
+        if kept or not raw_enabled:
+            enabled = kept  # 空列表是合法状态（零启用）；全非 str 才当未配置
     if enabled is not None:
         if feeds and source_id not in enabled:
             enabled.append(source_id)

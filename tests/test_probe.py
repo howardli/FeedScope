@@ -25,11 +25,12 @@ class _OkDetail(DetailLoader):
     def __init__(self, empty: bool = False) -> None:
         self.doc = DetailDoc(title="" if empty else "帖子标题", description_md="" if empty else "正文")
 
+    @property
+    def done(self) -> bool:
+        return True  # 一次性详情（契约成员，测试替身同样要给）
+
     async def load_more(self) -> list:
         return []
-
-    async def close(self) -> None:
-        pass
 
 
 class _OkSource(Source):

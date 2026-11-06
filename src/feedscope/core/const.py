@@ -32,8 +32,10 @@ def find_chrome() -> str:
 
 def safe_int(value: object) -> int:
     """野数据防御的整数化：None/空/非数字/无穷大回 0（解析层对 API 野值的统一口径）。"""
+    if not isinstance(value, (int, float, str)):
+        return 0  # 非数字类型（None/bool 之外的对象）原也走 except -> 0
     try:
-        return int(value or 0)  # type: ignore[arg-type]
+        return int(value or 0)
     except (TypeError, ValueError, OverflowError):
         return 0
 

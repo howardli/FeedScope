@@ -14,8 +14,6 @@ items/:id 一次给全树，楼层与评论翻页都是内存切片——详情�
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
@@ -43,10 +41,10 @@ class HnSource(Source):
     label = "HN"
     supports_detail = True
     supports_comments = True  # 详情屏 Enter 进楼层的回复树（树已全在内存）
-    feeds: ClassVar[list[str]] = ["front", "new", "ask", "show"]
+    feeds: list[str] = ["front", "new", "ask", "show"]
     # ask/show = Ask HN（向社区提问）/ Show HN（展示自己的项目），HN 官方两大
     # 经典分类；标签与其余源同款两字中文（列表里帖子标题仍带 Ask/Show HN 前缀）
-    feed_labels: ClassVar[dict[str, str]] = {
+    feed_labels: dict[str, str] = {
         "front": "首页", "new": "最新", "ask": "提问", "show": "展示",
     }
     detail_kinds = frozenset({"story", "ask", "show"})  # 全部条目 Enter 都进终端详情

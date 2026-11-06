@@ -36,7 +36,7 @@ from textual.widgets import Label, Static
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
 
 
@@ -97,7 +97,7 @@ class ReadingScreen(Screen[None]):
     子类自管 _rendered 的置位时机（首批渲染完成才吃 resize 重排）。
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "back", "返回")]
+    BINDINGS: ClassVar[Bindings] = [Binding("escape", "back", "返回")]
 
     # 家族共享样式挂 DEFAULT_CSS（沿 MRO 与子类 CSS 合并）：子类 CSS 只写
     # 增量，原先五对逐字相同的规则（#detail-title ↔ #answer-title 等）归位
@@ -248,7 +248,6 @@ class PagedReadingScreen(ReadingScreen):
     """
 
     _worker_group: ClassVar[str] = "page"
-    _unit: str  # 翻页对象的单位词（楼层/评论词，源词汇表）
     source: Source  # 源实例（失败文案与能力判定）
     item: FeedItem  # 正在读的条目（Ctrl+O 与屏间传递）
 
@@ -344,6 +343,11 @@ class PagedReadingScreen(ReadingScreen):
     @abstractmethod
     async def _adopt_target(self, target: Any) -> None:
         """收下新目标：更新屏内字段并重走首载（网络请求 / 同步渲染差异在子类）。"""
+
+    @property
+    @abstractmethod
+    def _unit(self) -> str:
+        """翻页对象的单位词（楼层/评论词，读源词汇表）。"""
 
     # ---- 共享小件 ----
 

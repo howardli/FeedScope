@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
@@ -43,8 +41,8 @@ class V2exSource(Source):
     label = "V2EX"
     supports_detail = True
     supports_comments = False  # 回复平铺无嵌套（楼中楼只是 @ 文字），详情到楼层为止
-    feeds: ClassVar[list[str]] = ["hot", "new"]
-    feed_labels: ClassVar[dict[str, str]] = {"hot": "热门", "new": "最新"}
+    feeds: list[str] = ["hot", "new"]
+    feed_labels: dict[str, str] = {"hot": "热门", "new": "最新"}
     detail_kinds = frozenset({"topic"})  # 全部条目 Enter 都进终端详情
     detail_unit_label = "回复"  # 楼层单位词：帖内回复（知乎「回答」、HN「评论」）
 

@@ -39,16 +39,20 @@ class TelegramFeedLoader(FeedLoader):
         self.items: list[FeedItem] = []
         self._seen: set[str] = set()
         self._before: int | None = None
-        self.done = False
+        self._done = False
+
+    @property
+    def done(self) -> bool:
+        return self._done
 
     async def load_more(self) -> list[FeedItem]:
-        if self.done:
+        if self._done:
             return []
         html = await fetch_channel_html(self._channel, self._before)
         items = parse_channel_html(html, channel=self._channel, label=self._label)
         new = dedup_append(self.items, self._seen, items[::-1])
         if not new:
-            self.done = True  # 翻到头（或该 before 段空页）：真到头不再打扰
+            self._done = True  # 翻到头（或该 before 段空页）：真到头不再打扰
             return []
         self._before = min(int(it.id.rsplit("/", 1)[-1]) for it in new)
         return new

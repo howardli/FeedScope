@@ -21,6 +21,8 @@ from typing import ClassVar, TypeVar
 
 from textual.binding import Binding
 from textual.screen import ModalScreen
+
+from feedscope.ui import Bindings
 from textual.widgets import ListView, SelectionList
 
 T = TypeVar("T")
@@ -36,7 +38,7 @@ class ArrowModalScreen(ModalScreen[T]):
     action_cancel 的取消值（False / None / 改动标记）由子类声明。
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         Binding("left", "nav_left", show=False),
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
@@ -89,7 +91,7 @@ class FocusNavSelectionList(SelectionList):
     # ↓ 绑定两族列表各声明一份：裸 mixin 的 BINDINGS 不进 Textual 的合并链
     # （同 ArrowModalScreen docstring 的说明），共享基类省不掉这两行——
     # 到边条件与出口统一收在 _exit_at_end，那才是可共享的部分
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         Binding("down", "cursor_down_or_exit", show=False),
     ]
 
@@ -103,7 +105,7 @@ class FocusNavSelectionList(SelectionList):
 class FocusNavListView(ListView):
     """订阅列表：末行再 ↓ 移交按钮行（订阅列表的 Enter 是改名，不受影响）。"""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         Binding("down", "cursor_down_or_exit", show=False),
     ]
 

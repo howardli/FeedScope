@@ -20,7 +20,7 @@ from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, Source
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.reading import (
     PagedReadingScreen,
@@ -35,7 +35,7 @@ from feedscope.ui.wrap import wrap_markdown
 class DetailScreen(PagedReadingScreen):
     """全屏阅读一个问题：Esc 返回（列表位置不变），Ctrl+N 加载更多回答，←/→ 换篇。"""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明；Esc 返回继承自 ReadingScreen
         Binding("ctrl+n", "more", "更多"),
@@ -129,8 +129,11 @@ class DetailScreen(PagedReadingScreen):
 
     async def _render_doc(self, doc: DetailDoc | None = None) -> None:
         """把整个文档渲染上屏（单次 mount = 单次布局）；重排（resize）时也走这里。"""
+        loader = self.loader
+        if loader is None:
+            return  # 未加载完成（换篇/关闭的竞态窗口）：无内容可渲染
         if doc is None:
-            doc = self.loader.doc  # 重排路径：doc 即已加载的全部内容
+            doc = loader.doc  # 重排路径：doc 即已加载的全部内容
         widgets: list[Widget] = [Static(escape(doc.title), id="detail-title", classes="read-title")]
         if doc.meta or doc.time:
             meta = " · ".join(x for x in (doc.meta, doc.time) if x)  # 正文发布时间并入元信息行
@@ -152,7 +155,7 @@ class DetailScreen(PagedReadingScreen):
             )
             for ans in doc.answers:
                 widgets.extend(self._answer_widgets(ans))
-        if self.loader.done and not doc.answers:
+        if loader.done and not doc.answers:
             # 天生无楼层的完整文档（RSS 全文 / Telegram 帖）：没有「更多」
             # 也没有评论层，末尾只放纯 EOF 标记「（完）」——键位预告是常驻
             # Footer 的职责，尾行复读键位会被短帖读者当成正文的一部分；
@@ -229,12 +232,15 @@ class DetailScreen(PagedReadingScreen):
         top = self._body_scroll().region.y
         for head in self.query(".floor-head"):
             if head.region.bottom > top:
-                return int(head.name)
+                return int(head.name or 0)
         return 0
 
     def open_answer(self, index: int) -> None:
         """进第 index 条回答（问题屏保持在栈底，Esc 回来阅读位置不变）。"""
-        self.app.push_screen(AnswerScreen(self.source, self.item, self.loader, index))
+        loader = self.loader
+        if loader is None:
+            return  # 竞态窗口（换篇在途）：action 已拦，这里兜底不炸
+        self.app.push_screen(AnswerScreen(self.source, self.item, loader, index))
 
     # ---- ←/→ 换篇（机械件在 PagedReadingScreen._retarget）----
 

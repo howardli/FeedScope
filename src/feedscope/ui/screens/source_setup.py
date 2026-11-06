@@ -18,7 +18,6 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
@@ -26,7 +25,7 @@ from textual.widgets.selection_list import Selection
 from feedscope.core.registry import get_class
 from feedscope.core.source import Source
 from feedscope.subscriptions import store_for
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavSelectionList
 from feedscope.ui.screens.subscriptions import SubscriptionsScreen
 
@@ -58,7 +57,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     confirm_label: ClassVar[str] = "确认"
 
     # Esc 取消继承自 ArrowModalScreen（action_cancel → dismiss(None)）
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         # 二级入口走 →（与主屏 → 同构）：列表上按 = 高亮源的订阅管理，
         # 按钮行上按 = 右移焦点（action_nav_right 分派）。Enter 不能用：
         # SelectionList 把它截停转成勾选切换（widget 内 event.stop()），

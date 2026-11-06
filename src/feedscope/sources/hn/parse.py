@@ -19,7 +19,13 @@ from feedscope.core.display import fmt_count
 from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, build_floors, count_kept
+from feedscope.core.tree import (
+    DELETED_AUTHOR,
+    DELETED_BODY,
+    TreeAccessors,
+    build_floors,
+    count_kept,
+)
 
 SOURCE_ID = "hn"
 
@@ -76,8 +82,7 @@ def _answer_of(node: dict, n: int) -> Answer:
 
 
 # 差异注入：HN 的树是 Algolia dict（结构见各 accessor；拍平骨架在 core.tree）
-_ACC = {"keep": _keep, "kids_of": _kids, "author_of": _author, "comment_of": _comment_of}
-_COUNT = {"keep": _keep, "kids_of": _kids}  # count_kept 只要这两个
+_ACC = TreeAccessors(keep=_keep, kids_of=_kids, author_of=_author, comment_of=_comment_of)
 
 
 def _meta(points: int, comments: int, author: str) -> str:
@@ -136,10 +141,10 @@ def parse_story(root: dict) -> StoryDetail:
     return StoryDetail(
         title=str(root.get("title") or "").strip(),
         meta=_meta(
-            safe_int(root.get("points")), count_kept(root, **_COUNT),
+            safe_int(root.get("points")), count_kept(root, _ACC),
             str(root.get("author") or ""),
         ),
         time=_time(root),
         description_md="\n\n".join(blocks),
-        floors=build_floors(_kids(root), **_ACC, answer_of=_answer_of),
+        floors=build_floors(_kids(root), _ACC, answer_of=_answer_of),
     )

@@ -2,12 +2,14 @@
 
 分工：notify 是瞬时反馈（数秒后消失）；屏内常驻状态（列表空态、详情失败
 文案）由各屏自己挂，但失败文案复用本模块的 failure_text，保证同义同形。
+收件人 App 或 Screen 皆可（Textual 两者都有 notify，屏内调用直接传 self）。
 错误分级直接用 Textual notify 自带的 severity（info/warning/error），不另造枚举。
 """
 
 from __future__ import annotations
 
 from textual.app import App
+from textual.screen import Screen
 
 from feedscope.core.source import Source, SourceError
 
@@ -26,17 +28,19 @@ def failure_text(source: Source | None, exc: Exception, action: str = "请求失
     return f"{source.label} {action}：{exc}"
 
 
-def fail(app: App, source: Source | None, exc: Exception, action: str = "请求失败") -> None:
+def fail(
+    app: App | Screen, source: Source | None, exc: Exception, action: str = "请求失败"
+) -> None:
     """失败通知（error 级）。标题跟随动作：登出/加载更多失败别都写成「抓取失败」。"""
     title = "抓取失败" if action == "请求失败" else action
     app.notify(failure_text(source, exc, action), title=title, severity="error")
 
 
-def warn(app: App, msg: str, title: str) -> None:
+def warn(app: App | Screen, msg: str, title: str) -> None:
     """警告通知（warning 级），如需要登录。"""
     app.notify(msg, title=title, severity="warning")
 
 
-def info(app: App, msg: str) -> None:
+def info(app: App | Screen, msg: str) -> None:
     """普通通知（info 级），如「没有更多了」。"""
     app.notify(msg)

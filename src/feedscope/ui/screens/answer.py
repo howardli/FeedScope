@@ -21,7 +21,7 @@ from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Comment, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.reading import (
     PagedReadingScreen,
     READING_CSS,
@@ -39,7 +39,7 @@ class AnswerScreen(PagedReadingScreen):
     ←/→ 在已加载的回答间换（要更多回答回问题屏按 Ctrl+N）。
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明。标签是占位：__init__ 按源词汇表换成
         # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）；
@@ -72,7 +72,6 @@ class AnswerScreen(PagedReadingScreen):
         # HN「评论」）与评论（Ctrl+N 翻的对象，知乎「评论」、HN「回复」）；键位
         # 文案随词换（类级 BINDINGS 是占位，知乎渲染与内置文案逐字相同）
         self._floor_unit = source.detail_unit_label
-        self._unit = source.comment_unit_label
         self._relabel_bindings(
             {
                 "ctrl+n": f"更多{self._unit}",
@@ -86,6 +85,11 @@ class AnswerScreen(PagedReadingScreen):
     @property
     def _answer(self):
         return self.qloader.doc.answers[self.index]
+
+    @property
+    def _unit(self) -> str:
+        """Ctrl+N 翻页对象的单位词（评论词，源词汇表直读，与问题屏对称）。"""
+        return self.source.comment_unit_label
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -236,14 +240,16 @@ class AnswerScreen(PagedReadingScreen):
         await self._body_scroll().mount(*widgets)
         # 与问题屏同一取舍：新楼层接在底部，视口停在原阅读断点不跳
 
-    async def _swap_status(self, sel: str, text: str) -> None:
+    def _swap_status(self, sel: str, text: str) -> None:
         for w in self.query(sel):
-            w.update(text)
+            if isinstance(w, Static):
+                w.update(text)
 
     async def _retry(self) -> None:
         """评论首载失败后的原地重试（与问题屏首载重试同动线）。"""
         for w in self.query("#cm-loading"):
-            await w.update(f"{self._unit}加载中…")
+            if isinstance(w, Static):
+                w.update(f"{self._unit}加载中…")
         await self._load_comments()
 
     # ---- ←/→ 换楼层（机械件在 PagedReadingScreen._retarget）----

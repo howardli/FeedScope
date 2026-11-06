@@ -41,7 +41,8 @@ class AccountFlow:
             self.app.run_worker(self.login(source), group="login", exclusive=True)
         else:
             self.refused.add(source.source_id)
-            self.app.main.show_empty(hint)
+            if (main := self.app.main) is not None:
+                main.show_empty(hint)
             feedback.info(self.app, "已取消，本次运行不再自动询问；Ctrl+U 可登录")
 
     async def open(self, source: Source) -> None:
@@ -83,7 +84,8 @@ class AccountFlow:
         """
         self.in_progress = True
         try:
-            await self.app.main.release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
+            if (main := self.app.main) is not None:
+                await main.release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
             await login.yield_profile()  # 关无头会话让出 profile 锁（语义在 login 侧）
             try:
                 ok = await login.login(source.source_id, quiet=True)

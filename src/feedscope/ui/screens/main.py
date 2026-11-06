@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 import webbrowser
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -20,7 +20,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key, Resize
 from textual.message import Message
-from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, ListView, Static
@@ -28,7 +27,7 @@ from textual.widgets import Footer, Header, Label, ListView, Static
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
-from feedscope.ui import feedback
+from feedscope.ui import Bindings, feedback
 from feedscope.ui.layout import (
     META_COL_SPARE,
     RESIZE_DEBOUNCE,
@@ -37,9 +36,12 @@ from feedscope.ui.layout import (
 )
 from feedscope.ui.list_render import build_item
 from feedscope.ui.screens.detail import DetailScreen
-from feedscope.ui.screens.main_setup import MainSetupMixin
+from feedscope.ui.screens.main_setup import MainSetupScreen
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
+
+if TYPE_CHECKING:
+    from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
 
 
 class Pane(StrEnum):
@@ -106,7 +108,7 @@ class FeedListView(ListView):
     action_nav_*（列表是主屏唯一可聚焦控件，主屏常态下必经此路）。
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         # 切站进页脚（与 ←/→ 切流同款）：Tab 是切站唯一键位，页脚要给出来路
         Binding("tab", "screen.next_source", "切站"),
         Binding("shift+tab", "screen.prev_source", "切站"),
@@ -150,12 +152,22 @@ class FeedListView(ListView):
             self._resize_timer = None
 
 
-class MainScreen(MainSetupMixin, Screen[None]):
+class MainScreen(MainSetupScreen):
     """站点 tab 条 + 信息流边栏 + 条目列表；全部主屏键位与状态。
 
-    源启用编排（首启引导 / F2 管理 / 启用集生效）在 MainSetupMixin
+    源启用编排（首启引导 / F2 管理 / 启用集生效）在父类 MainSetupScreen
     （screens/main_setup.py），本类只留渲染、导航与取数。
     """
+
+    @property
+    def _tui(self) -> FeedScopeApp:
+        """self.app 的收窄视图：本应用的 App 恒为 FeedScopeApp。
+
+        账号动线（accounts）等自定义成员经它获得静态类型；不直接覆写
+        Screen.app（MessagePump.app 是可写 property，覆写签名过不了检）。
+        """
+        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
+        return cast("FeedScopeApp", self.app)
 
     # 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
     # 中文输入法只拦字母/数字进候选框）。屏级绑定只在本屏前台时命中——
@@ -164,7 +176,7 @@ class MainScreen(MainSetupMixin, Screen[None]):
     # （顶部区域在所有内容之上；源栏 ↓ 下探边栏，与边栏首流 ↑ 互逆）；
     # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
     # 列表 → 抵屏幕右缘无事。详情/评论屏的 ←/→ 换篇在各屏自己的绑定。
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[Bindings] = [
         Binding("f5", "refresh", "刷新"),
         Binding("ctrl+o", "open_browser", "浏览器"),
         Binding("f2", "manage_sources", "源管理"),
@@ -303,7 +315,7 @@ class MainScreen(MainSetupMixin, Screen[None]):
         self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
 
     def action_refresh(self) -> None:
-        if self.app.accounts.in_progress:
+        if self._tui.accounts.in_progress:
             feedback.info(self, "登录进行中，稍候刷新")  # 有头登录独占 profile，此时别碰浏览器
             return
         # 详情屏在前台时不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
@@ -343,14 +355,14 @@ class MainScreen(MainSetupMixin, Screen[None]):
         except LoginRequired as exc:
             self.app.sub_title = "未登录"
             hint = f"{exc} · Ctrl+U 登录"
-            if source.source_id in self.app.accounts.refused:
+            if source.source_id in self._tui.accounts.refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
                 self.show_empty(hint)
                 return
             self.show_empty(str(exc))
             # 撞墙即给入口：弹登录框与后续动线在 AccountFlow（_refresh 本就
             # 在 worker 里，其 wait_for_dismiss 合法）
-            await self.app.accounts.on_login_wall(source, hint)
+            await self._tui.accounts.on_login_wall(source, hint)
             return
         except Exception as exc:
             self.app.sub_title = "加载失败"
@@ -639,7 +651,7 @@ class MainScreen(MainSetupMixin, Screen[None]):
             feedback.info(self, "没有启用的源 · F2 管理")
             return
         self.app.run_worker(
-            self.app.accounts.open(self.current_source), group="account", exclusive=True
+            self._tui.accounts.open(self.current_source), group="account", exclusive=True
         )
 
     # ---- Enter：进详情或跳浏览器 ----

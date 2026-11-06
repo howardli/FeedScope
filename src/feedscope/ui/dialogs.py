@@ -8,15 +8,20 @@ action_cancel，各弹层永远同形），本模块只剩轻弹层自己的增�
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Label
 
 from feedscope.ui.focus_nav import ArrowModalScreen
 
+_DialogT = TypeVar("_DialogT")
 
-class DialogScreen(ArrowModalScreen[object]):
-    """居中卡片弹层底座：卡片宽度约束 + 提示行样式；compose 与取消值留给子类。"""
+
+class DialogScreen(ArrowModalScreen[_DialogT]):
+    """居中卡片弹层底座（泛型 = dismiss 值类型）：卡片宽度约束 + 提示行样式；
+    compose 与取消值留给子类（Confirm -> bool，Input -> str | None）。"""
 
     DEFAULT_CSS = """
     .dialog-card { max-width: 64; }
@@ -27,7 +32,7 @@ class DialogScreen(ArrowModalScreen[object]):
         raise NotImplementedError  # 子类声明自己的取消值（False / None）
 
 
-class ConfirmScreen(DialogScreen):
+class ConfirmScreen(DialogScreen[bool]):
     """轻确认弹框：True=确认，Esc/取消=False。
 
     PROMPT_ID / OK_ID 是语义化 id 的挂点（账号框覆写成 account-*，
@@ -71,7 +76,7 @@ class AccountScreen(ConfirmScreen):
         super().__init__(prompt, confirm_label=action)
 
 
-class InputScreen(DialogScreen):
+class InputScreen(DialogScreen[str | None]):
     """单行输入弹层：Enter 确定 / Esc 取消，返回文本（空 = None）。
 
     全应用唯一的文本输入（粘贴走终端原生 bracketed paste，从 Finder 拖

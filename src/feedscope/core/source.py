@@ -32,7 +32,11 @@ class FeedLoader(ABC):
     """信息流加载器：可能持有浏览器页签等资源，切换/退出前必须 close()。"""
 
     items: list[FeedItem]
-    done: bool = False  # 真的没有更多了（拉空不等于 done，可能只是网慢）
+
+    @property
+    @abstractmethod
+    def done(self) -> bool:
+        """真的没有更多了（只读派生态：拉空不等于 done，可能只是网慢）。"""
 
     @abstractmethod
     async def load_more(self) -> list[FeedItem]:
@@ -50,7 +54,10 @@ class StaticFeedLoader(FeedLoader):
 
     def __init__(self, items: list[FeedItem]) -> None:
         self.items = items
-        self.done = True
+
+    @property
+    def done(self) -> bool:
+        return True
 
     async def load_more(self) -> list[FeedItem]:
         return []
@@ -156,7 +163,11 @@ class DetailLoader(ABC):
     """
 
     doc: DetailDoc
-    done: bool = False  # 真的没有更多内容了（拉空不等于 done，可能只是网慢）
+
+    @property
+    @abstractmethod
+    def done(self) -> bool:
+        """真的没有更多内容了（只读派生态：拉空不等于 done，可能只是网慢）。"""
 
     @abstractmethod
     async def load_more(self) -> list[Answer]:
@@ -185,7 +196,11 @@ class CommentLoader(ABC):
     """
 
     comments: list[Comment]
-    done: bool = False
+
+    @property
+    @abstractmethod
+    def done(self) -> bool:
+        """真的到头了（只读派生态：拉空不等于 done，可能只是网慢）。"""
 
     @abstractmethod
     async def load_more(self) -> list[Comment]:
@@ -204,7 +219,10 @@ class StaticDetailLoader(DetailLoader):
 
     def __init__(self, doc: DetailDoc) -> None:
         self.doc = doc
-        self.done = True
+
+    @property
+    def done(self) -> bool:
+        return True
 
     async def load_more(self) -> list[Answer]:
         return []
@@ -348,8 +366,10 @@ class Source(ABC):
 
     source_id: ClassVar[str]  # 注册键，如 "zhihu"
     label: ClassVar[str]  # 展示名，如 "知乎"
-    feeds: ClassVar[list[str]] = []  # 命名信息流；空 = 无可选流（不进 Tab）
-    feed_labels: ClassVar[dict[str, str]] = {}  # 信息流显示名，缺省用 name 本身
+    # feeds/feed_labels 两形同用（故不作 ClassVar）：类体写内置默认流，
+    # __init__ 按配置合成实例视图（hide 剔减 / 订阅拼加），分派读实例
+    feeds: list[str] = []  # 命名信息流；空 = 无可选流（不进 Tab）
+    feed_labels: dict[str, str] = {}  # 信息流显示名，缺省用 name 本身
     supports_detail: ClassVar[bool] = False  # 决定 Enter 是否可能进详情屏
     supports_comments: ClassVar[bool] = False  # 决定详情屏 Enter 是否可能进评论层
     subscribable: ClassVar[bool] = False  # 信息流来自用户订阅：F2 里 → 进订阅管理屏
@@ -361,7 +381,7 @@ class Source(ABC):
     login_cookie: ClassVar[str] = (
         ""  # 登录轮询的兜底 cookie（未声明 logout_cookies / login_verify 时用）
     )
-    login_verify: ClassVar[Any] | None = (
+    login_verify: ClassVar[Any | None] = (
         None  # async (browser_context) -> bool；登录成功的浏览器级判据（优先）
     )
     # （cookie 判登不可靠的源覆盖此钩子，如 Reddit：token_v2 匿名访客也发，

@@ -47,8 +47,8 @@ class ZhihuSource(Source):
     label = "知乎"
     supports_detail = True
     supports_comments = True  # 详情屏 Enter 进楼层选择 -> 回答的评论层（按需抓取）
-    feeds: ClassVar[list[str]] = ["hot", "recommend", "follow"]
-    feed_labels: ClassVar[dict[str, str]] = {"hot": "热榜", "recommend": "推荐", "follow": "关注"}
+    feeds: list[str] = ["hot", "recommend", "follow"]
+    feed_labels: dict[str, str] = {"hot": "热榜", "recommend": "推荐", "follow": "关注"}
     # 信息流只留问题卡（parse 层过滤想法/文章/视频等其余类型）：
     # 所有条目 Enter 都是 TUI 详情，无跳浏览器的分叉
     detail_kinds = frozenset({"", "question"})

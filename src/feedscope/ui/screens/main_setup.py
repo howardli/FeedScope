@@ -1,13 +1,17 @@
-"""主屏的源启用编排：首启引导、F2 源管理、启用集变化的生效路径。
+"""主屏基类：源启用编排（首启引导、F2 源管理、启用集变化的生效路径）。
 
-从 main.py 拆出的 MainSetupMixin——「配置生效流程」（引导落盘 / 勾选重建 /
-订阅空源指引）不是主屏的渲染与导航职责，与 source_setup.py 的弹层天然
-配对（行文案 source_entry_text 就住在那边）。MainScreen 继承本 mixin 拿到
-这组方法；状态字段（sources / source_idx / _feed_memory / _subs_dirty）
-仍声明在 MainScreen，本 mixin 只读写它们。
+从 main.py 拆出的 MainSetupScreen——「配置生效流程」（引导落盘 / 勾选
+重建 / 订阅空源指引）不是主屏的渲染与导航职责，与 source_setup.py 的
+弹层天然配对（行文案 source_entry_text 就住在那边）。MainScreen 继承本
+基类拿到这组流程；编排依赖的协作者（源列表状态与两侧导航的重建、刷新）
+以抽象方法显式声明，静态检查从此不需要「mixin 靠子类兜」的约定。
 """
 
 from __future__ import annotations
+
+from abc import abstractmethod
+
+from textual.screen import Screen
 
 from feedscope.core import config
 from feedscope.core.registry import all_sources, get_class
@@ -20,14 +24,30 @@ from feedscope.ui.screens.source_setup import (
 )
 
 
-class MainSetupMixin:
-    """源启用编排（挂进 MainScreen；方法里用的字段见 main.py 的字段声明）。"""
+class MainSetupScreen(Screen[None]):
+    """源启用编排基类（MainScreen 的父类；协作者由主屏实现，见抽象声明）。"""
 
-    # MainScreen 提供的字段/方法（mixin 不声明实现，静态检查靠 MainScreen 兜）：
+    # 编排读写的源列表状态（MainScreen.__init__ 初始化）
     sources: list[Source]
     source_idx: int
-    _subs_dirty: bool
     _feed_memory: dict[str, int]
+    _subs_dirty: bool
+
+    @abstractmethod
+    async def _render_source_tabs(self) -> None:
+        """重建顶部站点 tab 条（高亮当前源；实现见 MainScreen）。"""
+
+    @abstractmethod
+    async def _render_feed_sidebar(self) -> None:
+        """重建左侧信息流边栏（高亮当前流；实现见 MainScreen）。"""
+
+    @abstractmethod
+    def action_refresh(self) -> None:
+        """刷新当前流（实现见 MainScreen）。"""
+
+    @abstractmethod
+    def _restore_feed_idx(self) -> None:
+        """切站后停回该站上次的信息流（实现见 MainScreen）。"""
 
     def _enabled_sources(self) -> list[Source]:
         """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。

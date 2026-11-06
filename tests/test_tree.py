@@ -18,6 +18,7 @@ from feedscope.core.models import Answer, Comment
 from feedscope.core.tree import (
     DELETED_AUTHOR,
     DELETED_BODY,
+    TreeAccessors,
     build_floors,
     count_kept,
     flatten_comments,
@@ -45,14 +46,14 @@ def _comment_of(n: dict) -> Comment:
     return Comment(author=_author_of(n), votes="", content_md=n["body"] or DELETED_BODY)
 
 
-_ACC = {"keep": _keep, "kids_of": _kids_of, "author_of": _author_of, "comment_of": _comment_of}
+_ACC = TreeAccessors(keep=_keep, kids_of=_kids_of, author_of=_author_of, comment_of=_comment_of)
 
 
 def test_flatten_direct_flag_covers_top_level_only() -> None:
     """direct=True 只救传入层的顶层节点（紧贴楼上不加 @）；递归层一律
     direct=False——隔层必 @ 直接父，这是「拍平后 @ 是唯一指向」的实现。"""
     tree = [node("甲", kids=[node("乙", kids=[node("丙")])])]
-    flat = flatten_comments(tree, **_ACC, direct=True)
+    flat = flatten_comments(tree, _ACC, direct=True)
     assert [(c.author, c.content_md) for c in flat] == [
         ("甲", "内容"),  # 顶层节点：direct=True 且无父语境，无 @
         ("乙", "@甲：内容"),  # 递归层 direct=False：@ 直接父
@@ -64,14 +65,14 @@ def test_flatten_default_marks_children() -> None:
     """direct 缺省 False：首层孩子也加 @父作者（floor_comments 的 replies
     递归正是靠这个给隔层加 @）。"""
     tree = [node("甲", kids=[node("乙")])]
-    flat = flatten_comments(tree, **_ACC)
+    flat = flatten_comments(tree, _ACC)
     assert [c.content_md for c in flat] == ["内容", "@甲：内容"]
 
 
 def test_flatten_skips_empty_shells_whole_branch() -> None:
     """空壳节点（无正文无孩子）整支跳过；有孩子的空壳保留（树还在）。"""
     tree = [node("甲"), node("", body=None), node("乙", body=None, kids=[node("丙")])]
-    flat = flatten_comments(tree, **_ACC)
+    flat = flatten_comments(tree, _ACC)
     assert [c.author for c in flat] == ["甲", "乙", "丙"]
     assert flat[1].content_md == DELETED_BODY  # 本尊已删有孩子照常保留，正文占位
 
@@ -79,14 +80,14 @@ def test_flatten_skips_empty_shells_whole_branch() -> None:
 def test_flatten_no_at_for_deleted_parent() -> None:
     """父已删（作者占位）不给 @——@ 不到人。"""
     tree = [node("", body=None, kids=[node("丙")])]
-    flat = flatten_comments(tree, **_ACC)
+    flat = flatten_comments(tree, _ACC)
     assert flat[1].content_md == "内容"  # 父是 [已删除]，不加 @
 
 
 def test_floor_comments_two_level_shape() -> None:
     """楼层回复树 -> 顶层 Comment 各带 replies（更深的拍平进 replies）。"""
     tree = [node("乙", kids=[node("丁", kids=[node("己")]), node("戊")])]
-    out = floor_comments(tree, **_ACC)
+    out = floor_comments(tree, _ACC)
     assert len(out) == 1
     assert out[0].author == "乙"  # 直接子回复做顶层
     assert [(c.author, c.content_md) for c in out[0].replies] == [
@@ -103,7 +104,7 @@ def test_count_kept_counts_only_kept_descendants() -> None:
         node("", body=None),  # 空壳：不计
         node("乙", body=None, kids=[node("丙"), node("", body=None)]),  # 乙 + 丙 计，空壳不计
     ])
-    assert count_kept(root, keep=_keep, kids_of=_kids_of) == 3
+    assert count_kept(root, _ACC) == 3
 
 
 def test_build_floors_skeleton_and_answer_of_injection() -> None:
@@ -120,7 +121,7 @@ def test_build_floors_skeleton_and_answer_of_injection() -> None:
             comment_count=f"{count} 条回复" if count else "",
         )
 
-    floors = build_floors(roots, **_ACC, answer_of=answer_of)
+    floors = build_floors(roots, _ACC, answer_of=answer_of)
     assert [f.answer.author for f in floors] == ["甲", "丙"]
     assert floors[0].answer.comment_count == "1 条回复"
     assert floors[1].answer.comment_count == ""  # 0 条不引导 Enter

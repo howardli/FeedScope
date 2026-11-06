@@ -59,6 +59,13 @@ ignore = [
 "tests/*" = ["E501"]
 "scripts/*" = ["E501"]
 
+[tool.mypy]
+# src 全量零错误（2026-11 起随 ruff/pytest 进 CI）；tests/scripts 的 pytest
+# 动态风格（monkeypatch/fixture）不在检查范围——类型契约由 src 侧保证
+files = ["src/feedscope"]
+python_version = "3.11"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["feedscope"]
 branch = true
@@ -74,4 +81,9 @@ exclude_lines = [
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.6", "pytest>=8", "pytest-cov>=5"]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "mypy>=2.4.1",
+]

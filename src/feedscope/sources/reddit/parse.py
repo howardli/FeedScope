@@ -37,7 +37,7 @@ from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, build_floors
+from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, TreeAccessors, build_floors
 
 SOURCE_ID = "reddit"
 
@@ -198,7 +198,7 @@ def _author_of(node: _CNode) -> str:
 
 
 # 差异注入：Reddit 的树是 HTML 按 depth 重建的 _CNode（拍平与 @ 规则在 core.tree）
-_ACC = {"keep": _keep, "kids_of": _kids_of, "author_of": _author_of, "comment_of": _comment_of}
+_ACC = TreeAccessors(keep=_keep, kids_of=_kids_of, author_of=_author_of, comment_of=_comment_of)
 
 
 def _answer_of(node: _CNode, n: int) -> Answer:
@@ -258,7 +258,7 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
         stack.append((depth, node.children))
 
     # 顶层节点 -> 楼层（keep 过滤 / 计数 / 拍平的骨架在 core.tree.build_floors）
-    floors = build_floors(roots, **_ACC, answer_of=_answer_of)
+    floors = build_floors(roots, _ACC, answer_of=_answer_of)
     # 截断口：服务端只渲染了前一部分楼层（大帖常见），按 comment-count 诚实提示
     total = safe_int(post.get("comment-count"))
     loaded = sum(1 + len(f.comments) + sum(len(c.replies) for c in f.comments) for f in floors)

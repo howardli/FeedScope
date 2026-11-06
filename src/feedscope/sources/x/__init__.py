@@ -44,8 +44,8 @@ class XSource(Source):
     source_id = "x"
     label = "X"
     supports_detail = True
-    feeds: ClassVar[list[str]] = ["foryou", "following"]  # 与 X 主页页签同序：默认进「推荐」
-    feed_labels: ClassVar[dict[str, str]] = {"foryou": "推荐", "following": "正在关注"}
+    feeds: list[str] = ["foryou", "following"]  # 与 X 主页页签同序：默认进「推荐」
+    feed_labels: dict[str, str] = {"foryou": "推荐", "following": "正在关注"}
     detail_kinds = frozenset({"tweet"})  # Enter 进终端详情屏（正文 + 回复）
     detail_unit_label = "回复"
     login_url = "https://x.com/login"

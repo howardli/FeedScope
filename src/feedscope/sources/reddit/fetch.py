@@ -157,20 +157,24 @@ class RedditFeedLoader(FeedLoader):
         self._seen: set[str] = set()
         self._next: str | None = None
         self._started = False
-        self.done = False
+        self._done = False
+
+    @property
+    def done(self) -> bool:
+        return self._done
 
     async def load_more(self) -> list[FeedItem]:
-        if self.done:
+        if self._done:
             return []
         added: list[FeedItem] = []
-        while not self.done and len(added) < _MIN_BATCH:
+        while not self._done and len(added) < _MIN_BATCH:
             url = self._page_url if not self._started else (self._next or "")
             if not url:
-                self.done = True
+                self._done = True
                 break
             self._started = True
             items, nxt = await fetch_listing(url, source=f"Reddit「{self._label}」")
             self._next = nxt
-            self.done = nxt is None
+            self._done = nxt is None
             added.extend(dedup_append(self.items, self._seen, items))
         return added

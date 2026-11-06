@@ -314,7 +314,9 @@ async def add_channel(text: str, *, label: str | None = None) -> Subscription:
     if not name:
         raise SubscriptionError("没认出频道名（支持：durov、@durov、t.me/durov 或帖子链接）")
     if name in _reserved("telegram"):
-        raise SubscriptionError("all 是聚合流保留字，不能用作订阅名")
+        # 防御分支：当前保留字 all 只有 3 字符，Telegram 用户名最短 5 字符，
+        # 实际到不了这里（先被输入归一拦下）——留给保留字集日后扩展长词
+        raise SubscriptionError(f"{name} 是聚合流保留字，不能用作订阅名")
     feeds = config.feeds_for("telegram")
     if any(f.key == name for f in feeds):
         raise SubscriptionError(f"@{name} 已经订阅过了")
