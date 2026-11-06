@@ -13,7 +13,7 @@ import json
 
 import httpx
 import pytest
-from conftest import settle
+from conftest import last_notification, settle
 from test_rss_parse import RSS_XML
 from textual.widgets import Input, ListView, SelectionList
 
@@ -289,3 +289,62 @@ def test_open_feed_all_with_empty_table_gives_guidance(
         src.feeds = [src.all_feed]  # 模拟旧实例残留的流视图
         with pytest.raises(SourceError, match="还没有订阅"):
             asyncio.run(src.open_feed(src.all_feed))
+
+
+# ---- 按钮行分派与守卫：on_button_pressed 的 dict 路径 + 空表/失败/空值反馈 ----
+
+
+async def _run_buttons_and_guards_flow(rss_env) -> None:
+    """按钮（添加/改名/删除）与键盘同路径；空表点按钮给反馈不炸；添加失败
+    （重复地址）走 warn；改名清空提交 = 没变（dismiss None 路径）。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
+
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("down", "down", "down", "down", "down")
+        await pilot.press("right")
+        assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
+        assert _rows(app) == 0, "零订阅起步"
+
+        # 空表守卫：按钮「删除/改名」点了不炸也不无声
+        await pilot.click("#subs-remove")
+        assert await settle(pilot, lambda: "先选中一条订阅" in last_notification(app)), (
+            "空表点删除给反馈"
+        )
+        await pilot.click("#subs-rename")
+        assert await settle(pilot, lambda: last_notification(app).count("先选中一条订阅") >= 1), (
+            "空表点改名给反馈"
+        )
+
+        # 按钮「添加」与 Insert 同路径（dict 分派 -> action_add -> 输入框）
+        await pilot.click("#subs-add")
+        assert await settle(pilot, lambda: isinstance(app.screen, InputScreen)), "按钮添加弹输入框"
+        app.screen.query_one(Input).value = "https://one.test/feed.xml"
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: _rows(app) == 1), "按钮添加落盘"
+
+        # 添加失败（重复地址）：SubscriptionError -> warn，列表不动
+        await pilot.click("#subs-add")
+        assert await settle(pilot, lambda: isinstance(app.screen, InputScreen))
+        app.screen.query_one(Input).value = "https://one.test/feed.xml"
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: "已经订阅过" in last_notification(app)), (
+            "重复地址给添加失败反馈（消息体是 SubscriptionError 文案）"
+        )
+        assert await settle(pilot, lambda: _rows(app) == 1), "失败不动列表"
+
+        # 按钮「改名」弹预填输入框；清空提交（dismiss None）= 名字没变
+        await pilot.click("#subs-rename")
+        assert await settle(pilot, lambda: isinstance(app.screen, InputScreen))
+        assert app.screen.query_one(Input).value == "测试源", "改名预填当前显示名"
+        app.screen.query_one(Input).value = ""
+        await pilot.press("enter")
+        # 空提交 = dismiss(None) = 取消输入（静默返回），不当成功也不报错
+        assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
+        assert config.rss_feeds()[0].label == "测试源", "空提交不改显示名"
+
+
+def test_subs_screen_buttons_and_guards(rss_env) -> None:
+    asyncio.run(_run_buttons_and_guards_flow(rss_env))

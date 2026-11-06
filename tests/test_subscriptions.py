@@ -16,6 +16,7 @@ from test_rss_parse import RSS_XML
 from feedscope import subscriptions as subs
 from feedscope.cli import main
 from feedscope.core import config, http
+from feedscope.core.source import SourceError
 
 
 def _mock_title_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,3 +356,89 @@ def test_cli_opml_exit_codes_consistent(tmp_path, capsys) -> None:
     assert main(["rss", "import", str(bad)]) == 2
     out = capsys.readouterr().out
     assert "不是合法的 OPML" in out
+
+
+# ---- Telegram 频道添加：输入归一 / 保留字 / 预览页校验 / 重复 / 删改 ----
+
+
+def _mock_channel_html(monkeypatch: pytest.MonkeyPatch, html: str) -> None:
+    """替身 t.me/s 预览页（add_channel 按需导入 fetch_channel_html，patch 模块属性即生效）。"""
+
+    async def fake(name: str, before: int | None = None) -> str:
+        return html
+
+    monkeypatch.setattr("feedscope.sources.telegram.fetch.fetch_channel_html", fake)
+
+
+def test_add_channel_rejects_bad_input(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """认不出：不动配置直接拒。
+
+    撞保留字（all）的拒收分支对当前保留字集不可达——Telegram 用户名最短
+    5 字符、all 只有 3 字符，先在输入归一就被拦；那是防保留字集日后扩展
+    的防御分支（见 subscriptions.add_channel 注释），不为它伪造可达性。"""
+    use_config(monkeypatch, tmp_path, "")
+    with pytest.raises(subs.SubscriptionError, match="没认出"):
+        asyncio.run(subs.add_channel("!!!不是频道!!!"))
+    assert config.feeds_for("telegram") == []
+
+
+def test_add_channel_rejects_silent_preview(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """预览页一条消息都没有（不存在/为空/关了 Web 预览）：给专属指引而不是误报改版。"""
+    use_config(monkeypatch, tmp_path, "")
+    _mock_channel_html(monkeypatch, "<html><body></body></html>")
+    with pytest.raises(subs.SubscriptionError, match="拉不到任何帖子"):
+        asyncio.run(subs.add_channel("durov"))
+
+
+def test_add_channel_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """正常闭环：帖子直链形态归一成频道名、显示名取预览页 og:title、重复拒收、删改就位。"""
+    from test_telegram_parse import HTML
+
+    use_config(monkeypatch, tmp_path, "")
+    _mock_channel_html(monkeypatch, HTML)
+    feed = asyncio.run(subs.add_channel("https://t.me/durov/531"))  # 帖子直链形态
+    assert (feed.key, feed.label, feed.url) == ("durov", "Pavel Durov", "https://t.me/durov/")
+    with pytest.raises(subs.SubscriptionError, match="已经订阅过"):
+        asyncio.run(subs.add_channel("@durov"))
+    renamed = subs.rename_channel("durov", "杜频道")
+    assert renamed is not None and renamed.label == "杜频道"
+    removed = subs.remove_channel("durov")
+    assert removed is not None and removed.key == "durov"
+    assert config.feeds_for("telegram") == []
+    assert subs.rename_channel("durov", "x") is None  # 已删：None 不炸
+
+
+# ---- Reddit subreddit 添加的拒收分支（页面校验路径另见 test_subs_screen 的 reddit 流）----
+
+
+def test_add_subreddit_rejects_bad_input(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """认不出 / 撞内置流名（home/popular 真实存在，撞名会遮住内置流）。"""
+    use_config(monkeypatch, tmp_path, "")
+    with pytest.raises(subs.SubscriptionError, match="没认出"):
+        asyncio.run(subs.add_subreddit("!!!"))
+    with pytest.raises(subs.SubscriptionError, match="内置流重名"):
+        asyncio.run(subs.add_subreddit("home"))
+    assert config.feeds_for("reddit") == []
+
+
+def test_add_subreddit_wraps_fetch_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """页面校验失败（不存在/未登录）：消息带「加不上」指引，不动配置。"""
+    use_config(monkeypatch, tmp_path, "")
+
+    async def ok_cookies(url: str) -> dict[str, str]:
+        return {}  # 判登门过（profile_cookies 替身；fetch 侧再抛业务错）
+
+    async def broken(name: str) -> str:
+        raise SourceError("Reddit r/ghost 请求失败（HTTP 404）")
+
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", ok_cookies)
+    monkeypatch.setattr("feedscope.sources.reddit.fetch.fetch_subreddit", broken)
+    with pytest.raises(subs.SubscriptionError, match="加不上"):
+        asyncio.run(subs.add_subreddit("ghost"))
+    assert config.feeds_for("reddit") == []
+
+
+def test_store_for_unknown_id_fail_fast() -> None:
+    """未登记的源要 store：subscribable 与 SubsStore 缺一不可，尽早炸。"""
+    with pytest.raises(ValueError, match="没有订阅管理适配器"):
+        subs.store_for("zhihu")
