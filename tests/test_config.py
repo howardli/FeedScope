@@ -6,6 +6,7 @@ tmp_path 下的真实文件，get_source 每次返回新实例，读的就是新
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from pathlib import Path
 
@@ -14,12 +15,14 @@ from conftest import use_config
 
 import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的）
 from feedscope.core.config import (
+    Subscription,
     describe,
     enabled_ids,
     hidden_feeds,
     is_configured,
     rss_feeds,
     save_enabled,
+    update_feeds,
 )
 from feedscope.core.registry import get_source
 
@@ -57,6 +60,18 @@ def test_malformed_toml_falls_back_to_defaults(
     assert z.feeds == ["hot", "recommend", "follow"]
 
 
+def test_non_utf8_config_falls_back_without_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """非 UTF-8 字节也是「坏配置」：容错哲学要求当默认，不能让 UnicodeDecodeError 挡启动。"""
+    p = tmp_path / "sources.toml"
+    p.write_bytes(b'\xff\xfeenabled = ["zhihu"]\n')
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(p))
+    assert enabled_ids() is None
+    assert hidden_feeds("zhihu") == []
+    assert "无法解析" in describe()
+
+
 # ---- 启用源（enabled）：读 / 容错 / 写入往返 ----
 
 
@@ -80,6 +95,14 @@ def test_enabled_ids_bad_type_ignored(
     assert enabled_ids() is None
 
 
+def test_enabled_ids_deduped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """手编重复 id 去重（首现顺序保留）：重复项会让主屏建出重复 tab。"""
+    use_config(monkeypatch, tmp_path, 'enabled = ["zhihu", "x", "zhihu"]\n')
+    assert enabled_ids() == ["zhihu", "x"]
+    save_enabled(["x", "x", "zhihu"])
+    assert enabled_ids() == ["x", "zhihu"]
+
+
 def test_is_configured_tracks_file_existence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -88,6 +111,16 @@ def test_is_configured_tracks_file_existence(
     save_enabled(["zhihu"])
     assert is_configured()
     assert enabled_ids() == ["zhihu"]
+
+
+def test_save_enabled_does_not_log_enabled_as_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """enabled 是已知顶层键：重渲染时不能被记成「无法识别的顶层键」（日志误导）。"""
+    use_config(monkeypatch, tmp_path, 'enabled = ["zhihu"]\n')
+    with caplog.at_level(logging.INFO, logger="feedscope.core.config"):
+        save_enabled(["x"])
+    assert "无法识别的顶层键" not in caplog.text
 
 
 def test_save_enabled_roundtrip_preserves_hide(
@@ -162,6 +195,18 @@ def test_rss_feeds_bad_entries_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_rss_feeds_absent_section(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     use_config(monkeypatch, tmp_path, '[zhihu]\nhide = ["follow"]\n')
     assert rss_feeds() == []
+
+
+def test_update_feeds_does_not_rewrite_malformed_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """坏 enabled 按「未配置」处理：加订阅既不该崩，也不该把字符串拆成字符数组写回。"""
+    p = use_config(monkeypatch, tmp_path, 'enabled = "zhihu"\n')
+    update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
+    assert not any(
+        line.startswith("enabled =") for line in p.read_text(encoding="utf-8").splitlines()
+    )
+    assert enabled_ids() is None  # 读侧默认全启用
 
 
 def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

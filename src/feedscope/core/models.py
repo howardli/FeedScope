@@ -14,6 +14,8 @@ class FeedItem:
     - x：conversation_id（转发详情跳原推会话）
     - v2ex：topic（列表端点正文即全量，详情只再拉回复）
     - reddit：subreddit（详情 meta 拼装用）
+    - rss：feed_key / feed_label / author / published / content_html（详情读回正文）
+    - telegram：channel / author / published / content_md（详情读回正文）
     - zhihu：不使用
     """
 
@@ -28,12 +30,10 @@ class FeedItem:
 
 @dataclass
 class Comment:
-    """一条评论（回答下的讨论，知乎）。与 Answer 同形，另挂一层 replies。
+    """一条评论（楼层内的讨论；知乎 / HN / Reddit 共用）。
 
-    知乎评论区就两层：顶层评论 + 子回复串（互相回复平铺在顶层下）。
-    数据来自 comment_v5 API：time 是绝对时间（unix 秒转的展示文本）、
-    votes 是赞数；replies 是热门子回复（前几条），没带全的部分记在
-    more_replies（UI 以「另有 N 条回复」提示），raw_id 供翻页去重。
+    author / votes / content_md / time 是展示字段；replies 是拍平后的子回复
+    （@父作者规则见 core.tree）；raw_id 是源内评论 id（翻页去重）。
     """
 
     author: str
@@ -41,25 +41,24 @@ class Comment:
     content_md: str
     time: str = ""
     replies: list[Comment] = field(default_factory=list)
-    more_replies: int = 0              # 未随首批带出的子回复条数
     raw_id: str = ""
 
 
 @dataclass
 class Answer:
-    """一条回答（知乎）或一条回复（X）。content_md 已转成 markdown。
+    """一条楼层内容（知乎回答 / X 回复 / HN·Reddit 评论 / V2EX 回复）。
 
     author 为展示名：知乎是昵称；X 是署名「名字 @handle」（名字与账号同显，
-    见 sources/x/parse.py 的 _who）。
-    评论是更深一层，不随楼层首批抓取（按需经 DetailLoader.open_comments
-    进评论层），这里只带 comment_count 引导（如 "158 条评论"，缺省空）。
+    见 sources/x/parse.py 的 _who）。评论是更深一层，不随楼层首批抓取
+    （按需经 DetailLoader.open_comments 进评论层），这里只带 comment_count
+    引导（如 "158 条评论" / "4 条回复"，缺省空）。
     """
 
     author: str
     votes: str                         # 展示文本，如 "赞同 148"
     content_md: str
     time: str = ""                     # 发布时间展示文本，如 "2026-10-19 14:32"（源尽力而为）
-    url: str = ""                      # 楼层直达链接（知乎回答页）；空 = 用父条目 url
+    url: str = ""                      # 楼层直达链接；空 = 用父条目 url
     comment_count: str = ""            # 展示文本，如 "158 条评论"（缺省空）
 
 

@@ -1,7 +1,7 @@
 """HN 源编排层测试：信息流分页/守卫、详情楼层与评论层的内存切片（全 MockTransport）。
 
 MockTransport 补丁 core/http 的模块池（同 test_rss_source.py 模式）；宽树
-fixture 专门驱动楼层/评论两级的本地翻页（FLOOR_PAGE/COMMENT_PAGE 边界）。
+fixture 专门驱动楼层/评论两级的本地翻页（floor_page/comment_page 边界）。
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def test_open_detail_out_of_range_comments() -> None:
 
 def _wide_tree(n_floors: int = 17, replies_per: int = 25) -> dict:
     """宽树：n_floors 个顶层楼层（跨 FLOOR_PAGE=15 边界），第一楼带
-    replies_per 条直接回复（跨 COMMENT_PAGE=20 边界）。"""
+    replies_per 条直接回复（跨 comment_page=20 边界）。"""
     return {
         "id": 1,
         "title": "wide",

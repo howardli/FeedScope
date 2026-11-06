@@ -131,14 +131,14 @@ async def fetch_thread_html(permalink: str, *, source: str = "Reddit 帖子") ->
     return await _get_html(permalink, source=source)
 
 
-async def fetch_about(name: str) -> dict:
-    """r/{name} 页面校验存在性；返回 {"display_name": 名}（订阅添加用）。"""
+async def fetch_subreddit(name: str) -> str:
+    """r/{name}/ 页面校验存在性；返回页面自述的 subreddit 名（订阅添加用）。"""
 
     html = await _get_html(f"{_API}/r/{name}/", source=f"Reddit r/{name}")
     real = parse_subreddit_page(html)
     if not real:
         raise SourceError(f"r/{name} 不存在或不可访问")
-    return {"display_name": real}
+    return real
 
 
 class RedditFeedLoader(FeedLoader):

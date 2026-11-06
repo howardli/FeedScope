@@ -131,6 +131,15 @@ def test_registry_order_is_tab_order() -> None:
     ]
 
 
+def test_subscribable_sources_have_store() -> None:
+    """subscribable 声明与 subscriptions._STORES 必须一一对应：
+    漏登记 = F2 里按 → 直接 ValueError；多登记 = 永远进不去的死入口。"""
+    from feedscope.subscriptions import _STORES
+
+    declared = {s.source_id for s in all_sources() if s.subscribable}
+    assert set(_STORES) == declared
+
+
 def test_reserved_feed_keys_declared() -> None:
     """订阅 key 的保留字从源声明读（subscriptions._reserved 的单一出处）：
     聚合流名（SubscribedSource）与内置流名（reddit）——源新增流后忘了

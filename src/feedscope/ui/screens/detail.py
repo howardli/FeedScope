@@ -1,4 +1,4 @@
-"""问题详情屏：题目 + 描述 + 回答流，纯终端阅读（M1 核心）。
+"""问题详情屏：题目 + 描述 + 回答流，纯终端阅读。
 
 多层递进的第二层：列表 -> 这里（回答流）-> 回答详情屏（评论层）。
 Enter 进「视口正在阅读」的那个回答（读到哪进哪）；评论不随首批抓取
@@ -121,6 +121,9 @@ class DetailScreen(ReadingScreen):
             )
             return
         loading.remove()
+        # 首批即到头（V2EX 一页全量 / HN·Reddit 楼层不足一页）：立刻按完成态渲染，
+        # 尾行给 EOF 标记而不是「Ctrl+N 加载更多」——按了也只会空跑一次
+        self._exhausted = self.loader.done
         await self._render_doc(self.loader.doc)
         self._render_done()
         self.app.sub_title = self.loader.doc.title[:50]
@@ -261,7 +264,9 @@ class DetailScreen(ReadingScreen):
         if item is None:
             feedback.info(self.app, "后面没有可读的了" if delta > 0 else "前面没有可读的了")
             return
-        self.workers.cancel_group(self, "load")  # 首载还在途：丢弃（页签由 run_page 取消兜底关闭）
+        # 首载与增量都在途时一起丢弃：旧 loader 的迟到结果不能混进新文档
+        self.workers.cancel_group(self, "load")
+        self.workers.cancel_group(self, "more")
         loader, self.loader = self.loader, None
         if loader is not None:
             await loader.close()
@@ -276,20 +281,25 @@ class DetailScreen(ReadingScreen):
 
     async def _load_more(self) -> None:
         body = self._body_scroll()
+        loader = self.loader
+        if loader is None:
+            return
         self._remove_hint()
         loading = Label("[dim]加载更多…[/dim]", id="more-loading")
         await body.mount(loading)
         try:
-            new = await self.loader.load_more()
+            new = await loader.load_more()
         except Exception as exc:
             # 不再静默：失败要告诉用户（否则按 Ctrl+N 无反馈，误以为按键失灵）
             feedback.fail(self.app, self.source, exc, action="加载更多失败")
             new = []
+        if loader is not self.loader:
+            return  # 期间换篇/关闭：旧 loader 的迟到结果直接丢弃
         if loading.parent is not None:  # 期间可能整屏重排过，loading 已被清掉
             loading.remove()
         if not new:
-            if self.loader.done:
-                self._exhausted = True
+            self._exhausted = loader.done
+            if self._exhausted:
                 self._remove_hint()
                 await body.mount(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
             else:
@@ -300,7 +310,13 @@ class DetailScreen(ReadingScreen):
         for ans in new:
             widgets.extend(self._answer_widgets(ans))
         await body.mount(*widgets)  # 单次挂载 = 单次布局
-        await self._mount_hint()
+        # 最后一批可能正好取尽：done 当场生效，不再让用户多按一次 Ctrl+N
+        self._exhausted = loader.done
+        if self._exhausted:
+            self._remove_hint()
+            await body.mount(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
+        else:
+            await self._mount_hint()
         # 不主动滚动：新楼层就追加在旧内容正下方，视口停在原阅读断点不动，
         # 「衔接」靠内容连续而非视口跳转。滚动到底（scroll_end）或顶对齐
         # （scroll_to_widget top=True）都会把刚读到的楼层顶出视野、整屏跳动，

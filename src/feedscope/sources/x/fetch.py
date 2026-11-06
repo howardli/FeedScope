@@ -336,7 +336,10 @@ async def _deep_capture_detail() -> _Op | None:
                 return
             await page.wait_for_timeout(500)
 
-    await get_session().run(run_page, _watch)
+    try:
+        await get_session().run(run_page, _watch)
+    except Exception:
+        return None  # 瞬态页打不开/超时：回落到 harvest + 种子，不让自愈路径裸炸
     if not box or not (parsed := _parse_graphql_url(box["url"])):
         return None
     _harvest[_DETAIL_OP] = parsed[1]
@@ -348,6 +351,9 @@ async def _raw(url: str, *, source: str) -> tuple[int | None, dict]:
     status, body = await _tab.fetch(
         url, source=source, headers=_GQL_HEADERS, cookie_headers=_CSRF_FROM_COOKIE
     )
+    if body is not None and not isinstance(body, dict):
+        # 登录墙 HTML / 代理错误页：不是 GraphQL JSON，按改版/通道异常上报
+        raise SourceError(f"{source} 返回结构异常（不是 JSON 对象）")
     return status, (body or {})
 
 

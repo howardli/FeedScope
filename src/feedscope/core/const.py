@@ -15,6 +15,9 @@ import html2text
 DESKTOP_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 HTTP_TIMEOUT = 20  # 秒
 
+# Playwright 页面导航超时（毫秒）
+PAGE_TIMEOUT_MS = 30_000
+
 # channel="chrome" 硬编码依赖的标准安装位置（macOS）与 PATH 候选名（Linux）
 CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 CHROME_BINS = ("google-chrome", "google-chrome-stable", "chrome", "google-chrome-beta")
@@ -28,14 +31,11 @@ def find_chrome() -> str:
 
 
 def safe_int(value: object) -> int:
-    """野数据防御的整数化：None/空/非数字回 0（解析层对 API 野值的统一口径）。"""
+    """野数据防御的整数化：None/空/非数字/无穷大回 0（解析层对 API 野值的统一口径）。"""
     try:
         return int(value or 0)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
-
-# Playwright 页面导航超时（毫秒）
-PAGE_TIMEOUT_MS = 30_000
 
 
 def new_h2t() -> html2text.HTML2Text:

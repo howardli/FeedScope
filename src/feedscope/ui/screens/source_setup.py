@@ -3,13 +3,13 @@
 两屏同一套 SelectionList 勾选交互（空格切换）：确认返回勾选的源 id 列表
 （**按勾选顺序**——展示顺序 = 勾选顺序，后勾上的排末尾；勾选行实时标
 1、2、3… 序号 = 站点排列位置），取消 / Esc 返回 None——引导里 None =
-放弃使用（App 退出），管理里 None = 不落盘。候选与初始勾选由 App 注入，
-屏不读写配置：选择生效路径（保存 + 重建站点栏）集中在 App（_start /
-action_manage_sources）。
+放弃使用（App 退出），管理里 None = 不落盘。候选与初始勾选由 MainScreen 注入，
+屏不读写配置：选择生效路径（保存 + 重建站点栏）集中在 MainScreen（_start /
+_manage_sources）。
 
 可订阅源（Source.subscribable，目前 rss、reddit 与 telegram）在此层还有
 二级入口：→ 进订阅管理屏（SubsStore 按源分派），改动即时落盘；返回后
-这里只同步该源勾选（有订阅 = 勾上，空 = 取消）并回调 App 标脏。
+同步该源勾选（有订阅 = 勾上，空 = 取消）与行文案，并回调 MainScreen 标脏。
 """
 
 from __future__ import annotations
@@ -24,10 +24,30 @@ from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
 from feedscope.core.registry import get_class
+from feedscope.core.source import Source
 from feedscope.subscriptions import store_for
 from feedscope.ui import feedback
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavSelectionList
 from feedscope.ui.screens.subscriptions import SubscriptionsScreen
+
+
+def source_entry_text(source: Source) -> str:
+    """源选择列表的一行文案；空串 = 该源无可选流且非订阅型，不列出。
+
+    文案带上各源的信息流名（超 3 个截成计数，几十个订阅不至于刷屏）；
+    可订阅源空订阅也列出（→ 进订阅管理就地添加，否则零订阅的 rss 永远
+    进不了这个列表，鸡生蛋）。
+    """
+    labels = [source.feed_labels.get(f, f) for f in source.feeds]
+    if not labels and not source.subscribable:
+        return ""
+    if labels:
+        feeds = "、".join(labels[:3]) + (
+            f" 等 {len(labels)} 个流" if len(labels) > 3 else ""
+        )
+    else:
+        feeds = "无订阅 · → 添加"
+    return f"{source.label} [dim]{feeds}[/dim]"
 
 
 class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
@@ -150,9 +170,9 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
                 self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅"
             )
             return
-        self.run_worker(self._manage_feeds(sid, cls))
+        self.run_worker(self._manage_feeds(sid))
 
-    async def _manage_feeds(self, sid: str, cls: type) -> None:
+    async def _manage_feeds(self, sid: str) -> None:
         changed = await self.app.push_screen(
             SubscriptionsScreen(store_for(sid)), wait_for_dismiss=True
         )
@@ -163,12 +183,14 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
             self._on_feeds_changed()
 
     def _sync_row(self, sid: str) -> None:
-        """订阅管理返回后同步该源勾选：还有可选信息流 = 勾上（加订阅显然想
-        用，与 CLI 的 enabled 联动同语义）；删空 = 取消勾选。"""
+        """订阅管理返回后同步该源勾选与行文案：还有可选信息流 = 勾上（加订阅
+        显然想用，与 CLI 的 enabled 联动同语义）；删空 = 取消勾选。"""
         cls = get_class(sid)
         if cls is None:
             return
-        want = bool(cls().feeds)
+        source = cls()
+        want = bool(source.feeds)
+        self._labels[sid] = source_entry_text(source) or self._labels[sid]
         sl = self.query_one(SelectionList)
         if want and sid not in sl.selected:
             sl.select(sid)

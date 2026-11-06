@@ -1,8 +1,9 @@
 """X 通道诊断：打印运行时收割到的请求形状，并实测一次时间线与详情。
 
-请求形状收割已内建进 fetch.py 的运行时（performance entries 抄 SPA 自己
-发的请求 → chunk grep 兜底 → 种子保底，失效自动重割自愈），本脚本只剩
-诊断用途——自愈两连败想看现场、或想确认当前收割状态时跑：
+请求形状收割已内建进 fetch.py 的运行时（重开页签后从 JS chunk grep
+queryId → 种子兜底；TweetDetail 的 features 走网络层深度截获，失效自动
+重割自愈），本脚本只剩诊断用途——自愈失败想看现场、或想确认当前收割
+状态时跑：
     uv run python scripts/x_probe.py
 输出全部脱敏（无 cookie、无完整响应体）。
 """

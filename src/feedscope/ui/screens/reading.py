@@ -131,7 +131,9 @@ class ReadingScreen(Screen[None]):
         if not self._rendered:
             return
         scroll_y = self._body_scroll().scroll_y
-        self.run_worker(self._rerender_body(scroll_y))
+        # 同一屏同时只跑一次重排：连续 resize 的后一次要取代前一次，避免两套
+        # remove_children/mount 交错出重复楼层
+        self.run_worker(self._rerender_body(scroll_y), group="rerender", exclusive=True)
 
     async def _rerender_body(self, scroll_y: float) -> None:
         body = self._body_scroll()

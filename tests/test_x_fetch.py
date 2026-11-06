@@ -195,6 +195,13 @@ def test_unhealed_shape_rot_gives_guidance(monkeypatch: pytest.MonkeyPatch) -> N
 # ---- 401/403/限流语义（与 httpx 时代一致） ----
 
 
+def test_graphql_non_object_body_is_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """登录墙 HTML / 代理错误页不是 GraphQL JSON：给「结构异常」，不让 .get 裸炸。"""
+    _mock(monkeypatch, lambda url: (None, "<html>login</html>"))
+    with pytest.raises(SourceError, match="结构异常"):
+        asyncio.run(_fetch_entries("foryou", None))
+
+
 def test_graphql_401_dead_session_self_heals(monkeypatch: pytest.MonkeyPatch) -> None:
     """401 = auth_token 被吊销（cookie 只是还在本地）：清失效 cookie + LoginRequired。"""
     cleared = _stub_drop(monkeypatch)

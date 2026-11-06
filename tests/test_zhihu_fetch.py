@@ -232,7 +232,6 @@ def test_open_comments_api_first_page(monkeypatch) -> None:
         "补全子回复1",
         "补全子回复2",
     ]  # 隐藏子回复已拉齐
-    assert top.more_replies == 0  # 补全后没有剩余
     assert top.replies[0].votes == ""  # like_count 0 = 无赞为空
     assert len(cm.comments) == 1  # is_delete 的不进列表
     assert not cm.done  # 有下一页
@@ -251,7 +250,6 @@ def test_open_comments_single_gap_also_completed(monkeypatch) -> None:
     top = cm.comments[0]
     assert page._child_reqs == 1, "缺口 1 也要拉齐"
     assert [r.author for r in top.replies] == ["楼中楼", "补全子回复1"]
-    assert top.more_replies == 0  # 拉齐后无残留提示
     asyncio.run(cm.close())
     asyncio.run(loader.close())
 

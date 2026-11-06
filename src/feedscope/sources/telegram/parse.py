@@ -84,21 +84,23 @@ def _media_marks(chunk: str, post_url: str) -> list[str]:
     return marks
 
 
+def _strip_emoji(text_html: str) -> str:
+    """tg-emoji 三层壳塌缩成字符本身（否则 html2text 给每个表情套 **强调**）。"""
+    return _TG_EMOJI_RE.sub(lambda m: m.group(1) or m.group(2) or "", text_html)
+
+
 def _plain_text(text_html: str) -> str:
-    """正文 HTML 的纯文本形态（标题用）：剥 emoji 壳 + 去标签 + 合并空白。"""
-    stripped = _TG_EMOJI_RE.sub(lambda m: m.group(1) or m.group(2) or "", text_html)
-    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", stripped)).strip()
+    """已剥 emoji 壳的正文 HTML -> 纯文本（标题用）：去标签 + 合并空白。"""
+    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text_html)).strip()
     return re.sub(r"\s+([,.!?;:，。！？；：])", r"\1", plain)  # 标签位换成的空格别挤到标点前
 
 
-def _content_md(chunk: str, post_url: str) -> str:
-    """正文：行内 HTML -> markdown + 媒体记号缀尾（与 X/RSS 同观感）。"""
+def _content_md(text_html: str, marks: list[str]) -> str:
+    """正文：已剥 emoji 壳的行内 HTML -> markdown + 媒体记号缀尾（与 X/RSS 同观感）。"""
     blocks: list[str] = []
-    if m := _TEXT_RE.search(chunk):
-        text_html = _TG_EMOJI_RE.sub(lambda m: m.group(1) or m.group(2) or "", m.group(1))
-        if md := html_to_md(text_html):
-            blocks.append(md)
-    blocks.extend(_media_marks(chunk, post_url))
+    if md := html_to_md(text_html):
+        blocks.append(md)
+    blocks.extend(marks)
     return "\n\n".join(blocks)
 
 
@@ -129,10 +131,8 @@ def parse_channel_html(
         post_id = post.group(1)
         url = f"{_SITE}/{post_id}"
         marks = _media_marks(chunk, url)
-        text_html = (
-            m.group(1) if (m := _TEXT_RE.search(chunk)) else ""
-        )
-        md = _content_md(chunk, url)
+        text_html = _strip_emoji(m.group(1)) if (m := _TEXT_RE.search(chunk)) else ""
+        md = _content_md(text_html, marks)
         title = _title_of(text_html, marks)
         if not title:
             continue  # 既无正文也无媒体：不可展示，跳条不跳流

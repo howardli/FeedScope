@@ -37,7 +37,7 @@ class RssSource(SubscribedSource):
     source_id = SOURCE_ID
     label = "RSS"
     supports_detail = True
-    subscribable = True  # feeds 来自用户订阅：F2 里 Enter 进订阅管理屏
+    subscribable = True  # feeds 来自用户订阅：F2 里 → 进订阅管理屏
     detail_kinds = frozenset({""})  # 全部条目（kind 空）Enter 都进终端详情
     detail_unit_label = "正文"  # 无楼层，详情屏尾行与 probe 用这个词
 

@@ -98,13 +98,16 @@ def test_eval_rebuilds_on_nav_destroyed(make_tab) -> None:
     tab, session = make_tab(bad, good)
     out = asyncio.run(tab.eval("x", 7))
     assert out == {"ok": 7} and session.opens == 2  # 第二个页签接住了重试
+    assert bad.closed  # 弃掉的页签要真关，不能留孤儿页
 
 
 def test_eval_second_failure_propagates(make_tab) -> None:
-    """重建后仍失败：原样上交（调用方包 SourceError）。"""
-    tab, _ = make_tab(FakePage(nav_failures=5))
+    """重建后仍失败：原样上交（调用方包 SourceError），失败页同样关掉。"""
+    page = FakePage(nav_failures=5)
+    tab, _ = make_tab(page)
     with pytest.raises(RuntimeError, match="destroyed"):
         asyncio.run(tab.eval("x"))
+    assert page.closed
 
 
 def test_check_failure_closes_page_and_propagates(make_tab) -> None:

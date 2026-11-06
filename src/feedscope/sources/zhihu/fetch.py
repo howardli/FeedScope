@@ -98,7 +98,7 @@ def _headers(zse93: bool) -> dict[str, str]:
 
 
 async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False) -> dict:
-    """通道页签里 fetch JSON API -> (状态码, body)；网络/结构失败转 SourceError。
+    """通道页签里 fetch JSON API -> JSON body（dict）；网络/结构失败转 SourceError。
 
     取数原语与解包约定见 ChannelTab.fetch（知乎/Reddit/X 三源共用）。referrer
     不传 = 页签自然 referer（评论用：通道页 URL）；信息流传对应页面 URL，
@@ -107,6 +107,8 @@ async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False
     status, body = await _tab.fetch(url, source="知乎", headers=_headers(zse93), referrer=referrer)
     if status:
         raise SourceError(f"接口请求失败（HTTP {status}）")
+    if body is not None and not isinstance(body, dict):
+        raise SourceError("知乎 接口返回结构异常（不是 JSON 对象）")
     return body or {}
 
 
@@ -121,7 +123,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
 
     无缺口（count<=带出数：无子评论/子评论已全带出）不发请求，有缺口
     就拉全（并发下一次请求，留着「另有 1 条回复」的尾巴比多花一次请求
-    更伤阅读）；more_replies 仅在补全失败（限流/风控）时兜底提示。
+    更伤阅读）；补全失败（限流/风控）时静默保留接口已带出的热门子回复。
     """
     data = await _fetch_json(url)
 
@@ -248,6 +250,8 @@ async def _open_question(qid: str) -> DetailLoader:
     referer = f"https://www.zhihu.com/question/{qid}"
     args = [QUESTION_API.format(qid=qid), _ANSWERS_FEEDS_TOP.format(qid=qid), referer]
     r = await _tab.eval(_OPEN_QUESTION_JS, args)  # 页签失效重建重试见 ChannelTab.eval
+    if not isinstance(r, dict) or "meta" not in r or "feeds" not in r:
+        raise SourceError("知乎 开题接口返回结构异常")
     try:
         _raise_compound_error(r["meta"])
     except SourceError as exc:
@@ -257,7 +261,7 @@ async def _open_question(qid: str) -> DetailLoader:
     _raise_compound_error(r["feeds"])
     doc = _api_question_doc(r["meta"], _feeds_answers(r["feeds"], qid))
     paging = r["feeds"].get("paging") or {}
-    return ZhihuQuestionLoader(doc, paging.get("next") or None, referer)
+    return ZhihuQuestionLoader(doc, paging.get("next") or None, referer, qid)
 
 
 # ---- 增量 Loader（持活页签，close() 幂等）----
@@ -306,10 +310,11 @@ class ZhihuQuestionLoader(DetailLoader):
     「N 个回答」）判定——拉空可能只是抖动，n 可再试。评论层共享通道页签。
     """
 
-    def __init__(self, doc: DetailDoc, next_url: str | None, referer: str) -> None:
+    def __init__(self, doc: DetailDoc, next_url: str | None, referer: str, qid: str) -> None:
         self.doc = doc
         self._next = next_url
         self._referer = referer
+        self._qid = qid  # 翻页 URL 只带游标，回答里的 question 链接要本问题的 id
         self._seen_urls = {a.url for a in doc.answers if a.url}
         self._done = not next_url
         m = re.search(r"(\d+)\s*个回答", doc.meta or "")
@@ -324,10 +329,8 @@ class ZhihuQuestionLoader(DetailLoader):
             self._done = True
             return []
         data = await _api_json(self._next, self._referer)
-        # 借「Match 对象可下标取组」兜 None：无组 1 = 空串（列表 [None, ""] 的下标 1）
-        qid = (re.search(r"questions/(\d+)/", self._next) or [None, ""])[1]
         new: list[Answer] = []
-        for a in _feeds_answers(data, qid):
+        for a in _feeds_answers(data, self._qid):
             if a.url and a.url in self._seen_urls:
                 continue
             if a.url:

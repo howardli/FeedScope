@@ -121,6 +121,20 @@ class StubCommentsLoader:
         pass
 
 
+class EmptyCommentsLoader:
+    """评论首载为空但没到头（网慢）：驱动「空态在 resize 重排后不能退回加载中」。"""
+
+    def __init__(self) -> None:
+        self.comments: list[Comment] = []
+        self.done = False
+
+    async def load_more(self) -> list[Comment]:
+        return []
+
+    async def close(self) -> None:
+        pass
+
+
 class StubDetailLoader(DetailLoader):
     def __init__(self) -> None:
         self.doc = DetailDoc(
@@ -803,6 +817,40 @@ def test_answer_layer_flow(stub_registry, opened) -> None:
     asyncio.run(_run_answer_layer_flow(opened))
 
 
+async def _run_answer_empty_comments_resize_flow(monkeypatch) -> None:
+    """评论首批为空但未到头：resize 重排必须保持「没有评论 + 可重试」空态，
+    不能退回「评论加载中…」（渲染路径与首次上屏共用，状态要一致）。"""
+
+    async def empty_comments(self, index: int) -> EmptyCommentsLoader:
+        return EmptyCommentsLoader()
+
+    monkeypatch.setattr(StubDetailLoader, "open_comments", empty_comments)
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("enter")
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await settle(pilot, lambda: answer.cloader is not None)
+        assert len(answer.query("#cm-empty")) == 1
+
+        await pilot.resize_terminal(100, 36)
+        assert await settle(
+            pilot,
+            lambda: len(answer.query("#cm-empty")) == 1
+            and len(answer.query("#cm-loading")) == 0,
+        ), "resize 后评论空态丢失（退回加载中）"
+
+
+def test_answer_empty_comments_survives_resize(stub_registry, monkeypatch) -> None:
+    asyncio.run(_run_answer_empty_comments_resize_flow(monkeypatch))
+
+
 async def _run_no_comments_flow() -> None:
     """无评论层的源（X/RSS 形态）：详情屏不预告 Enter 评论（Footer 键位 + 尾行），
     误按给反馈不无声；翻页/换篇动线不受影响。"""
@@ -1148,6 +1196,25 @@ async def _run_prelayout_render_recovery_flow() -> None:
             pilot, lambda: screen._rendered_width == 100
         ), "预布局渲染后的首个 Resize 要自愈重排（不等用户手动改窗口）"
         assert len(screen.query(".answer-head")) == 3, "重排后楼层完整"
+
+
+async def _run_detail_initially_done_flow(monkeypatch) -> None:
+    """详情首批即到头（V2EX 一页全量 / 楼层不足一页）：尾行直接 EOF，
+    不能再预告 Ctrl+N（按了只会空跑一次）。"""
+    monkeypatch.setattr(StubDetailLoader, "done", property(lambda self: True))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        assert len(detail.query("#no-more")) == 1, "首批即到头要有 EOF 标记"
+        assert len(detail.query("#more-hint")) == 0, "首批即到头不再预告加载更多"
+
+
+def test_detail_initially_done_shows_eof(stub_registry, monkeypatch) -> None:
+    asyncio.run(_run_detail_initially_done_flow(monkeypatch))
 
 
 def test_prelayout_render_recovers_on_first_resize(stub_registry) -> None:

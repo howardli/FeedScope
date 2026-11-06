@@ -2,9 +2,11 @@
 
 用法：uv run python scripts/screenshot.py   # 产物写 docs/*.png，重跑即刷新
 
-数据是编的（不碰网络与浏览器），但走的是真实 UI 全链路（注册表 -> FeedScopeApp
--> 列表/详情屏），改 UI 后重跑即可同步截图。FEEDSCOPE_CONFIG 指向不存在的路径，
-避免本机隐藏流配置让侧栏条目数漂移；NO_PREWARM 关闭避免拉起真 Chrome。
+数据是编的（App 不碰网络；栅格化另用本机 Chrome），但走的是真实 UI 全链路
+（注册表 -> FeedScopeApp -> 列表/详情屏），改 UI 后重跑即可同步截图。
+FEEDSCOPE_CONFIG 指向仓库根下临时生成的 .screenshot-sources.toml（已 gitignore），
+固定 enabled 避开本机隐藏流配置让侧栏条目数漂移；FEEDSCOPE_NO_PREWARM 关闭
+App 启动预热的真 Chrome（栅格化仍要 Chrome）。
 
 管线：export_screenshot 出 SVG -> _fix_cjk_metrics 修正中文格宽（Rich 的
 SVG 导出按字符数而非终端格数算 textLength，双格宽的 CJK 只分到一半 advance，
@@ -97,29 +99,37 @@ def _chrome_bin() -> str:
 
 
 def _rasterize(svg: str, png: Path) -> None:
-    """SVG -> @2x PNG：窗口尺寸取 SVG 自带 width/height，透明底交给 SVG 自绘。"""
+    """SVG -> @2x PNG：窗口尺寸取 SVG 自带 width/height，透明底交给 SVG 自绘。
+
+    必须给 Chrome 一个显式的 --user-data-dir：新版 Chrome 的 headless 不再
+    自动创建临时 profile，缺了它直接 "Failed to create a unique user data
+    directory for headless" 退出（截图脚本在 Chrome 156 上实测）。
+    """
     w = int(float(re.search(r'width="([\d.]+)"', svg).group(1)))
     h = int(float(re.search(r'height="([\d.]+)"', svg).group(1))) + 1
     with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
         f.write(svg)
         svg_path = f.name
     try:
-        subprocess.run(
-            [
-                _chrome_bin(),
-                "--headless",
-                "--hide-scrollbars",
-                "--force-device-scale-factor=2",
-                "--default-background-color=00000000",
-                f"--window-size={w},{h}",
-                f"--screenshot={png}",
-                f"file://{svg_path}",
-                "--virtual-time-budget=8000",  # 等 CDN 字体（Fira Code）加载
-            ],
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
+        with tempfile.TemporaryDirectory(prefix="feedscope-shot-") as profile:
+            subprocess.run(
+                [
+                    _chrome_bin(),
+                    "--headless",
+                    f"--user-data-dir={profile}",
+                    "--no-sandbox",  # 本地 SVG 是自产可信内容；容器/CI 里 Chrome 沙箱常起不来
+                    "--hide-scrollbars",
+                    "--force-device-scale-factor=2",
+                    "--default-background-color=00000000",
+                    f"--window-size={w},{h}",
+                    f"--screenshot={png}",
+                    f"file://{svg_path}",
+                    "--virtual-time-budget=8000",  # 等 CDN 字体（Fira Code）加载
+                ],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
     finally:
         Path(svg_path).unlink(missing_ok=True)
 
@@ -616,7 +626,9 @@ class DemoHn(Source):
     supports_detail = True
     supports_comments = True
     feeds: ClassVar[list[str]] = ["front", "new", "ask", "show"]
-    feed_labels: ClassVar[dict[str, str]] = {"front": "首页", "new": "最新", "ask": "Ask", "show": "Show"}
+    feed_labels: ClassVar[dict[str, str]] = {
+        "front": "首页", "new": "最新", "ask": "提问", "show": "展示",
+    }
     detail_kinds: ClassVar[frozenset[str]] = frozenset({"story", "ask", "show"})
     detail_unit_label = "评论"
     comment_unit_label = "回复"
@@ -799,7 +811,7 @@ def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
 
 def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
-    # （引导是交互弹层，自动化流程过不去）；NO_PREWARM 关掉不拉真 Chrome
+    # （引导是交互弹层，自动化流程过不去）；FEEDSCOPE_NO_PREWARM 关掉不拉真 Chrome
     cfg = DOCS.parent / ".screenshot-sources.toml"
     cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)

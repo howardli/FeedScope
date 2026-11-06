@@ -187,7 +187,6 @@ def _api_comment(c: dict) -> Comment:
         content_md=content_md,
         time=fmt_unix(created) if created else "",
         replies=[_api_comment(r) for r in kids],
-        more_replies=max(0, (c.get("child_comment_count") or 0) - len(kids)),
         raw_id=str(c.get("id") or ""),
     )
 

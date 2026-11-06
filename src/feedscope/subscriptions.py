@@ -3,7 +3,7 @@
 
 只做管理编排：读改写 sources.toml（写路径统一走 config.update_feeds，
 enabled/hide 联动在那里）、rss add 拉一次 feed 取标题当默认显示名、
-reddit add 拉一次 r/{name}/about 校验存在性并取 display_name、telegram
+reddit add 拉一次 r/{name}/ 页面校验存在性并取 subreddit 名、telegram
 add 拉一次 t.me/s 预览页校验可读并取频道名。TUI 订阅管理屏不直接调这里
 的函数，走 SubsStore 适配器（屏保持源无关）；CLI 的 rss 子命令直接调
 rss 函数。OPML 用 stdlib ElementTree 解析（嵌套目录拍平），导出手写
@@ -24,14 +24,14 @@ from feedscope.core import config
 from feedscope.core.config import Subscription
 from feedscope.core.registry import get_class
 from feedscope.core.source import SourceError
-from feedscope.sources.reddit.parse import parse_subreddit_input
-from feedscope.sources.rss.parse import discover_feed_link, probe
 
 
 def _reserved(source_id: str) -> tuple[str, ...]:
     """订阅 key 的保留字（聚合流名 / 内置流名）：一律读源自己的声明
     （Source.reserved_feed_keys，单一出处）——源新增内置流后保留字自动
     跟上，不会再出现这里抄一份、那边忘了同步的窗口。"""
+    import feedscope.sources  # noqa: F401  import 即注册；只在这条保留字检查路径拉起源
+
     cls = get_class(source_id)
     return cls.reserved_feed_keys if cls is not None else ()
 
@@ -76,6 +76,9 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
     并改订发现的地址（key 沿用）；重复地址 / 显式 key 撞已有或保留字 all →
     SubscriptionError（不动配置）。
     """
+    # 源 parse 层按需导入：rss list / export 这类纯配置命令不必拉起全部源模块
+    from feedscope.sources.rss.parse import discover_feed_link, probe
+
     feeds = config.rss_feeds()
     if any(f.url == url for f in feeds):
         dup = next(f.key for f in feeds if f.url == url)
@@ -240,14 +243,15 @@ def export_opml(feeds: list[Subscription]) -> str:
 
 
 async def add_subreddit(text: str, *, label: str | None = None) -> Subscription:
-    """加一个 subreddit 订阅并落盘；显示名缺省拉一次 r/{name}/about 的 display_name。
+    """加一个 subreddit 订阅并落盘；显示名缺省取 r/{name}/ 页面里的 subreddit 名。
 
     输入四形态归一（裸名 / r/name / /r/name/ / 站点地址，见 parse_subreddit_input）；
-    重复 / 撞内置流 / about 拉不到（subreddit 不存在或未登录）→ SubscriptionError
-    （不动配置）。未登录时 about 的报错消息自带「需要登录」指引。
+    重复 / 撞内置流 / 页面拉不到（subreddit 不存在或未登录）→ SubscriptionError
+    （不动配置）。未登录时报错消息自带「需要登录」指引。
     """
     from feedscope.sources.reddit import require_login
-    from feedscope.sources.reddit.fetch import fetch_about
+    from feedscope.sources.reddit.fetch import fetch_subreddit
+    from feedscope.sources.reddit.parse import parse_subreddit_input
 
     name = parse_subreddit_input(text)
     if not name:
@@ -259,10 +263,10 @@ async def add_subreddit(text: str, *, label: str | None = None) -> Subscription:
         raise SubscriptionError(f"r/{name} 已经订阅过了")
     try:
         await require_login(f"r/{name}")
-        about = await fetch_about(name)
+        real = await fetch_subreddit(name)
     except SourceError as exc:  # 含 LoginRequired：订阅管理屏没有账号动线，消息自带指引
         raise SubscriptionError(f"r/{name} 加不上：{exc}") from None
-    display = str(about.get("display_name") or "") or name
+    display = real or name
     feed = Subscription(key=name, label=label or display, url=f"https://www.reddit.com/r/{name}/")
     config.update_feeds("reddit", [*feeds, feed])
     return feed

@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from feedscope.core.const import safe_int
 from feedscope.core.media import html_to_md
 from feedscope.core.models import Answer, FeedItem
 from feedscope.core.timefmt import fmt_unix
@@ -42,13 +43,10 @@ def _meta(topic: dict) -> str:
     """一行元信息：节点 · 回复数 · 作者（节点即板块，放最前好扫读）。"""
     parts: list[str] = []
     node = topic.get("node")
-    if title := str(node.get("title") or "") if isinstance(node, dict) else "":
+    if isinstance(node, dict) and (title := str(node.get("title") or "")):
         parts.append(title)
-    if replies := topic.get("replies"):
-        try:
-            parts.append(f"{int(replies)} 回复")
-        except (TypeError, ValueError):
-            pass
+    if replies := safe_int(topic.get("replies")):
+        parts.append(f"{replies} 回复")
     if author := _username(topic.get("member")):
         parts.append(author)
     return " · ".join(parts)

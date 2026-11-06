@@ -406,7 +406,7 @@ def test_detail_and_comments_local_paging(monkeypatch: pytest.MonkeyPatch) -> No
 # ---- subreddit 订阅（subscriptions 编排）----
 
 
-def _about_route(req: FetchReq) -> tuple[int | None, str]:
+def _subreddit_route(req: FetchReq) -> tuple[int | None, str]:
     if req.path == "/r/rust/":
         return None, _page('x<div subreddit-name="rust"></div>' + LISTING_HTML)
     return None, _page("<html>壳页</html>")
@@ -420,7 +420,7 @@ def test_add_subreddit_validates_and_persists(monkeypatch: pytest.MonkeyPatch, t
 
     p = use_config(monkeypatch, tmp_path, "enabled = []\n")
     _fake_login(monkeypatch)
-    _mock(monkeypatch, _about_route)
+    _mock(monkeypatch, _subreddit_route)
     feed = asyncio.run(add_subreddit("https://www.reddit.com/r/rust/"))
     assert (feed.key, feed.label) == ("rust", "rust")
     assert tomllib.loads(p.read_text(encoding="utf-8"))["enabled"] == ["reddit"]  # 加订阅自动启用
@@ -436,12 +436,12 @@ def test_add_subreddit_validates_and_persists(monkeypatch: pytest.MonkeyPatch, t
     assert [f.key for f in config.feeds_for("reddit")] == ["rust"]
 
 
-def test_add_subreddit_about_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_add_subreddit_page_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     from feedscope.subscriptions import SubscriptionError, add_subreddit
 
     use_config(monkeypatch, tmp_path, "")
     _fake_login(monkeypatch)
-    _mock(monkeypatch, _about_route)  # 壳页：subreddit 校验不通过
+    _mock(monkeypatch, _subreddit_route)  # 壳页：subreddit 校验不通过
     with pytest.raises(SubscriptionError, match="加不上"):
         asyncio.run(add_subreddit("nosuchsub"))
 
@@ -451,7 +451,7 @@ def test_add_subreddit_needs_login(monkeypatch: pytest.MonkeyPatch, tmp_path) ->
 
     use_config(monkeypatch, tmp_path, "")
     _fake_login(monkeypatch, cookies={})
-    _mock(monkeypatch, _about_route)
+    _mock(monkeypatch, _subreddit_route)
     with pytest.raises(SubscriptionError, match="需要登录"):
         asyncio.run(add_subreddit("rust"))
 

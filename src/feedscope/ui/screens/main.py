@@ -39,7 +39,11 @@ from feedscope.ui.layout import (
     score_col_width,
 )
 from feedscope.ui.screens.detail import DetailScreen
-from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
+from feedscope.ui.screens.source_setup import (
+    ManageSourcesScreen,
+    OnboardingScreen,
+    source_entry_text,
+)
 from feedscope.ui.wrap import wrap_display
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
@@ -241,13 +245,19 @@ class MainScreen(Screen[None]):
         不在注册表的 id 静默略过——卸载 / 改名后的残留条目无害，doctor 会报告
         配置概况。
         """
-        enabled = config.enabled_ids()
-        if enabled is None:
+        return self._live_sources(config.enabled_ids())
+
+    @staticmethod
+    def _live_sources(ids: list[str] | None) -> list[Source]:
+        """实例化 ids（None = 全部注册源），只留当前有可选信息流的源。
+
+        无可选信息流的源不进 Tab（零订阅的 rss / 内置流全被隐藏的源）：
+        空 tab 只有噪音；配置好订阅 / 取消隐藏后 F2 重勾即回来。
+        """
+        if ids is None:
             made = all_sources()
         else:
-            made = [cls() for sid in enabled if (cls := get_class(sid)) is not None]
-        # 无可选信息流的源不进 Tab（零订阅的 rss / 内置流全被隐藏的源）：
-        # 空 tab 只有噪音；配置好订阅 / 取消隐藏后 F2 重勾即回来
+            made = [cls() for sid in ids if (cls := get_class(sid)) is not None]
         return [s for s in made if s.feeds]
 
     def compose(self) -> ComposeResult:
@@ -299,19 +309,13 @@ class MainScreen(Screen[None]):
         订阅不至于刷屏）；无可选信息流的源不列出——勾上也只能得到空 tab，
         例外是可订阅源（Source.subscribable）：空订阅也列出，→ 进订阅管
         理屏就地添加（否则零订阅的 rss 永远进不了这个列表，鸡生蛋）。
+        行文案统一由 source_entry_text 生成（订阅管理返回后的同步也用它）。
         """
-        entries: list[tuple[str, str]] = []
-        for source in all_sources():
-            labels = [source.feed_labels.get(f, f) for f in source.feeds]
-            if not labels and not source.subscribable:
-                continue
-            if labels:
-                feeds = "、".join(labels[:3]) + (f" 等 {len(labels)} 个流" if len(labels) > 3
-                                                  else "")
-            else:
-                feeds = "无订阅 · → 添加"
-            entries.append((source.source_id, f"{source.label} [dim]{feeds}[/dim]"))
-        return entries
+        return [
+            (source.source_id, text)
+            for source in all_sources()
+            if (text := source_entry_text(source))
+        ]
 
     def _rebuild_enabled(self, ids: list[str]) -> None:
         """按启用列表重建源列表与选中位（纯状态，不碰 DOM）。
@@ -323,8 +327,7 @@ class MainScreen(Screen[None]):
         """
         chosen = set(ids)
         prev_id = self.sources[self.source_idx].source_id if self.sources else None
-        made = [cls() for sid in ids if (cls := get_class(sid)) is not None]
-        self.sources = [s for s in made if s.feeds]  # 空源不进 Tab（同 _enabled_sources）
+        self.sources = self._live_sources(ids)
         self._feed_memory = {k: v for k, v in self._feed_memory.items() if k in chosen}
         if prev_id is not None and any(s.source_id == prev_id for s in self.sources):
             self.source_idx = next(i for i, s in enumerate(self.sources) if s.source_id == prev_id)
@@ -415,20 +418,20 @@ class MainScreen(Screen[None]):
         self.workers.cancel_group(self, "more")
         self.run_worker(self._refresh(), exclusive=True)
 
-    async def _release_feed_loader(self) -> None:
+    async def release_feed_loader(self) -> None:
         """关掉当前流 loader 持有的活页签并复位（切流/登录前让出资源）。"""
         if self.feed_loader is not None:
             await self.feed_loader.close()
             self.feed_loader = None
 
     async def _refresh(self) -> None:
-        await self._release_feed_loader()  # 切流前关掉旧页签（await 完成再继续）
+        await self.release_feed_loader()  # 切流前关掉旧页签（await 完成再继续）
         if not self.sources:  # 全部停用：常驻空态指路（F2 再开），不退出
             view = self.query_one("#feed", ListView)
             view.clear()
             self.items = []
             self.app.sub_title = ""
-            self._show_empty("没有启用的源 · 按 F2 管理")
+            self.show_empty("没有启用的源 · 按 F2 管理")
             return
         source = self.current_source
 
@@ -447,9 +450,9 @@ class MainScreen(Screen[None]):
             hint = f"{exc} · Ctrl+U 登录"
             if source.source_id in self.app.accounts.refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
-                self._show_empty(hint)
+                self.show_empty(hint)
                 return
-            self._show_empty(str(exc))
+            self.show_empty(str(exc))
             # 撞墙即给入口：弹登录框与后续动线在 AccountFlow（_refresh 本就
             # 在 worker 里，其 wait_for_dismiss 合法）
             await self.app.accounts.on_login_wall(source, hint)
@@ -457,7 +460,7 @@ class MainScreen(Screen[None]):
         except Exception as exc:
             self.app.sub_title = "加载失败"
             feedback.fail(self, source, exc)
-            self._show_empty(f"加载失败：{feedback.failure_text(source, exc)}")
+            self.show_empty(f"加载失败：{feedback.failure_text(source, exc)}")
             return
 
         self.feed_loader = loader
@@ -469,10 +472,10 @@ class MainScreen(Screen[None]):
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
         else:
-            self._show_empty("没有内容 · F5 刷新 · Tab 或点击顶部 tab 切换站点")
+            self.show_empty("没有内容 · F5 刷新 · Tab 或点击顶部 tab 切换站点")
         self.app.sub_title = f"{len(self.items)} 条"
 
-    def _show_empty(self, text: str) -> None:
+    def show_empty(self, text: str) -> None:
         """空态/失败态：列表区无内容时的常驻屏内提示（notify 是瞬时反馈，这是常驻状态）。"""
         hint = self.query_one("#empty-hint", Label)
         hint.update(f"[dim]{escape(text)}[/dim]")
@@ -494,6 +497,8 @@ class MainScreen(Screen[None]):
             self.app.sub_title = f"{len(self.items)} 条 · 加载更多失败"
             feedback.fail(self, self.current_source, exc, action="加载更多失败")
             return
+        if loader is not self.feed_loader:
+            return  # 期间切流/刷新：旧 loader 的迟到结果不能混进新列表
         if not new:
             if loader.done:
                 self.app.sub_title = f"{len(self.items)} 条 · 没有更多了"
@@ -743,7 +748,7 @@ class MainScreen(Screen[None]):
         """Ctrl+U 的薄转发：分派与登录/登出过程在 AccountFlow。
 
         走 worker 因为 push_screen 的 wait_for_dismiss 只能在 worker 里用。
-        group 独立于列表加载的 default 组，u 不会打断在途的 _refresh。
+        group 独立于列表加载的 default 组，Ctrl+U 不会打断在途的 _refresh。
         """
         if not self.sources:
             feedback.info(self, "没有启用的源 · F2 管理")
@@ -758,7 +763,7 @@ class MainScreen(Screen[None]):
         """F2 源管理：勾选启用的源，保存即生效——增加 / 删除 / 修改启用集都走这里。
 
         走 worker 因为 push_screen 的 wait_for_dismiss 只能在 worker 里用，
-        group 独立于列表加载，s 不打断在途的 _refresh。
+        group 独立于列表加载，F2 不打断在途的 _refresh。
         """
         self.run_worker(self._manage_sources(), group="sources", exclusive=True)
 
@@ -853,4 +858,4 @@ class MainScreen(Screen[None]):
     # ---- 清理 ----
 
     async def on_unmount(self) -> None:
-        await self._release_feed_loader()  # 浏览器会话与连接池由 App.on_unmount 收
+        await self.release_feed_loader()  # 浏览器会话与连接池由 App.on_unmount 收

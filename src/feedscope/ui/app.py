@@ -2,7 +2,7 @@
 
 App 只保留跨屏职责——主题注册、启动序列（注册表检查 + 浏览器预热）、
 退出清理（会话/连接池）、全局退出键；主屏（tab 条/边栏/列表/导航）整体
-住在 MainScreen（SCREEN_CLASS 指定，框架启动即挂为默认屏），经 app.main
+住在 MainScreen（get_default_screen 返回，框架启动即挂为默认屏），经 app.main
 访问。这样键位归属与守卫自然对齐：主屏键只绑在主屏（弹层/详情在前台时
 不命中），全局键只剩 Ctrl+Q。
 """
@@ -80,8 +80,8 @@ class FeedScopeApp(App[None]):
         """后台预热浏览器会话：首条列表不用再付冷启动（Chrome 拉起几秒；
         UA 探针另有 7 天落盘缓存，多数启动只付 Chrome 拉起）。
 
-        知乎（通道页签）与 X（profile 读 cookie）都要浏览器，预热几乎总会
-        用上；失败静默——首次真正取数时自然再试并给正式报错。
+        知乎/Reddit（通道页签）与 X/Reddit（profile 读 cookie）都要浏览器，
+        预热几乎总用得上；失败静默——首次真正取数时自然再试并给正式报错。
         """
         try:
             await get_session().start()

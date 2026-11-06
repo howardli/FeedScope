@@ -16,8 +16,8 @@ def register(cls: type[Source]) -> type[Source]:
 def source_classes() -> list[type[Source]]:
     """全部已注册的源类（顺序即注册顺序）。
 
-    供键位绑定与源选择界面用——这两处要看「所有可选源」（含被停用的），
-    不必实例化；实例化路径（读配置过滤）走 all_sources。
+    供只需要类的路径（启动时「有没有注册任何源」检查）——要看运行时
+    实例（读配置过滤后的源）走 all_sources。
     """
     return list(_REGISTRY.values())
 
@@ -37,4 +37,5 @@ def get_class(source_id: str) -> type[Source] | None:
 
 
 def get_source(source_id: str) -> Source:
+    """按 id 实例化源；未注册直接 KeyError（登录/巡检等内部路径 fail-fast）。"""
     return _REGISTRY[source_id]()

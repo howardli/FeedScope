@@ -27,8 +27,9 @@ def failure_text(source: Source | None, exc: Exception, action: str = "请求失
 
 
 def fail(app: App, source: Source | None, exc: Exception, action: str = "请求失败") -> None:
-    """失败通知（error 级）。"""
-    app.notify(failure_text(source, exc, action), title="抓取失败", severity="error")
+    """失败通知（error 级）。标题跟随动作：登出/加载更多失败别都写成「抓取失败」。"""
+    title = "抓取失败" if action == "请求失败" else action
+    app.notify(failure_text(source, exc, action), title=title, severity="error")
 
 
 def warn(app: App, msg: str, title: str) -> None:

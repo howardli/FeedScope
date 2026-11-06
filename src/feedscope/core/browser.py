@@ -132,6 +132,9 @@ class ChannelTab:
             try:
                 return await page.evaluate(script, arg)
             except Exception:
+                # 弃掉的页签要真关掉：只置 None 会让它在 context 里留成孤儿页，
+                # 自愈几次就多出几只（浏览器会话关闭前一直占内存）
+                await close_page(page)
                 if attempt:
                     raise
                 self._page = None
@@ -153,7 +156,7 @@ class ChannelTab:
         补浏览器不会自动带的东西——headers 手动头；cookie_headers「cookie 值
         提升为头」的映射（如 X 的 ct0 -> X-Csrf-Token，页内就地读、永远新鲜，
         与 SPA 自己同一动作）；referrer 指定则覆盖页签自然 referer；as_text
-        拿 HTML 文本（Reddit）否则按 JSON 解析（知乎/X）。成功且正文非空时
+        拿 HTML 文本（Reddit）否则按 JSON 解析（知乎/X）。成功且拿到正文时
         顺手落样本（samples 未开启零开销，probe 改版修复流水线三源同权）。
         状态码原样上交，401/403 的语义转译归各源。
         """

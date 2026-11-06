@@ -85,6 +85,7 @@ class AnswerScreen(ReadingScreen):
             ]
         self._exhausted = False        # 评论到头，n 不再触发
         self._floor_count = 0          # 评论楼层序号，跨 load_more 递增
+        self._comments_error: str | None = None  # 首载失败文案（resize 重排时保持失败态）
 
     @property
     def _answer(self):
@@ -139,16 +140,29 @@ class AnswerScreen(ReadingScreen):
             Markdown(wrap_markdown(ans.content_md, self._md_width()), id="answer-content")
         )
         widgets.extend([divider(), Static(f"[b]{self._unit}[/b]", classes="comments-header")])
-        if self.cloader is not None and self.cloader.comments:
-            for c in self.cloader.comments:
-                widgets.extend(self._comment_floor(c))
-        elif self._exhausted:
-            widgets.append(dim_line(f"（没有{self._unit}）", id="cm-empty"))
+        if self.cloader is not None:
+            if self.cloader.comments:
+                for c in self.cloader.comments:
+                    widgets.extend(self._comment_floor(c))
+            else:
+                # 首批已回来但为空：到没到头都显示空态，别退回「加载中」（resize 重排
+                # 走的是同一渲染路径，状态必须与首次上屏一致）
+                widgets.append(dim_line(f"（没有{self._unit}）", id="cm-empty"))
+            if self._exhausted:
+                widgets.append(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
+            else:
+                self._hint = self._hint_widget()
+                widgets.append(self._hint)
+        elif self._comments_error is not None:
+            # 首载失败：保留失败态与 Ctrl+N 重试入口（错误行本身已说明动线）
+            widgets.append(
+                Static(
+                    f"[red]评论加载失败：{escape(self._comments_error)} · Ctrl+N 重试[/red]",
+                    id="cm-loading",
+                )
+            )
         else:
             widgets.append(Label(f"{self._unit}加载中…", id="cm-loading"))
-        if self._exhausted:
-            widgets.append(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
-        else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
         await body.mount(*widgets)
@@ -181,9 +195,6 @@ class AnswerScreen(ReadingScreen):
                     ),
                 ]
             )
-        # more_replies 不再提示：child 接口已拉到 is_end，残留只可能是站方
-        # 计数口径差（count 含被删/折叠的子回复）或个别补全失败——重试也
-        # 拿不到，提示只是阅读流里的噪音
         return widgets
 
     # ---- 评论加载（按需）----
@@ -195,26 +206,27 @@ class AnswerScreen(ReadingScreen):
         不会踩 HeaderTitle 未挂的时序坑。
         """
         self.app.sub_title = f"{self._answer.author} 的{self._floor_unit}"[:50]
+        self._comments_error = None
         try:
             self.cloader = await self.qloader.open_comments(self.index)
         except Exception as exc:
+            # 失败文案存下来：resize 重排也要还原成失败态，不能变回「加载中」
+            self._comments_error = feedback.failure_text(self.source, exc)
             feedback.fail(self.app, self.source, exc, action="评论加载失败")
             self._swap_status(
                 "cm-loading",
-                f"[red]评论加载失败：{escape(feedback.failure_text(self.source, exc))}"
-                " · Ctrl+N 重试[/red]",
+                f"[red]评论加载失败：{escape(self._comments_error)} · Ctrl+N 重试[/red]",
             )
             return
-        comments = self.cloader.comments
-        self._exhausted = self.cloader.done and not comments
-        await self._mount_floors(comments, first=True)
+        # done 与有没有评论无关：最后一页即使非空也已到头，尾行该换 EOF 标记
+        self._exhausted = self.cloader.done
+        await self._mount_floors(self.cloader.comments, first=True)
 
     async def _mount_floors(self, comments: list[Comment], *, first: bool) -> None:
         body = self._body_scroll()
         if first:
-            for sel in ("#cm-loading",):
-                for w in self.query(sel):
-                    await w.remove()
+            for w in self.query("#cm-loading"):
+                await w.remove()
             if not comments:
                 self._remove_hint()
                 tail: list[Widget] = [dim_line(f"（没有{self._unit}）", id="cm-empty")]
@@ -231,7 +243,11 @@ class AnswerScreen(ReadingScreen):
         for c in comments:
             widgets.extend(self._comment_floor(c))
         await body.mount(*widgets)
-        await self._mount_hint()
+        if self._exhausted:
+            self._remove_hint()
+            await body.mount(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
+        else:
+            await self._mount_hint()
 
     async def _swap_status(self, sel: str, text: str) -> None:
         for w in self.query(sel):
@@ -259,24 +275,31 @@ class AnswerScreen(ReadingScreen):
 
     async def _load_more(self) -> None:
         body = self._body_scroll()
+        cloader = self.cloader
+        if cloader is None:
+            return
         self._remove_hint()
         loading = Label("[dim]加载更多…[/dim]", id="cm-more-loading")
         await body.mount(loading)
         try:
-            new = await self.cloader.load_more()
+            new = await cloader.load_more()
         except Exception as exc:
             feedback.fail(self.app, self.source, exc, action="加载更多失败")
             new = []
+        if cloader is not self.cloader:
+            return  # 期间换了楼层/关闭：旧 loader 的迟到结果直接丢弃
         if loading.parent is not None:
             loading.remove()
         if not new:
-            if self.cloader.done:
-                self._exhausted = True
+            self._exhausted = cloader.done
+            if self._exhausted:
                 self._remove_hint()
                 await body.mount(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
             else:  # 拉空没到头（网慢/懒加载没触发）：可再按 Ctrl+N
                 await self._mount_hint()
             return
+        # 最后一批可能正好取尽：done 当场生效，尾行由 _mount_floors 统一处理
+        self._exhausted = cloader.done
         await self._mount_floors(new, first=False)
         # 与问题屏同一取舍：新楼层接在底部，视口停在原阅读断点不跳
 
@@ -287,7 +310,7 @@ class AnswerScreen(ReadingScreen):
         await self._retarget(-1)
 
     async def _retarget(self, delta: int) -> None:
-        """←/→ 换楼层：同问题内相邻楼层（更多楼屔回问题屏按 Ctrl+N 加载）。"""
+        """←/→ 换楼层：同问题内相邻楼层（更多楼层回问题屏按 Ctrl+N 加载）。"""
         n_answers = len(self.qloader.doc.answers)
         nxt = self.index + delta
         if not 0 <= nxt < n_answers:
@@ -304,6 +327,7 @@ class AnswerScreen(ReadingScreen):
             await loader.close()
         self.index = nxt
         self._exhausted = False
+        self._comments_error = None
         self._reset_render_state()
         self._rendered = False
         self._remove_hint()

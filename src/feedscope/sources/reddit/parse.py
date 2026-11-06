@@ -86,7 +86,7 @@ def parse_posts_html(html: str) -> list[FeedItem]:
                 source=SOURCE_ID,
                 id=pid[3:],
                 title=title,
-                url=urljoin(_SITE, permalink) if permalink.startswith("/") else _SITE,
+                url=urljoin(_SITE, permalink) if permalink else f"{_SITE}/comments/{pid[3:]}",
                 kind="self" if str(a.get("post-type") or "") in _SELF_TYPES else "link",
                 meta=" · ".join(parts),
                 extra={"subreddit": subreddit},
@@ -202,9 +202,13 @@ def _post_body(attrs: dict[str, str], html: str) -> str:
     href = str(attrs.get("content-href") or "")
     if ptype in _MEDIA_TYPES:
         label = {"image": "[图片]", "video": "[视频]", "gallery": "[相册]"}.get(ptype, "[媒体]")
-        target = href or urljoin(_SITE, str(attrs.get("permalink") or ""))
+        target = (
+            urljoin(_SITE, href)
+            if href
+            else urljoin(_SITE, str(attrs.get("permalink") or ""))
+        )
         return mark(label, target) if target else ""
-    return f"[原文]({href})" if href else ""
+    return mark("[原文]", urljoin(_SITE, href)) if href else ""
 
 
 def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:

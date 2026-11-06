@@ -304,7 +304,7 @@ def _tweet_from_result(r: dict) -> FeedItem | None:
         title=title,
         url=f"{BASE}/{handle}/status/{rest_id}",
         kind="tweet",
-        meta=f"{name} @{handle}".strip(),  # 署名「名字 @handle」；截断统一在 UI
+        meta=signature(name, handle),  # 署名「名字 @handle」；截断统一在 UI
         extra={"conversation_id": conversation_id} if conversation_id else {},
     )
 
@@ -417,7 +417,7 @@ def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
         or _media_markers(focal).strip()
         or "推文"
     )
-    meta = f"{name} @{handle}".strip()  # 署名「名字 @handle」（详情行全宽，不再截 8 格）
+    meta = signature(name, handle)  # 署名「名字 @handle」（详情行全宽，不再截 8 格）
     if legacy.get("reply_count"):
         meta += f" · {fmt_count(legacy['reply_count'])} 回复"
     if legacy.get("favorite_count"):
@@ -452,7 +452,10 @@ def _visible_text(r: dict) -> str:
                 offset = rng[0]  # url 实体索引仍是原文坐标，裁剪后要平移
         except UnicodeError:
             pass  # 转码失败（异常形态）就保留原文，别丢内容
-    return _strip_trailing_media(_expand_urls(text, legacy, offset), legacy)
+    # 长文的 url 实体坐标在 note_tweet 侧，legacy 里没有；硬套 legacy indices
+    # 会在 note 全文上错位替换（见 _expand_urls 的说明），长文一律不展开
+    expanded = text if _is_long_form(r) else _expand_urls(text, legacy, offset)
+    return _strip_trailing_media(expanded, legacy)
 
 
 def _strip_trailing_media(text: str, legacy: dict) -> str:

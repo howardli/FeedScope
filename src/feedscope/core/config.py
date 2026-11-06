@@ -4,10 +4,11 @@
   sources.toml（platformdirs，Linux 为 ~/.config/feedscope/sources.toml）
 - 容错哲学：配置问题绝不挡启动——文件不存在 = 全默认；TOML 语法错 / 结构
   不符 = 警告日志 + 当作不存在（feedscope doctor 可诊断）。
-- 写入只走 save_enabled（首启引导 / F2 管理界面）：保留各源 hide 段与
-  feeds 订阅表（订阅是用户数据，覆写丢段 = 丢订阅；rss 的 feed 地址、
-  reddit 的 subreddit 同款），无法识别的键丢弃；原子落盘（临时文件 +
-  os.replace），不留半截文件。
+- 写入走 save_enabled（首启引导 / F2 管理界面）与 update_feeds（订阅管理
+  屏 / rss 子命令）：保留各源 hide 段与 feeds 订阅表（订阅是用户数据，
+  覆写丢段 = 丢订阅；rss 的 feed、reddit 的 subreddit、telegram 的频道
+  同款），无法识别的键丢弃；原子落盘（临时文件 + os.replace），不留
+  半截文件。
 - 本模块对「源」只认 id 字符串，不认识任何具体源：订阅 key 的保留字
   （聚合流名 / 内置流名）由各源自己声明（Source.reserved_feed_keys），
   读取侧的过滤在 SubscribedSource、添加侧的拒收在 subscriptions。
@@ -52,7 +53,9 @@ def _read() -> tuple[dict, str]:
             return tomllib.load(f), ""
     except FileNotFoundError:
         return {}, "未创建（全部用内置默认）"
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        # 非 UTF-8 字节（手编/别的工具写坏）也是「坏配置」：容错哲学要求
+        # 绝不挡启动，不能让它以 UnicodeDecodeError 逃出 _read
         logger.warning("用户配置 %s 无法解析，已忽略：%s", path, exc)
         return {}, f"无法解析（{exc}）"
 
@@ -89,6 +92,9 @@ def feeds_for(source_id: str) -> list[Subscription]:
         [reddit.feeds]            # url 存 subreddit 站内地址，自解释
         rust = { url = "https://www.reddit.com/r/rust/" }
 
+        [telegram.feeds]
+        durov = { url = "https://t.me/durov/" }
+
     条目不是表 / 缺 url = 警告并跳过该条，不波及其他订阅（同一容错粒度：
     文件级坏 = 全默认已在上层 _read，这里是条目级）。保留字（聚合流名 /
     内置流名）撞名的 key 原样返回——过滤在各源的 SubscribedSource（读取
@@ -103,15 +109,29 @@ def feeds_for(source_id: str) -> list[Subscription]:
         return []
     feeds: list[Subscription] = []
     for key, entry in feeds_raw.items():
-        if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not entry["url"]:
-            logger.warning("订阅 %r 应为含非空 url 的表，已跳过", key)
-            continue
-        label = entry.get("label")
-        if label is not None and not isinstance(label, str):
-            logger.warning("订阅 %r 的 label 应为字符串，已回退用 key", key)
-            label = None
-        feeds.append(Subscription(key=key, label=label or key, url=entry["url"]))
+        feed = _subscription_from_entry(key, entry)
+        if feed is not None:
+            feeds.append(feed)
     return feeds
+
+
+def _subscription_from_entry(
+    key: str, entry: object, *, context: str = ""
+) -> Subscription | None:
+    """订阅表条目 -> Subscription；坏条目记警告并跳过。
+
+    读路径（feeds_for）与写路径（_valid_feeds）共用同一条校验规则——
+    「读得进来、写得回去」不再靠两处各自维护。
+    """
+    prefix = f"{context}：" if context else ""
+    if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not entry["url"]:
+        logger.warning("%s订阅 %r 应为含非空 url 的表，已跳过", prefix, key)
+        return None
+    label = entry.get("label")
+    if label is not None and not isinstance(label, str):
+        logger.warning("%s订阅 %r 的 label 应为字符串，已回退用 key", prefix, key)
+        label = None
+    return Subscription(key=key, label=label or key, url=entry["url"])
 
 
 def rss_feeds() -> list[Subscription]:
@@ -127,6 +147,8 @@ def enabled_ids() -> list[str] | None:
         enabled = ["zhihu", "x"]
 
     列表里的未知 id 不在此报错——注册表过滤在调用方（新装/卸载源后残留条目无害）。
+    手编重复 id 按首次出现去重：重复项会让主屏建出重复 tab（DuplicateIds），
+    顺序语义也只剩第一份有意义。
     """
     enabled = _read()[0].get("enabled")
     if enabled is None:
@@ -134,7 +156,7 @@ def enabled_ids() -> list[str] | None:
     if not isinstance(enabled, list) or not all(isinstance(i, str) for i in enabled):
         logger.warning("配置 enabled 应为源 id 列表，已忽略（默认全部启用）")
         return None
-    return list(enabled)
+    return list(dict.fromkeys(enabled))
 
 
 def is_configured() -> bool:
@@ -166,8 +188,8 @@ def _toml_array(values: list[str]) -> str:
 def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
     """feeds 表的写前校验：留 (key, label, url)，坏条目丢弃记日志。
 
-    与 feeds_for 的读校验同规则（表 + 非空 str url），保证读写往返一致；
-    label 只收 str，缺省回 key——读侧重抛 Subscription，写侧要的是行参数。
+    与 feeds_for 共用 _subscription_from_entry（表 + 非空 str url、label
+    只收 str），读写往返规则只有一处。
     """
     if raw is None:
         return []
@@ -176,12 +198,9 @@ def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
         return []
     out: list[tuple[str, str, str]] = []
     for key, entry in raw.items():
-        if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not entry["url"]:
-            logger.warning("覆写配置：订阅 %r 缺非空 url，已丢弃", key)
-            continue
-        label = entry.get("label")
-        label = label if isinstance(label, str) and label else key
-        out.append((key, label, entry["url"]))
+        feed = _subscription_from_entry(key, entry, context="覆写配置")
+        if feed is not None:
+            out.append((feed.key, feed.label, feed.url))
     return out
 
 
@@ -190,17 +209,20 @@ def _render_config(ids: list[str] | None, data: dict) -> list[str]:
 
     只写本工具认识的键：enabled + 各源非空 hide 段 + feeds 订阅表（其余
     丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消彼长，注释头
-    已说明归属）。feeds 是 rss 的订阅（用户数据，不是工具生成的状态），必须
-    原样保留——丢段等于丢订阅。
+    已说明归属）。feeds 是用户数据（不是工具生成的状态），必须原样保留——
+    丢段等于丢订阅。
     """
     lines = [
         "# FeedScope 源配置：enabled = 启用的源；各源 hide = 隐藏的信息流",
-        "# feeds = 订阅表（key = { label, url }）：rss 订 feed 地址、reddit 订 subreddit",
-        "# 由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），也可手动编辑",
+        "# feeds = 订阅表（key = { label, url }）：rss 订 feed、reddit 订 subreddit、",
+        "# telegram 订频道；由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），",
+        "# 也可手动编辑",
     ]
     if ids is not None:
         lines += ["", f"enabled = {_toml_array(ids)}"]
     for sid, section in data.items():
+        if sid == "enabled":
+            continue  # 已由参数 ids 统一重写，不是「无法识别的顶层键」
         if not isinstance(section, dict):
             logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)
             continue
@@ -237,7 +259,7 @@ def _write_config(lines: list[str]) -> None:
 
 def save_enabled(ids: list[str]) -> None:
     """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。"""
-    _write_config(_render_config(list(ids), _read()[0]))
+    _write_config(_render_config(list(dict.fromkeys(ids)), _read()[0]))
 
 
 def update_feeds(
@@ -247,9 +269,9 @@ def update_feeds(
 
     enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺该源
     → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）。删到空是否摘
-    enabled 由 drop_enabled_when_empty 决定：rss 摘（feeds 全来自订阅，
-    没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。enabled
-    未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
+    enabled 由 drop_enabled_when_empty 决定：rss / telegram 摘（feeds 全
+    来自订阅，没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。
+    enabled 未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
     """
     data = _read()[0]
     section = data.get(source_id)
@@ -263,8 +285,17 @@ def update_feeds(
         data[source_id] = section
     elif source_id in data:
         del data[source_id]
-    enabled = data.get("enabled")
-    if isinstance(enabled, list):
+    raw_enabled = data.get("enabled")
+    # 坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，
+    # 也不把畸形值原样写回去——读侧本来就是当默认全启用；空列表是
+    # 合法状态（零启用），保留
+    if isinstance(raw_enabled, list):
+        enabled = list(dict.fromkeys(x for x in raw_enabled if isinstance(x, str)))
+        if raw_enabled and not enabled:
+            enabled = None
+    else:
+        enabled = None
+    if enabled is not None:
         if feeds and source_id not in enabled:
             enabled.append(source_id)
         if not feeds and drop_enabled_when_empty and source_id in enabled:

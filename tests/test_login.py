@@ -13,7 +13,7 @@ import pytest
 
 import feedscope.sources  # noqa: F401  import 即注册
 from feedscope.core.registry import get_source
-from feedscope.login import _clear_cookies, _has_all_cookies
+from feedscope.login import _clear_cookies, _logged_in
 
 
 class FakeContext:
@@ -41,15 +41,42 @@ def zhihu():
     return get_source("zhihu")
 
 
-def test_has_all_cookies_x_needs_both(x) -> None:
-    assert asyncio.run(_has_all_cookies(FakeContext({"auth_token", "ct0"}), x)) is True
-    assert asyncio.run(_has_all_cookies(FakeContext({"auth_token"}), x)) is False
-    assert asyncio.run(_has_all_cookies(FakeContext(set()), x)) is False
+@pytest.fixture()
+def reddit():
+    return get_source("reddit")
 
 
-def test_has_all_cookies_zhihu_single(zhihu) -> None:
-    assert asyncio.run(_has_all_cookies(FakeContext({"z_c0"}), zhihu)) is True
-    assert asyncio.run(_has_all_cookies(FakeContext(set()), zhihu)) is False
+def _jwt(claims: dict) -> str:
+    """构造只带 payload 的假 JWT（判登只看 claims，签名不验）。"""
+    import base64
+    import json as _json
+
+    def enc(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    return enc(b'{"alg":"none"}') + "." + enc(_json.dumps(claims).encode()) + ".x"
+
+
+def test_logged_in_x_needs_both(x) -> None:
+    assert asyncio.run(_logged_in(FakeContext({"auth_token", "ct0"}), x)) is True
+    assert asyncio.run(_logged_in(FakeContext({"auth_token"}), x)) is False
+    assert asyncio.run(_logged_in(FakeContext(set()), x)) is False
+
+
+def test_logged_in_zhihu_single(zhihu) -> None:
+    assert asyncio.run(_logged_in(FakeContext({"z_c0"}), zhihu)) is True
+    assert asyncio.run(_logged_in(FakeContext(set()), zhihu)) is False
+
+
+def test_logged_in_reddit_uses_login_verify(reddit) -> None:
+    """Reddit 的判据是 token_v2 的 JWT 解码，不是 cookie 全集：
+    登录态只有 token_v2、没有 reddit_session 时也算已登录，反之匿名 token 不算。"""
+    ctx = FakeBrowserContext({"token_v2"}, jar={"token_v2": _jwt({"sub": "user"})})
+    assert asyncio.run(_logged_in(ctx, reddit)) is True
+    anon = FakeBrowserContext(
+        {"reddit_session", "token_v2"}, jar={"token_v2": _jwt({"sub": "loid"})}
+    )
+    assert asyncio.run(_logged_in(anon, reddit)) is False
 
 
 def test_clear_cookies_x_returns_had_and_clears_pair(x) -> None:
@@ -149,24 +176,26 @@ def test_login_polls_cookie_success(monkeypatch, capsys) -> None:
 
 def test_login_verify_wins_over_cookie_presence(monkeypatch) -> None:
     """Reddit：login_verify（JWT 解码）是判据——匿名态 sub=loid 时 cookie 在也不算登录。"""
-    import base64
-    import json as _json
-
-    def jwt(claims: dict) -> str:
-        def enc(b: bytes) -> str:
-            return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-
-        return enc(b'{"alg":"none"}') + "." + enc(_json.dumps(claims).encode()) + ".x"
-
-    ctx = FakeBrowserContext({"token_v2"}, jar={"token_v2": jwt({"sub": "loid"})})  # 匿名 token：cookie 在、未登录
-    _fake_pw(monkeypatch, ctx)
+    anon = FakeBrowserContext({"token_v2"}, jar={"token_v2": _jwt({"sub": "loid"})})
+    _fake_pw(monkeypatch, anon)
     _fast_poll(monkeypatch)
     assert asyncio.run(login_mod().login("reddit")) is False  # 不会误报成功（超时退出）
 
-    ctx2 = FakeBrowserContext({"token_v2"}, jar={"token_v2": jwt({"sub": "user"})})  # 登录态 token
-    _fake_pw(monkeypatch, ctx2)
+    user = FakeBrowserContext({"token_v2"}, jar={"token_v2": _jwt({"sub": "user"})})
+    _fake_pw(monkeypatch, user)
     _fast_poll(monkeypatch)
     assert asyncio.run(login_mod().login("reddit")) is True
+
+
+def test_login_x_requires_cookie_pair(monkeypatch) -> None:
+    """X 的登录轮询与判登门同口径：auth_token 单独出现不算成功，ct0 成对才行。"""
+    _fake_pw(monkeypatch, FakeBrowserContext({"auth_token"}))
+    _fast_poll(monkeypatch)
+    assert asyncio.run(login_mod().login("x")) is False
+
+    _fake_pw(monkeypatch, FakeBrowserContext({"auth_token", "ct0"}))
+    _fast_poll(monkeypatch)
+    assert asyncio.run(login_mod().login("x")) is True
 
 
 def test_login_timeout_returns_false(monkeypatch, capsys) -> None:

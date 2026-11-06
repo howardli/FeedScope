@@ -231,8 +231,9 @@ class SliceDetailLoader(DetailLoader):
     Answer 序列（首批 = 前 floor_page 条）；带评论层的源再给与楼层对齐的
     comment_trees（open_comments 按下标切出对应树的 SliceCommentsLoader，
     不给则与本类约定不支持评论层）。「doc = 已加载全部」的不变量由本类
-    保证（load_more 的新楼层 append 进 doc.answers）。子类只剩薄声明：
-    source_label（越界报错文案）与页宽。
+    保证（load_more 的新楼层 append 进 doc.answers）。子类只剩薄适配：
+    把源自己的 detail 类型摊成 floors/comment_trees，再声明 source_label
+    （越界报错文案）与页宽。
     """
 
     source_label: ClassVar[str] = ""  # 报错文案里的源标签（如 "HN"）
@@ -289,35 +290,37 @@ class Source(ABC):
     """源基类。子类用 @register 注册，由 TUI 装载。
 
     一个源可以暴露多个命名信息流（如知乎的热榜/推荐/关注），
-    feeds 的顺序就是 Tab 切换顺序。类里写死的是内置默认流；用户可在
+    feeds 的顺序就是左侧边栏的切流顺序。类里写死的是内置默认流；用户可在
     sources.toml 隐藏内置流（见 core/config.py），__init__ 合成实例视图。
 
     类型词汇表归源所有，UI 不认识任何具体类型：
-    - kind_labels：kind -> 元信息列标签（如 pin -> "想法"），预告 Enter 跳浏览器；
+    - kind_labels：kind -> 元信息列标签（如 video -> "视频"），预告 Enter 跳浏览器；
     - detail_kinds：Enter 进终端详情屏的 kind，其余一律跳浏览器。
     """
 
     source_id: ClassVar[str]  # 注册键，如 "zhihu"
     label: ClassVar[str]  # 展示名，如 "知乎"
-    feeds: ClassVar[list[str]] = []  # 命名信息流；空 = 只有默认流（name=""）
+    feeds: ClassVar[list[str]] = []  # 命名信息流；空 = 无可选流（不进 Tab）
     feed_labels: ClassVar[dict[str, str]] = {}  # 信息流显示名，缺省用 name 本身
     supports_detail: ClassVar[bool] = False  # 决定 Enter 是否可能进详情屏
     supports_comments: ClassVar[bool] = False  # 决定详情屏 Enter 是否可能进评论层
-    subscribable: ClassVar[bool] = False  # 信息流来自用户订阅：F2 里 Enter 进订阅管理屏
+    subscribable: ClassVar[bool] = False  # 信息流来自用户订阅：F2 里 → 进订阅管理屏
     kind_labels: ClassVar[dict[str, str]] = {}  # kind -> 元信息列标签
     detail_kinds: ClassVar[frozenset[str]] = frozenset({""})
-    detail_unit_label: ClassVar[str] = "回答"  # 详情屏楼层单位词（X 覆写为"回复"）
+    detail_unit_label: ClassVar[str] = "回答"  # 详情屏楼层词（X/V2EX「回复」、HN/Reddit「评论」）
     comment_unit_label: ClassVar[str] = "评论"  # 楼层内评论子区的单位词（无评论产出的源用不到）
     login_url: ClassVar[str] = ""  # 有登录需求的源声明登录页；空 = 无需登录
     login_cookie: ClassVar[str] = (
-        ""  # 登录成功写入 profile 的 cookie 名（feedscope login 判登依据）
+        ""  # 登录轮询的兜底 cookie（未声明 logout_cookies / login_verify 时用）
     )
     login_verify: ClassVar[Any] | None = (
-        None  # async (browser_context) -> bool；登录成功的浏览器级判据
+        None  # async (browser_context) -> bool；登录成功的浏览器级判据（优先）
     )
     # （cookie 判登不可靠的源覆盖此钩子，如 Reddit：token_v2 匿名访客也发，
-    #   登录成功以 JWT 解码出 sub="user" 为准；None = 沿用 login_cookie 轮询）
-    logout_cookies: ClassVar[list[str]] = []  # 登出要清的 cookie 名（判登全集）；空 = 无需登出
+    #   登录成功以 JWT 解码出 sub="user" 为准；None = 判登 cookie 全集（再退 login_cookie））
+    logout_cookies: ClassVar[list[str]] = (
+        []  # 判登/登出 cookie 全集；空 = 只认 login_cookie / login_verify
+    )
     reserved_feed_keys: ClassVar[tuple[str, ...]] = (
         ()  # 订阅 key 的保留字（内置流名/聚合流名）：添加入口拒收撞名订阅的唯一依据
     )
@@ -339,7 +342,7 @@ class Source(ABC):
         """打开信息流返回可翻页加载器；子类必须实现（唯一主入口）。"""
 
     def label_of(self, name: str) -> str:
-        """流名 -> 显示名；未知流统一抛 ValueError（各源 open_feed 的守卫收一处）。"""
+        """流名 -> 显示名；未知流统一抛 ValueError（命名流的 open_feed 守卫收一处）。"""
         label = self.feed_labels.get(name)
         if label is None:
             raise ValueError(f"未知信息流：{name}")

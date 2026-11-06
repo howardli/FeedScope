@@ -7,7 +7,7 @@
 
 频率限制官方未明示（社区口径约 120 次/时/IP）：刷一次流 1 请求、开一篇
 详情 1 请求，正常阅读离上限很远。要按节点订阅时另有 v2 API（需 Personal
-Access Token）与 v1 的 node_name 查询，不在 MVP 这层。
+Access Token）与 v1 的 node_name 查询，本层不做。
 """
 
 from __future__ import annotations

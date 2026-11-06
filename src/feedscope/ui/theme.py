@@ -9,7 +9,7 @@
 
 Textual 8 的 Theme 是数据类：这些色直接喂给 ColorSystem，
 Header/Footer/Markdown/ListView 自动取色，无需逐组件写 CSS。两处派生
-不合意、经 variables/CSS 覆写（后者见 app.py 的「正文统一格式」规则）：
+不合意、经 variables/CSS 覆写（后者见 ui/screens/reading.py 的 READING_CSS）：
 - Markdown 标题取 primary 会整行变蓝（H5/H6 甚至 ansi_cyan）——抹平成
   段落样式，所有源的正文同一种格式；
 - 链接缺省取前景灰，灰底灰字认不出可点——编辑器蓝只留给链接。
@@ -36,7 +36,7 @@ FEEDSCOPE_THEME = Theme(
     variables={
         "footer-key-foreground": "#9aa0a6",
         # 链接：缺省取前景灰（灰底灰字认不出可点），编辑器蓝只留给这里
-        # （Markdown 标题的统一格式见 app.py CSS，不占强调色）
+        # （Markdown 标题的统一格式见 reading.py 的 READING_CSS，不占强调色）
         "link-color": "#569cd6",
         # 侧栏未聚焦选中带（VS Code 未聚焦选中同款灰）：boost 字段在 CSS 变量
         # $boost 里是 4% 半透明悬浮层（铺了看不见），实底只能走 variables

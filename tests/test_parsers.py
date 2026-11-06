@@ -261,7 +261,7 @@ def test_zhihu_md_sticker_becomes_alt_text() -> None:
 
 
 def test_zhihu_api_comment() -> None:
-    """comment_v5 JSON -> Comment：赞数/绝对时间/子回复/more_replies/删除过滤。"""
+    """comment_v5 JSON -> Comment：赞数/绝对时间/子回复/删除过滤。"""
     from feedscope.core.timefmt import fmt_unix
     from feedscope.sources.zhihu.parse import _api_comments
 
@@ -295,7 +295,6 @@ def test_zhihu_api_comment() -> None:
     assert sub.votes == ""  # 0 赞为空
     assert sub.content_md == "回复 @李四：确实"
     assert sub.replies == []
-    assert top.more_replies == 2  # 3 条子回复 - 带出 1 条
     assert _api_comments({"data": []}) == []  # 空页不炸
 
 
@@ -468,6 +467,18 @@ def test_x_tweet_long_form_truncated_by_display_width() -> None:
     assert display_width(it.title) <= 281
     assert it.title.startswith("字")
     assert it.title.endswith("…")
+
+
+def test_x_tweet_long_form_does_not_apply_legacy_url_indices() -> None:
+    """note_tweet 的正文索引与 legacy 不是同一坐标系：legacy URL 实体不能套到长文上。
+    （旧实现会在长文首字符处错位替换成 display_url。）"""
+    r = _tweet_result("1001", text="预览…", note="长文正文内容")
+    r["legacy"]["entities"]["urls"] = [
+        {"url": "https://t.co/x", "display_url": "bad.example", "indices": [0, 2]}
+    ]
+    it = _tweet_from_result(r)
+    assert it is not None
+    assert it.title == "长文正文内容"
 
 
 def test_x_tweet_noise_dropped() -> None:

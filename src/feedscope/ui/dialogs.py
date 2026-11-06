@@ -88,7 +88,10 @@ class InputScreen(DialogScreen):
     在输入行与按钮行间移动焦点（ArrowModalScreen）。
     """
 
-    CSS = """
+    # Screen.CSS 不沿 MRO 合并（子类定义 CSS 会整体遮蔽基类的，见 reading.py
+    # 同款说明）：这里必须显式拼上 DialogScreen 的卡片样式，否则输入框弹层
+    # 只有定宽、没有边框/内边距/背景
+    CSS = DialogScreen.CSS + """
     .dialog-fixed { width: 64; }  /* 输入行要 1fr：卡片定宽，输入行才有得铺 */
     """
 

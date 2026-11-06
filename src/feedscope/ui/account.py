@@ -1,6 +1,6 @@
 """账号动线：撞墙自动询问与 Ctrl+U 手动登录/登出的编排（从 app.py 拆出）。
 
-App 只留键位转发与两行胶水，状态与全过程在这里：
+MainScreen 只留 Ctrl+U 转发，状态与全过程在这里：
 - in_progress（有头登录进行中）：挡下刷新/切源，独占 profile 锁期间不碰浏览器
 - refused（本次运行内已拒绝询问的源）：撞墙不再自动弹框，只留常驻
   「Ctrl+U 登录」提示；Ctrl+U 手动登录照常可用，登录成功/登出后清除，
@@ -42,7 +42,7 @@ class AccountFlow:
             self.app.run_worker(self.login(source), group="login", exclusive=True)
         else:
             self.refused.add(source.source_id)
-            self.app.main._show_empty(hint)
+            self.app.main.show_empty(hint)
             feedback.info(self.app, "已取消，本次运行不再自动询问；Ctrl+U 可登录")
 
     async def open(self, source: Source) -> None:
@@ -50,7 +50,7 @@ class AccountFlow:
         未登录弹登录。
 
         走 worker 因为 push_screen 的 wait_for_dismiss 只能在 worker 里用。
-        group 独立于列表加载的 default 组，u 不会打断在途的 _refresh。
+        group 独立于列表加载的 default 组，Ctrl+U 不会打断在途的 _refresh。
         """
         if not source.login_url:
             feedback.info(self.app, f"{source.label} 无需登录")
@@ -84,7 +84,7 @@ class AccountFlow:
         """
         self.in_progress = True
         try:
-            await self.app.main._release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
+            await self.app.main.release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
             await close_session()
             try:
                 ok = await login.login(source.source_id, quiet=True)

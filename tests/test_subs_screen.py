@@ -96,6 +96,7 @@ async def _run_flow(cfg, monkeypatch) -> None:
         sl = app.screen.query_one(SelectionList)
         assert "rss" in sl.selected, "订阅管理返回后 rss 自动勾选"
         assert app.screen.selected_ids == ["rss"]
+        assert "全部" in str(sl.get_option_at_index(5).prompt), "行文案同步出新的信息流"
 
         # 保存：rss 进 tab，侧栏出现「全部」+ 订阅流，列表加载出内容
         await pilot.click("#setup-confirm")
@@ -110,7 +111,24 @@ def test_subs_screen_full_flow(rss_env, monkeypatch) -> None:
     asyncio.run(_run_flow(rss_env, monkeypatch))
 
 
-# ---- Reddit 订阅流：SubsStore 分派 + about 校验 + 落盘 + 勾选同步 ----
+async def _run_input_dialog_style_flow() -> None:
+    """输入框弹层与确认/账号弹层同一张卡片：Screen.CSS 不沿 MRO 合并，
+    子类拼 CSS 时漏掉基类就会只剩定宽、没有边框/内边距/背景。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
+        await app.push_screen(InputScreen("样式检查"))
+        await pilot.pause()
+        card = app.screen.query_one(".dialog-card")
+        assert card.styles.padding.top == 1, "输入框卡片丢了 DialogScreen 的内边距"
+        assert card.styles.background.a > 0, "输入框卡片丢了 DialogScreen 的背景"
+
+
+def test_input_dialog_keeps_card_style(rss_env) -> None:
+    asyncio.run(_run_input_dialog_style_flow())
+
+
+# ---- Reddit 订阅流：SubsStore 分派 + 页面校验 + 落盘 + 勾选同步 ----
 
 
 @pytest.fixture()
@@ -162,7 +180,7 @@ async def _run_reddit_flow(cfg, monkeypatch) -> None:
         assert "subreddit" in app.screen.query_one(Input).placeholder  # 文案按源注入
         app.screen.query_one(Input).value = "https://www.reddit.com/r/rust/"
         await pilot.press("enter")
-        assert await settle(pilot, lambda: _rows(app) == 1), "about 校验通过后落盘"
+        assert await settle(pilot, lambda: _rows(app) == 1), "页面校验通过后落盘"
         from feedscope.core import config as cfg_mod
 
         assert [f.key for f in cfg_mod.feeds_for("reddit")] == ["rust"]

@@ -2,7 +2,8 @@
 """源插件包：import 即注册（类装饰器 @register），import 顺序 = Tab 顺序。
 
 新增一个源 = 按下面的模板建一个包 + 在这里挂一行 import，UI 与 core 零改动
-（用户侧隐藏内置流走 sources.toml，见 core/config.py，不动这里）：
+（用户侧隐藏内置流走 sources.toml，见 core/config.py，不动这里；可订阅源
+另在 subscriptions 登记一个 SubsStore，test_source_caps 会查漏）：
 
     sources/<id>/
       fetch.py      取数层：拿原始数据（httpx / 通道页签 fetch / DOM 提取），
@@ -17,7 +18,9 @@
   feeds 加法合成、「全部」流的四级错误出口全在基类，子类只注入
   _fetch_merged / _open_one 两个差异
 - 详情一次拉全树（HN / Reddit / V2EX 形）：楼层/评论 loader 继承
-  core.source.SliceDetailLoader / 用 StaticDetailLoader，翻页切片零代码
+  core.source.SliceDetailLoader，翻页切片零代码
+- 正文随列表带回（RSS / Telegram 形）：详情用 core.source.StaticDetailLoader，
+  进详情零请求
 - 讨论树深层拍平：core.tree（@ 父作者前缀规则全库唯一实现）
 
 依赖方向只允许 __init__ -> fetch -> parse -> core（parse 永远是最底层叶子）。

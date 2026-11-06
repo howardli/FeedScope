@@ -213,7 +213,7 @@ def test_failed_login_no_reprompt(login_registry, monkeypatch) -> None:
     async def _fail_login(source_id: str, *, quiet: bool = False) -> bool:
         return False  # 用户关掉登录窗口 / 超时
 
-    # app.py 持有 login 模块对象本身（from feedscope import login），替换模块属性即生效
+    # ui/account.py 持有 login 模块对象本身（from feedscope import login），替换模块属性即生效
     monkeypatch.setattr(login_mod, "login", _fail_login)
     asyncio.run(_run_failed_login_flow())
 
