@@ -10,7 +10,7 @@
 合成），无登录、无评论层；详情读列表自带正文（extra 透传），进详情零请求，
 摘要外没有的部分 Ctrl+O 跳浏览器。频道帖的正文是行内 HTML，走 html_to_md
 共用管线；图片/视频换 [图片]/[视频] 记号。翻页走 ?before= 游标（单频道流）；
-「全部」聚合流一次并发拉全、StaticFeedLoader 一次到头。
+「全部」聚合流一次并发拉全、内存切片上屏（SliceFeedLoader）。
 """
 
 from __future__ import annotations

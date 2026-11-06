@@ -27,6 +27,7 @@ key，url 存站内地址自解释）走加法——零订阅仍有内置流（�
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json as _json
 from typing import ClassVar
@@ -169,4 +170,8 @@ class RedditSource(Source):
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         await require_login("帖子详情")
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
-        return RedditDetailLoader.from_detail(parse_thread_html(html, fallback_title=item.title))
+        # 1.5MB 级 SSR 页的解析 ~160ms：放工作线程跑，不卡事件循环（解析是
+        # 纯函数；HTML2Text 已线程本地化，见 core.media._h2t）。换篇取消的是
+        # await，线程里跑完的旧结果随陈旧守卫丢弃
+        detail = await asyncio.to_thread(parse_thread_html, html, fallback_title=item.title)
+        return RedditDetailLoader.from_detail(detail)

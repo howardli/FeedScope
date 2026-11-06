@@ -343,6 +343,31 @@ def test_merge_feeds_dedup_urls_keeps_first_written() -> None:
     assert errors == []
 
 
+def test_slice_feed_loader_pages_in_memory() -> None:
+    """SliceFeedLoader：整批在内存、首屏一片、Ctrl+N 零请求增量（聚合流防冻）。
+
+    feed_page 用小值驱动翻页路径（真实默认 100：约三屏一批）。"""
+    from feedscope.core.models import FeedItem
+    from feedscope.core.source import SliceFeedLoader
+
+    def _items(n: int) -> list[FeedItem]:
+        return [FeedItem(source="rss", id=str(i), title=f"t{i}", url=f"u{i}") for i in range(n)]
+
+    class _Narrow(SliceFeedLoader):
+        feed_page = 3
+
+    loader = _Narrow(_items(8))
+    assert [it.id for it in loader.items] == ["0", "1", "2"], "首批只有一页"
+    assert not loader.done
+    assert [it.id for it in asyncio.run(loader.load_more())] == ["3", "4", "5"]
+    assert not loader.done
+    assert [it.id for it in asyncio.run(loader.load_more())] == ["6", "7"], "末批可短"
+    assert loader.done and len(loader.items) == 8, "items = 已加载全部（不变量）"
+    assert asyncio.run(loader.load_more()) == [], "到头后空批"
+
+    assert SliceFeedLoader(_items(2)).done, "不足一页 = 打开即到头（小列表零行为变化）"
+
+
 def test_dedup_append_drops_none_and_repeats() -> None:
     a = FeedItem(source="zhihu", id="x", title="t", url="u")
     b = FeedItem(source="zhihu", id="x", title="t2", url="u2")

@@ -125,6 +125,25 @@ def test_open_all_merges_and_isolates_failures(monkeypatch: pytest.MonkeyPatch, 
         asyncio.run(loader.close())
 
 
+def test_open_all_feeds_via_slice_loader(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """聚合流上屏走内存切片（几百条一次挂载会把无虚拟化的列表冻住秒级）：
+    loader 是 SliceFeedLoader，Ctrl+N 零请求补全到全部。"""
+    use_config(monkeypatch, tmp_path, _CFG)
+    _routemock_http(monkeypatch)
+    loader = asyncio.run(get_source("rss").open_feed("all"))
+    try:
+        from feedscope.core.source import SliceFeedLoader
+
+        assert isinstance(loader, SliceFeedLoader)
+        total = len(loader.items) + len(loader._rest) if hasattr(loader, "_rest") else len(loader.items)
+        assert total == 3, "切片不动数据总量（3 条小样本全部在内存）"
+        while not loader.done:
+            asyncio.run(loader.load_more())
+        assert len(loader.items) == 3, "翻完 = 全部上屏"
+    finally:
+        asyncio.run(loader.close())
+
+
 def test_open_all_all_dead_raises(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     use_config(
         monkeypatch,

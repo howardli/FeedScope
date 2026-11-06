@@ -53,8 +53,9 @@ class RssSource(SubscribedSource):
             all_view=False,
             fallback_url=feed.url,
         )
-        # 0 条 = 大概率源坏了（改版/地址失效），静态首屏出口统一报
-        return self.static_feed(items, feed.label)
+        # 0 条 = 大概率源坏了（改版/地址失效），切片出口统一报；单个
+        # feed 也可能几百条，切片上屏防一次性挂载冻结
+        return self.sliced_feed(items, feed.label)
 
     def _detail_time(self, extra: dict[str, Any]) -> str:
         return fmt_unix(extra.get("published") or None)

@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import html as _html
 import re
+import threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import html2text
 
 from feedscope.core.const import new_h2t
 from feedscope.core.text import strip_zwsp
@@ -91,7 +96,20 @@ IMG_RE = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
 _ANCHOR_IMG_RE = re.compile(r"(<a\b[^>]*>)\s*\x00(\d+)\x00\s*</a>", re.IGNORECASE)
 
 
-_H2T = new_h2t()  # 模块级实例复用（handle 自带状态复位，省每调用重建）
+_H2T_LOCAL = threading.local()
+
+
+def _h2t() -> html2text.HTML2Text:
+    """本线程的 HTML2Text 实例。
+
+    html2text 的 handle() 自带状态复位，但实例内部缓冲跨调用复用——两个
+    线程同时 handle 同一实例会互踩输出。大正文解析会放工作线程跑（见
+    reddit 的 open_detail），事件循环线程与工作线程各持一份实例：
+    模块级单例的复用语义不变（每线程一次构造），线程间不再共享。"""
+    h = getattr(_H2T_LOCAL, "h2t", None)
+    if h is None:
+        h = _H2T_LOCAL.h2t = new_h2t()
+    return h
 
 
 def text_to_md(html: str) -> str:
@@ -101,7 +119,7 @@ def text_to_md(html: str) -> str:
     与 html_to_md 同一收尾（strip_zwsp + strip）；带媒体的正文走 html_to_md。"""
     if not html:
         return ""
-    return strip_zwsp(_H2T.handle(html)).strip()
+    return strip_zwsp(_h2t().handle(html)).strip()
 
 
 def html_to_md(html: str) -> str:
@@ -125,4 +143,4 @@ def html_to_md(html: str) -> str:
     tok = Tokens()
     stashed = IMG_RE.sub(lambda m: tok.stash(mark("[图片]", pick_url(m.group(0), ("src",)))), html)
     stashed = _ANCHOR_IMG_RE.sub(_unwrap_anchor, stashed)
-    return strip_zwsp(tok.expand(_H2T.handle(stashed))).strip()
+    return strip_zwsp(tok.expand(_h2t().handle(stashed))).strip()

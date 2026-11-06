@@ -210,6 +210,34 @@ class CommentLoader(ABC):
         """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
 
 
+class SliceFeedLoader(FeedLoader):
+    """整批条目已在内存的信息流加载器：翻页是本地切片，零额外请求。
+
+    「一次拉全」的流（RSS 聚合「全部」/ 单订阅）共用：数据全量在内存，
+    但首屏只上屏 feed_page 条、Ctrl+N 增量补——Textual 的 ListView 没有
+    虚拟化，几百行一次性挂载/改宽重排会冻结秒级，切片把它压到常数。
+    与 SliceCommentsLoader / SliceDetailLoader 同形（「items = 已加载
+    全部」的不变量由本类保证）。
+    """
+
+    feed_page: ClassVar[int] = 100  # 首批与每次 Ctrl+N 的条数（约三屏）
+
+    def __init__(self, items: Sequence[FeedItem]) -> None:
+        self.items = list(items[: self.feed_page])
+        self._rest = list(items[self.feed_page :])
+
+    @property
+    def done(self) -> bool:
+        return not self._rest
+
+    async def load_more(self) -> list[FeedItem]:
+        if self.done:
+            return []
+        batch, self._rest = self._rest[: self.feed_page], self._rest[self.feed_page :]
+        self.items.extend(batch)  # 「items = 已加载全部」不变量
+        return batch
+
+
 class StaticDetailLoader(DetailLoader):
     """一次性到头的详情加载器：doc 即全部内容，无楼层可翻、无资源可释。
 
@@ -428,14 +456,23 @@ class Source(ABC):
         return label
 
     def static_feed(self, items: list[FeedItem], label: str) -> StaticFeedLoader:
-        """静态首屏出口：0 条守卫 + 一次性 loader（一次拉全、无翻页的流用）。
+        """静态首屏出口：0 条守卫 + 一次性 loader（一次拉全的小流用）。
 
         与 first_batch（增量 Loader 形态）并列的静态形态——「parse 全量 →
-        require_feed_items → StaticFeedLoader」三行收一处（知乎热榜 / V2EX /
-        RSS 单订阅同形）。
+        require_feed_items → StaticFeedLoader」三行收一处（知乎热榜 / V2EX
+        这类一页几十条的小流同形；上百条的静态流用 sliced_feed 切片上屏）。
         """
         require_feed_items(items, self.label, label)
         return StaticFeedLoader(items)
+
+    def sliced_feed(self, items: list[FeedItem], label: str) -> SliceFeedLoader:
+        """切片首屏出口：0 条守卫 + 内存切片 loader（数据一次拉全但量大的流用）。
+
+        与 static_feed 同一道守卫，区别只在首屏给 feed_page 条、Ctrl+N
+        增量补（零请求）——几百条一次性挂载会把无虚拟化的列表冻住秒级。
+        """
+        require_feed_items(items, self.label, label)
+        return SliceFeedLoader(items)
 
     async def first_batch(self, loader: FeedLoader, label: str) -> FeedLoader:
         """open_feed 的首屏出口：拉首批 + 0 条守卫，返回 loader 供直接 return。
@@ -509,14 +546,15 @@ class SubscribedSource(Source):
 
     async def open_feed(self, name: str) -> FeedLoader:
         if name == self.all_feed:
-            return StaticFeedLoader(await self._open_merged())
+            items = await self._open_merged()
+            return SliceFeedLoader(items)  # 几百条聚合一次拉全，切片上屏防秒冻
         feed = self._by_key.get(name)
         if feed is None:
             raise ValueError(f"未知信息流：{name}")
         return await self._open_one(feed)
 
     async def _open_merged(self) -> list[FeedItem]:
-        """「全部」聚合流的首批（StaticFeedLoader 一次到头，聚合不做翻页）。"""
+        """「全部」聚合流的全部条目（一次并发拉全；上屏走 SliceFeedLoader 切片）。"""
         if not self._by_key:
             # 订阅刚被删光的过渡窗口：旧实例还挂着「全部」流，别让空表走到
             # 0 条守卫报「站点可能已改版」——那是误导，指引才是实话
