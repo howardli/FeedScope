@@ -415,6 +415,17 @@ async def _run_flow(opened: list[str]) -> None:
         assert opened and opened[-1].endswith("/1"), f"Enter(video) -> 浏览器，实际 {opened}"
 
 
+def _nav_active(app, idx: int) -> bool:
+    """侧栏第 idx 项是否已挂 active 类。
+
+    切流路径里 feed_idx 同步先置位、侧栏重挂（remove_children + mount）
+    异步后落地：重挂在途时节点缺失或未挂类都回 False——settle 条件带上
+    它重试，直接在断言里看会在负载高时撞上落地窗口（曾偶发红一次的根因）。
+    """
+    hits = app.query(f"#feed-nav-{idx}")
+    return len(hits) == 1 and hits.first().has_class("feed-nav-active")
+
+
 def test_tui_full_flow(stub_registry, opened) -> None:
     asyncio.run(_run_flow(opened))
 
@@ -521,8 +532,9 @@ async def _run_source_switch_flow() -> None:
             lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
         ), "点击顶部 tab 回站"
         await pilot.click("#feed-nav-1")
-        assert await settle(pilot, lambda: app.main.feed_idx == 1), "点击侧栏切流"
-        assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随点击"
+        assert await settle(pilot, lambda: app.main.feed_idx == 1 and _nav_active(app, 1)), (
+            "点击侧栏切流（含侧栏高亮落地）"
+        )
 
         await pilot.click("#source-tab-1")
         assert await settle(
@@ -906,8 +918,10 @@ async def _run_ime_safe_flow(opened: list[str]) -> None:
         await pilot.pause()
         assert app.main._pane == "sidebar" and app.main.feed_idx == 0 and len(app.main.items) == 3, "列表 ← 进边栏停当前流"
         await pilot.press("down")
-        assert await settle(pilot, lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar"), "边栏 ↓ 切流"
-        assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
+        assert await settle(
+            pilot,
+            lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar" and _nav_active(app, 1),
+        ), "边栏 ↓ 切流（含侧栏高亮落地）"
         await pilot.press("down")
         assert await settle(pilot, lambda: "已是最后一个流" in last_notification(app)), "到边界有反馈"
         await pilot.press("up")
@@ -1042,8 +1056,10 @@ async def _run_pane_navigation_flow() -> None:
         assert app.main._pane == "sidebar", "列表 ← 进边栏"
         assert nav.has_class("pane-focus"), "边栏聚焦高亮"
         await pilot.press("down")
-        assert await settle(pilot, lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar"), "边栏态 ↓ 切流"
-        assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "侧栏高亮跟随"
+        assert await settle(
+            pilot,
+            lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar" and _nav_active(app, 1),
+        ), "边栏 ↓ 切流（含侧栏高亮落地）"
         await pilot.press("up")  # 回首流
         assert await settle(pilot, lambda: app.main.feed_idx == 0 and app.main._pane == "sidebar"), "边栏 ↑ 切回流"
         await pilot.press("up")  # 首流再 ↑ → 上探源栏（边栏正上方，与源栏 ↓ 互逆）
