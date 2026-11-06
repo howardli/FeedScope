@@ -122,7 +122,7 @@ class DetailScreen(ReadingScreen):
             return
         loading.remove()
         await self._render_doc(self.loader.doc)
-        self._rendered = True
+        self._render_done()
         self.app.sub_title = self.loader.doc.title[:50]
 
     def _md_width(self) -> int:

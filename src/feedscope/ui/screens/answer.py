@@ -101,7 +101,7 @@ class AnswerScreen(ReadingScreen):
     async def _mount_body(self) -> None:
         self._body_scroll().focus()
         await self._render_doc()
-        self._rendered = True
+        self._render_done()
         self.run_worker(self._load_comments(), group="comments", exclusive=True)
 
     def _reset_render_state(self) -> None:
@@ -310,5 +310,5 @@ class AnswerScreen(ReadingScreen):
         body = self._body_scroll()
         await body.remove_children()
         await self._render_doc()
-        self._rendered = True
+        self._render_done()
         self.run_worker(self._load_comments(), group="comments", exclusive=True)

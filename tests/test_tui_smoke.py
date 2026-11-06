@@ -1124,3 +1124,31 @@ async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
 
 def test_dialog_arrow_focus(two_source_registry, monkeypatch, tmp_path) -> None:
     asyncio.run(_run_dialog_focus_flow(monkeypatch, tmp_path))
+
+
+async def _run_prelayout_render_recovery_flow() -> None:
+    """预布局渲染的挤压自愈（回归）：零请求详情在首布局前渲染时折行宽是 0，
+    正文被钳到最小宽缩在左侧；首个 Resize 必须触发整屏重排自愈——修复前
+    它被 first_layout 守卫跳过，用户只能手动改窗口宽度救。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        screen = app.screen
+        assert isinstance(screen, DetailScreen)
+        assert await settle(pilot, lambda: screen._rendered), "详情渲染"
+        # 正常路径：渲染宽 = 布局后的真实容器宽（记录 0 就是预布局渲染）
+        assert screen._rendered_width == screen._body_scroll().region.width > 0
+
+        # 复现 bug 现场：模拟首布局前渲染（宽 0），随后首个 Resize 到达
+        screen._rendered_width = 0
+        screen._last_width = 0
+        await pilot.resize_terminal(100, 36)
+        assert await settle(
+            pilot, lambda: screen._rendered_width == 100
+        ), "预布局渲染后的首个 Resize 要自愈重排（不等用户手动改窗口）"
+        assert len(screen.query(".answer-head")) == 3, "重排后楼层完整"
+
+
+def test_prelayout_render_recovers_on_first_resize(stub_registry) -> None:
+    asyncio.run(_run_prelayout_render_recovery_flow())

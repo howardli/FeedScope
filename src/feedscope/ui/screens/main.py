@@ -135,16 +135,15 @@ class FeedListView(ListView):
     def on_resize(self, event: Resize) -> None:
         if event.size.width == self._last_width:
             return
-        first_layout = self._last_width == 0  # 首次布局不算
         self._last_width = event.size.width
-        if first_layout:
-            return
-        # 与详情屏一致：拖拽改宽连发 Resize，稳定后再整屏重排
+        screen = self.screen
+        if not isinstance(screen, MainScreen) or not screen.items:
+            return  # 首布局（尚无内容）不算；空列表重排也是空转
+        # 与详情屏一致：拖拽改宽连发 Resize，稳定后再整屏重排；若列表竟在
+        # 首布局前建好（窄宽挤压在左），首个 Resize 同样自愈
         if self._resize_timer is not None:
             self._resize_timer.stop()
-        screen = self.screen
-        if isinstance(screen, MainScreen):
-            self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, screen.rebuild_items)
+        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, screen.rebuild_items)
 
     def on_unmount(self) -> None:
         if self._resize_timer is not None:

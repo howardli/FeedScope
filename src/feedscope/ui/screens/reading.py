@@ -70,6 +70,7 @@ class ReadingScreen(Screen[None]):
         super().__init__()
         self._prev_sub_title: str | None = None  # 进屏前的 Header 副标题（退屏恢复）
         self._rendered = False  # 首批已上屏；此后 resize 才需要重排
+        self._rendered_width = 0  # 渲染时实际使用的容器宽（首布局前渲染 = 0，见 _render_done）
         self._last_width = 0
         self._resize_timer: Timer | None = None
         self._hint: Static | None = None
@@ -104,12 +105,23 @@ class ReadingScreen(Screen[None]):
 
     # ---- resize 重排：拖拽改宽连发 Resize，稳定后整屏重排（不重新抓取）----
 
+    def _render_done(self) -> None:
+        """首批上屏完成（子类在 _render_doc 后调用）：记录渲染实际使用的容器宽。
+
+        折行宽取自当时的 region.width——若渲染发生在首布局之前（零请求的
+        详情/回答屏会这样），宽度是 0、正文被钳到最小宽挤压在左侧；resize
+        重排的触发条件与这里记录的宽度比对（而非跳过「第一次」），这种
+        渲染后的首个 Resize 就会整屏重排自愈，不用用户手动改窗口救。
+        """
+        self._rendered = True
+        self._rendered_width = self._body_scroll().region.width
+
     def on_resize(self, event: Resize) -> None:
-        if event.size.width == self._last_width:
-            return
-        first_layout = self._last_width == 0  # 首次布局不算
+        if event.size.width in (self._last_width, self._rendered_width):
+            self._last_width = event.size.width
+            return  # 宽度没变 / 与渲染时同宽：无需重排（含首布局——渲染即按此宽）
         self._last_width = event.size.width
-        if first_layout or not self._rendered:
+        if not self._rendered:
             return
         if self._resize_timer is not None:
             self._resize_timer.stop()
@@ -130,6 +142,7 @@ class ReadingScreen(Screen[None]):
             await self._render_doc()
         except Exception:
             return  # 屏幕正在被关闭：放弃重排
+        self._render_done()  # 重排后的折行宽才是当前有效宽
         # 重排后恢复阅读位置（内容高度要等一次刷新才更新，故延后滚动）
         body.call_after_refresh(body.scroll_to, y=scroll_y, animate=False)
 
