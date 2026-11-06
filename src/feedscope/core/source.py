@@ -6,12 +6,14 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from feedscope.core.config import Subscription, feeds_for, hidden_feeds
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class SourceError(Exception):
@@ -36,9 +38,11 @@ class FeedLoader(ABC):
     async def load_more(self) -> list[FeedItem]:
         """加载下一批条目；空列表 = 没有更多（或暂时没拉到，看 done）。"""
 
-    @abstractmethod
     async def close(self) -> None:
-        """释放资源，幂等，出错自己吞。"""
+        """释放资源，幂等，出错自己吞。
+
+        默认 no-op：不持资源的源（通道页签/连接池进程级共享）不覆写，
+        持浏览器页签等资源的子类才需要。"""
 
 
 class StaticFeedLoader(FeedLoader):
@@ -51,8 +55,27 @@ class StaticFeedLoader(FeedLoader):
     async def load_more(self) -> list[FeedItem]:
         return []
 
-    async def close(self) -> None:
-        pass
+
+def dedup_by(
+    candidates: Iterable[_T | None], seen: set[str], *, key: Callable[[_T], str]
+) -> list[_T]:
+    """按 key 去重地放行 candidates（未见过的），并把新键登记进 seen。
+
+    None（噪音卡）与键已见过的条目跳过；键为空（拿不到稳定 id）不去重
+    直接放行——宁可重复不可丢条。FeedItem（dedup_append）/ Answer /
+    Comment / 源内原始 dict 的批次去重共用，「同一键只出现一次」的不变量
+    只有这一处实现。
+    """
+    new: list[_T] = []
+    for it in candidates:
+        if it is None:
+            continue
+        k = key(it)
+        if not k or k not in seen:
+            if k:
+                seen.add(k)
+            new.append(it)
+    return new
 
 
 def dedup_append(
@@ -61,14 +84,10 @@ def dedup_append(
     """把 candidates 中未见过的条目追加进 items，返回新增列表。
 
     去重键 = FeedItem.id（源内稳定 id）；None（噪音卡）跳过。
-    各源首批提取与翻页 Loader 共用，保证「同一 id 只出现一次」的不变量只有一处实现。
+    各源首批提取与翻页 Loader 共用（dedup_by 的 FeedItem 特化）。
     """
-    new: list[FeedItem] = []
-    for it in candidates:
-        if it is not None and it.id not in seen:
-            seen.add(it.id)
-            items.append(it)
-            new.append(it)
+    new = dedup_by(candidates, seen, key=lambda it: it.id)
+    items.extend(new)
     return new
 
 
@@ -153,9 +172,8 @@ class DetailLoader(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} 不支持评论层")
 
-    @abstractmethod
     async def close(self) -> None:
-        """释放资源，幂等，出错自己吞。"""
+        """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
 
 
 class CommentLoader(ABC):
@@ -173,9 +191,8 @@ class CommentLoader(ABC):
     async def load_more(self) -> list[Comment]:
         """加载下一批评论；空列表 = 没有更多（或暂时没拉到，看 done）。"""
 
-    @abstractmethod
     async def close(self) -> None:
-        """释放资源，幂等，出错自己吞。"""
+        """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
 
 
 class StaticDetailLoader(DetailLoader):
@@ -191,9 +208,6 @@ class StaticDetailLoader(DetailLoader):
 
     async def load_more(self) -> list[Answer]:
         return []
-
-    async def close(self) -> None:
-        pass
 
 
 class SliceCommentsLoader(CommentLoader):
@@ -220,9 +234,6 @@ class SliceCommentsLoader(CommentLoader):
         self.comments.extend(batch)  # 「comments = 已加载全部」不变量
         return batch
 
-    async def close(self) -> None:
-        pass  # 树在内存，无资源
-
 
 class SliceDetailLoader(DetailLoader):
     """楼层已全在内存的详情加载器：load_more 是本地切片，零额外请求。
@@ -232,8 +243,8 @@ class SliceDetailLoader(DetailLoader):
     comment_trees（open_comments 按下标切出对应树的 SliceCommentsLoader，
     不给则与本类约定不支持评论层）。「doc = 已加载全部」的不变量由本类
     保证（load_more 的新楼层 append 进 doc.answers）。子类只剩薄适配：
-    把源自己的 detail 类型摊成 floors/comment_trees，再声明 source_label
-    （越界报错文案）与页宽。
+    from_detail 吃源 parse 的 detail 产物，再声明 source_label（越界报错
+    文案）；页宽 floor_page 有默认值，真要差异化再覆写。
     """
 
     source_label: ClassVar[str] = ""  # 报错文案里的源标签（如 "HN"）
@@ -261,6 +272,31 @@ class SliceDetailLoader(DetailLoader):
             answers=list(first),
         )
 
+    @classmethod
+    def from_detail(cls, detail: Any, *, fallback_title: str = "") -> SliceDetailLoader:
+        """楼层型 detail 产物的替代构造（HN / Reddit / V2EX 的 parse 产物）。
+
+        两形鸭子类型（字段同名，title/meta/time/description_md + 楼层）：
+        - .floors：Floor 列表（HN 的 StoryDetail / Reddit 的 ThreadDetail），
+          answer 与评论树成对进切片（支持评论层）
+        - .replies：裸 Answer 列表（V2EX 的 TopicDetail，无评论层）
+        title 为空时退 fallback_title（列表端标题）。
+        """
+        floors = getattr(detail, "floors", None)
+        kwargs: dict[str, Any] = {
+            "title": str(getattr(detail, "title", "") or "") or fallback_title,
+            "meta": getattr(detail, "meta", ""),
+            "time": getattr(detail, "time", ""),
+            "description_md": getattr(detail, "description_md", ""),
+        }
+        if floors is not None:
+            return cls(
+                [f.answer for f in floors],
+                comment_trees=[f.comments for f in floors],
+                **kwargs,
+            )
+        return cls(list(getattr(detail, "replies", [])), **kwargs)
+
     @property
     def done(self) -> bool:
         return self._given >= len(self._floors)
@@ -282,8 +318,20 @@ class SliceDetailLoader(DetailLoader):
             )
         return SliceCommentsLoader(self._comments[index])
 
-    async def close(self) -> None:
-        pass  # 树在内存，无资源
+
+async def login_gate(
+    url: str, ok: Callable[[dict[str, str]], bool], *, label: str, what: str
+) -> None:
+    """判登门的共享实现：读 profile cookie 过谓词，不过抛 LoginRequired。
+
+    x（auth_token+ct0 成对在）与 Reddit（token_v2 JWT 解码）共用——判据是
+    源差异（注入谓词），cookie 读取与「{label} 需要登录后才能查看{what}」
+    的消息模板只有这一份，不会措辞漂移。
+    """
+    from feedscope.core.browser import profile_cookies  # 惰性导入：browser 已 import 本模块
+
+    if not ok(await profile_cookies(url)):
+        raise LoginRequired(f"{label} 需要登录后才能查看{what}")
 
 
 class Source(ABC):
@@ -337,6 +385,17 @@ class Source(ABC):
         if not feeds:
             logger.warning("%s 的信息流已被配置全部隐藏", self.label)
 
+    @property
+    def judging_cookies(self) -> list[str]:
+        """判登要看的 cookie 名全集：logout_cookies 优先，未声明才退 login_cookie 单枚。
+
+        login() 轮询 / is_logged_in / logout 三条路径共用（口径全项目唯一），
+        不给「login 报成功、账号屏仍显示未登录」的分裂留缝。
+        """
+        if self.logout_cookies:
+            return list(self.logout_cookies)
+        return [self.login_cookie] if self.login_cookie else []
+
     @abstractmethod
     async def open_feed(self, name: str) -> FeedLoader:
         """打开信息流返回可翻页加载器；子类必须实现（唯一主入口）。"""
@@ -347,6 +406,16 @@ class Source(ABC):
         if label is None:
             raise ValueError(f"未知信息流：{name}")
         return label
+
+    def static_feed(self, items: list[FeedItem], label: str) -> StaticFeedLoader:
+        """静态首屏出口：0 条守卫 + 一次性 loader（一次拉全、无翻页的流用）。
+
+        与 first_batch（增量 Loader 形态）并列的静态形态——「parse 全量 →
+        require_feed_items → StaticFeedLoader」三行收一处（知乎热榜 / V2EX /
+        RSS 单订阅同形）。
+        """
+        require_feed_items(items, self.label, label)
+        return StaticFeedLoader(items)
 
     async def first_batch(self, loader: FeedLoader, label: str) -> FeedLoader:
         """open_feed 的首屏出口：拉首批 + 0 条守卫，返回 loader 供直接 return。
@@ -389,6 +458,8 @@ class SubscribedSource(Source):
 
     all_feed: ClassVar[str]  # 聚合流名（「全部」），feeds 首位；订阅 key 的保留字
     sub_noun: ClassVar[str]  # 订阅物名词（「订阅」/「频道」），错误与日志文案用
+    # 详情元信息首段读的 extra 键（rss: feed_label；telegram: channel）
+    _meta_extra_key: ClassVar[str] = ""
 
     def __init__(self) -> None:
         hidden = set(hidden_feeds(self.source_id))
@@ -454,3 +525,33 @@ class SubscribedSource(Source):
     @abstractmethod
     async def _open_one(self, feed: Subscription) -> FeedLoader:
         """打开单个订阅的信息流（各源的取数/解析差异全在这里）。"""
+
+    async def open_detail(self, item: FeedItem) -> StaticDetailLoader:
+        """订阅型源的静态详情骨架：正文随列表带回（extra），进详情零请求。
+
+        meta =「来源标签 · 作者」；发布时间与正文的提取是源差异，见
+        _detail_time / _detail_body（声明 supports_detail 的子类必给）。
+        RSS / Telegram 共用，第三个订阅型源继承即得。
+        """
+        extra = item.extra
+        meta = " · ".join(
+            x
+            for x in (str(extra.get(self._meta_extra_key) or ""), str(extra.get("author") or ""))
+            if x
+        )
+        return StaticDetailLoader(
+            DetailDoc(
+                title=item.title,
+                meta=meta,
+                time=self._detail_time(extra),
+                description_md=self._detail_body(extra),
+            )
+        )
+
+    def _detail_time(self, extra: dict[str, Any]) -> str:
+        """extra 里的发布时间 -> 展示文本（源差异：unix 秒 / ISO 字符串）。"""
+        raise NotImplementedError
+
+    def _detail_body(self, extra: dict[str, Any]) -> str:
+        """extra 里的正文 -> markdown（源差异：content_html 转 / content_md 直取）。"""
+        raise NotImplementedError

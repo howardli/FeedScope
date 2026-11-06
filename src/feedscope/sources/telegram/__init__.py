@@ -15,17 +15,12 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from feedscope.core.config import Subscription
-from feedscope.core.models import DetailDoc, FeedItem
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    FeedLoader,
-    SourceError,
-    StaticDetailLoader,
-    SubscribedSource,
-)
+from feedscope.core.source import FeedLoader, SourceError, SubscribedSource
 from feedscope.sources.telegram.fetch import TelegramFeedLoader, fetch_merged
 from feedscope.sources.telegram.parse import SOURCE_ID, display_time
 
@@ -43,6 +38,7 @@ class TelegramSource(SubscribedSource):
     all_feed: ClassVar[str] = "all"  # 聚合流名（「全部」），保留字：订阅 key 与它同名会遮住聚合流
     sub_noun: ClassVar[str] = "频道"
     reserved_feed_keys = (all_feed,)
+    _meta_extra_key = "channel"  # 详情元信息首段 = 频道名
 
     async def _fetch_merged(
         self, feeds: list[Subscription]
@@ -55,21 +51,13 @@ class TelegramSource(SubscribedSource):
         # 0 条大概率是频道不存在/为空/关闭了 Web 预览，不是站点改版——给专属指引
         if not loader.items:
             raise SourceError(
-                f"Telegram @{feed.key} 一条也拉不到：频道可能不存在、为空，"
+                f"Telegram @{feed.key} 一条也拉不到：频道可能不存在、为空、"
                 "或站长关闭了 Web 预览（t.me/s/ 页面需要站长开启）"
             )
         return loader
 
-    async def open_detail(self, item: FeedItem) -> StaticDetailLoader:
-        """正文已在列表抓取时带回来（extra），进详情不重新请求（同 RSS）。"""
-        extra = item.extra
-        meta = " · ".join(
-            x for x in (str(extra.get("channel") or ""), str(extra.get("author") or "")) if x
-        )
-        doc = DetailDoc(
-            title=item.title,
-            meta=meta,
-            time=display_time(str(extra.get("published") or "")),
-            description_md=str(extra.get("content_md") or ""),
-        )
-        return StaticDetailLoader(doc)
+    def _detail_time(self, extra: dict[str, Any]) -> str:
+        return display_time(str(extra.get("published") or ""))
+
+    def _detail_body(self, extra: dict[str, Any]) -> str:
+        return str(extra.get("content_md") or "")

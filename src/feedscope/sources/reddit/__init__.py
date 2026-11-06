@@ -32,40 +32,27 @@ import json as _json
 from typing import ClassVar
 
 from feedscope.core import config
-from feedscope.core.browser import profile_cookies
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
     FeedLoader,
-    LoginRequired,
     SliceDetailLoader,
     Source,
     SourceError,
+    login_gate,
     require_feed_items,
 )
 from feedscope.sources.reddit.fetch import RedditFeedLoader, fetch_thread_html
-from feedscope.sources.reddit.parse import SOURCE_ID, ThreadDetail, parse_thread_html
-
-# 详情一次拿全树后，楼层每页给多少（内存切片，不是请求）：与 HN 同宽；
-# 评论页宽（20）用 core.SliceCommentsLoader 的默认值
-FLOOR_PAGE = 15
+from feedscope.sources.reddit.parse import SOURCE_ID, parse_thread_html
 
 
 class RedditDetailLoader(SliceDetailLoader):
-    """Reddit 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。"""
+    """Reddit 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。
+
+    全部结构在 SliceDetailLoader.from_detail（楼层/评论树成对进切片），
+    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
 
     source_label = "Reddit"
-    floor_page = FLOOR_PAGE
-
-    def __init__(self, thread: ThreadDetail, fallback_title: str = "") -> None:
-        super().__init__(
-            [f.answer for f in thread.floors],
-            comment_trees=[f.comments for f in thread.floors],
-            title=thread.title or fallback_title,
-            meta=thread.meta,
-            time=thread.time,
-            description_md=thread.description_md,
-        )
 
 
 def _token_logged_in(token_v2: str | None) -> bool:
@@ -105,11 +92,15 @@ async def require_login(what: str) -> None:
     """判登门：token_v2 JWT 过门（通道页签的 cookie 由浏览器自带，无需另建会话）。
 
     公共 API：subscriptions 的 subreddit 添加入口也过这道门（订阅管理屏
-    没有账号动线，LoginRequired 的消息自带指引）。
+    没有账号动线，LoginRequired 的消息自带指引）。cookie 读取与消息模板
+    在 core.source.login_gate，判据（JWT 解码）是本源差异。
     """
-    cookies = await profile_cookies("https://www.reddit.com")
-    if not _token_logged_in(cookies.get("token_v2")):
-        raise LoginRequired(f"Reddit 需要登录后才能查看{what}")
+    await login_gate(
+        "https://www.reddit.com",
+        lambda c: _token_logged_in(c.get("token_v2")),
+        label="Reddit",
+        what=what,
+    )
 
 
 @register
@@ -178,4 +169,4 @@ class RedditSource(Source):
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         await require_login("帖子详情")
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
-        return RedditDetailLoader(parse_thread_html(html, fallback_title=item.title))
+        return RedditDetailLoader.from_detail(parse_thread_html(html, fallback_title=item.title))

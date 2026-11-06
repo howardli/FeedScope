@@ -1,6 +1,7 @@
 """ui/wrap.py 纯函数折行引擎的基线测试（离线，无网络）。"""
 
-from feedscope.ui.wrap import display_width, wrap_display, wrap_markdown
+from feedscope.core.text import display_width
+from feedscope.ui.wrap import wrap_display, wrap_markdown
 
 
 def test_display_width() -> None:

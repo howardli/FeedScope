@@ -13,8 +13,9 @@ import json
 import sys
 
 from feedscope.core.browser import close_session
-from feedscope.sources.x import LoginRequired, require_login
-from feedscope.sources.x.fetch import _DETAIL_OP, _fetch_conversation, _fetch_entries, harvest
+from feedscope.core.source import LoginRequired
+from feedscope.sources.x import require_login
+from feedscope.sources.x.fetch import _DETAIL_OP, fetch_conversation, fetch_entries, harvest
 
 
 async def _probe() -> None:
@@ -42,10 +43,10 @@ async def _probe() -> None:
         }
         print(f"{op_name}: {json.dumps(shape, ensure_ascii=False)}")
 
-    entries, _cursor = await _fetch_entries("foryou", None)
+    entries, _cursor = await fetch_entries("foryou", None)
     print(f"TIMELINE_OK entries={len(entries)}")
 
-    entries, _cursor = await _fetch_conversation("20", None)
+    entries, _cursor = await fetch_conversation("20", None)
     print(f"DETAIL_OK entries={len(entries)}")
 
 

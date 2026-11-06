@@ -14,12 +14,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from feedscope.core.const import new_h2t, safe_int
+from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count
+from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
-from feedscope.core.text import strip_zwsp
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, count_kept, floor_comments
+from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, build_floors, count_kept
 
 SOURCE_ID = "hn"
 
@@ -27,14 +27,9 @@ SOURCE_ID = "hn"
 _ITEM_URL = "https://news.ycombinator.com/item?id="
 
 
-_H2T = new_h2t()  # 模块级实例复用（handle 自带状态复位，见 zhihu/parse 同款）
-
-
 def _md(html: object) -> str:
-    """HN 受限 HTML（p/a/i/code/pre）-> markdown；非 str / 空回空串。"""
-    if not isinstance(html, str) or not html:
-        return ""
-    return strip_zwsp(_H2T.handle(html)).strip()
+    """HN 受限 HTML（p/a/i/code）-> markdown；非 str / 空回空串（管线见 core.media）。"""
+    return text_to_md(html) if isinstance(html, str) else ""
 
 
 def _kids(node: dict) -> list[dict]:
@@ -67,9 +62,30 @@ def _comment_of(node: dict) -> Comment:
     )
 
 
-# 差异注入：HN 的树是 Algolia dict（结构见各 accessor）
+def _answer_of(node: dict, n: int) -> Answer:
+    """楼层本体（core.tree.build_floors 注入）：字段来源是站差异，n 为回复数。"""
+    cid = str(node.get("id") or "")
+    return Answer(
+        author=_author(node),
+        votes="",
+        content_md=_md(node.get("text")) or DELETED_BODY,
+        time=_time(node),
+        url=f"{_ITEM_URL}{cid}" if cid else "",
+        comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
+    )
+
+
+# 差异注入：HN 的树是 Algolia dict（结构见各 accessor；拍平骨架在 core.tree）
 _ACC = {"keep": _keep, "kids_of": _kids, "author_of": _author, "comment_of": _comment_of}
 _COUNT = {"keep": _keep, "kids_of": _kids}  # count_kept 只要这两个
+
+
+def _meta(points: int, comments: int, author: str) -> str:
+    """元信息列「N 点 · N 评 · 作者」：列表 hit 与详情 root 共用。"""
+    parts = [f"{fmt_count(points)} 点", f"{fmt_count(comments)} 评"]
+    if author:
+        parts.append(author)
+    return " · ".join(parts)
 
 
 def parse_search(hits: list[dict]) -> list[FeedItem]:
@@ -82,10 +98,6 @@ def parse_search(hits: list[dict]) -> list[FeedItem]:
         tags = hit.get("_tags")
         tags = tags if isinstance(tags, list) else []
         kind = "ask" if "ask_hn" in tags else "show" if "show_hn" in tags else "story"
-        parts = [f"{fmt_count(safe_int(hit.get('points')))} 点",
-                 f"{fmt_count(safe_int(hit.get('num_comments')))} 评"]
-        if author := str(hit.get("author") or ""):
-            parts.append(author)
         items.append(
             FeedItem(
                 source=SOURCE_ID,
@@ -93,7 +105,10 @@ def parse_search(hits: list[dict]) -> list[FeedItem]:
                 title=str(hit.get("title") or "").strip() or "（无标题）",
                 url=str(hit.get("url") or "") or f"{_ITEM_URL}{oid}",  # 自帖无外链，兜底条目页
                 kind=kind,
-                meta=" · ".join(parts),
+                meta=_meta(
+                    safe_int(hit.get("points")), safe_int(hit.get("num_comments")),
+                    str(hit.get("author") or ""),
+                ),
             )
         )
     return items
@@ -112,37 +127,19 @@ class StoryDetail:
 
 def parse_story(root: dict) -> StoryDetail:
     """items/:id 根 -> StoryDetail（story 本体 + 顶层评论楼层与各自回复树）。"""
-    parts = [f"{fmt_count(safe_int(root.get('points')))} 点", f"{count_kept(root, **_COUNT)} 评"]
-    if author := str(root.get("author") or ""):
-        parts.append(author)
     blocks = []
     if url := str(root.get("url") or ""):
         blocks.append(f"[原文]({url})")  # 链接帖正文就是外链一行，Ctrl+O 直达
     if text_md := _md(root.get("text")):
         blocks.append(text_md)  # Ask/Show 的自述全文
-    floors = []
-    for child in _kids(root):
-        if not _keep(child):
-            continue
-        n = count_kept(child, **_COUNT)
-        cid = str(child.get("id") or "")
-        floors.append(
-            Floor(
-                answer=Answer(
-                    author=_author(child),
-                    votes="",
-                    content_md=_md(child.get("text")) or DELETED_BODY,
-                    time=_time(child),
-                    url=f"{_ITEM_URL}{cid}" if cid else "",
-                    comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
-                ),
-                comments=floor_comments(_kids(child), **_ACC),
-            )
-        )
+    # 顶层节点 -> 楼层（keep 过滤 / 计数 / 拍平的骨架在 core.tree.build_floors）
     return StoryDetail(
         title=str(root.get("title") or "").strip(),
-        meta=" · ".join(parts),
+        meta=_meta(
+            safe_int(root.get("points")), count_kept(root, **_COUNT),
+            str(root.get("author") or ""),
+        ),
         time=_time(root),
         description_md="\n\n".join(blocks),
-        floors=floors,
+        floors=build_floors(_kids(root), **_ACC, answer_of=_answer_of),
     )

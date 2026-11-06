@@ -20,8 +20,8 @@ from feedscope.sources import x as x_mod
 from feedscope.sources.x import fetch as x_fetch
 from feedscope.sources.x.fetch import (
     XFeedLoader,
-    _fetch_conversation,
-    _fetch_entries,
+    fetch_conversation,
+    fetch_entries,
     _Op,
     _parse_graphql_url,
 )
@@ -115,11 +115,11 @@ def test_timeline_happy_path_uses_seed(monkeypatch: pytest.MonkeyPatch) -> None:
         return None, _tl_payload(["1", "2"], "cur-1")
 
     tab = _mock(monkeypatch, handler)
-    entries, cursor = asyncio.run(_fetch_entries("foryou", None))
+    entries, cursor = asyncio.run(fetch_entries("foryou", None))
     assert len(entries) == 3 and cursor == "cur-1"  # 2 推 + 1 游标条目
     assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0].url  # 种子 qid
     assert tab.resets == 0  # happy path 不收割
-    asyncio.run(_fetch_entries("foryou", "cur-1"))
+    asyncio.run(fetch_entries("foryou", "cur-1"))
     assert "cur-1" in urllib.parse.unquote(tab.fetches[1].url)  # 翻页 cursor 进 variables
 
 
@@ -153,7 +153,7 @@ def test_shape_rot_self_heals_via_chunk_grep(monkeypatch: pytest.MonkeyPatch) ->
         return None, _tl_payload(["1"], None)
 
     tab._on_fetch = lambda req: handler(req.url)
-    entries, _cursor = asyncio.run(_fetch_entries("foryou", None))
+    entries, _cursor = asyncio.run(fetch_entries("foryou", None))
     assert entries
     assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0].url and fresh in tab.fetches[1].url
     assert tab.resets == 1 and tab.opened == 1  # 重割重开了页签
@@ -180,7 +180,7 @@ def test_shape_rot_heals_via_plain_chunk(monkeypatch: pytest.MonkeyPatch) -> Non
         return None, _tl_payload(["1"], None)
 
     tab._on_fetch = lambda req: handler(req.url)
-    entries, _cursor = asyncio.run(_fetch_entries("following", None))
+    entries, _cursor = asyncio.run(fetch_entries("following", None))
     assert entries and grep_qid in tab.fetches[1].url  # 普通 chunk 里 grep 出的新 qid 救场
 
 
@@ -188,18 +188,12 @@ def test_unhealed_shape_rot_gives_guidance(monkeypatch: pytest.MonkeyPatch) -> N
     """重割也没换形状：不空转重试，给人话指引（脚本诊断/反馈维护者）。"""
     tab = _mock(monkeypatch, lambda url: (None, {"errors": [{"message": "bad"}]}))
     with pytest.raises(SourceError, match="自动收割未修复"):
-        asyncio.run(_fetch_entries("foryou", None))
+        asyncio.run(fetch_entries("foryou", None))
     assert len(tab.fetches) == 1 and tab.resets == 1  # 形状没换：只重割不重试
 
 
 # ---- 401/403/限流语义（与 httpx 时代一致） ----
 
-
-def test_graphql_non_object_body_is_source_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """登录墙 HTML / 代理错误页不是 GraphQL JSON：给「结构异常」，不让 .get 裸炸。"""
-    _mock(monkeypatch, lambda url: (None, "<html>login</html>"))
-    with pytest.raises(SourceError, match="结构异常"):
-        asyncio.run(_fetch_entries("foryou", None))
 
 
 def test_graphql_401_dead_session_self_heals(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,7 +201,7 @@ def test_graphql_401_dead_session_self_heals(monkeypatch: pytest.MonkeyPatch) ->
     cleared = _stub_drop(monkeypatch)
     _mock(monkeypatch, lambda url: (401, {"errors": [{"code": 32}]}))
     with pytest.raises(LoginRequired, match="登录已失效"):
-        asyncio.run(_fetch_entries("foryou", None))
+        asyncio.run(fetch_entries("foryou", None))
     assert cleared == [("https://x.com", ("auth_token", "ct0"))]
 
 
@@ -216,7 +210,7 @@ def test_graphql_403_means_risk_control(monkeypatch: pytest.MonkeyPatch) -> None
     cleared = _stub_drop(monkeypatch)
     tab = _mock(monkeypatch, lambda url: (403, {"errors": [{"code": 64}]}))
     with pytest.raises(SourceError, match="风控"):
-        asyncio.run(_fetch_entries("foryou", None))
+        asyncio.run(fetch_entries("foryou", None))
     assert cleared == [] and tab.resets == 0
 
 
@@ -227,7 +221,7 @@ def test_graphql_429_is_not_shape_rot(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda url: (429, {"errors": [{"code": 88}]}),
     )
     with pytest.raises(SourceError, match="HTTP 429"):
-        asyncio.run(_fetch_entries("foryou", None))
+        asyncio.run(fetch_entries("foryou", None))
     assert len(tab.fetches) == 1 and tab.resets == 0
 
 
@@ -255,7 +249,7 @@ def test_detail_uses_seed_then_deep_capture_heals(monkeypatch: pytest.MonkeyPatc
         return captured
 
     monkeypatch.setattr(x_fetch, "_deep_capture_detail", fake_capture)
-    _entries, cursor = asyncio.run(_fetch_conversation("20", None))
+    _entries, cursor = asyncio.run(fetch_conversation("20", None))
     assert cursor == "more"
     assert (
         seed.qid in tab.fetches[0].url and "capQID" in tab.fetches[1].url
@@ -284,13 +278,13 @@ def test_require_login_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     async def jar(url: str) -> dict[str, str]:
         return {"auth_token": "a", "ct0": "c"}
 
-    monkeypatch.setattr(x_mod, "profile_cookies", jar)
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", jar)
     asyncio.run(x_mod.require_login("测试"))  # 成对在：直放
 
     async def empty(url: str) -> dict[str, str]:
         return {"auth_token": "a"}  # 只有 auth_token 没有 ct0：不算
 
-    monkeypatch.setattr(x_mod, "profile_cookies", empty)
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", empty)
     with pytest.raises(LoginRequired, match="需要登录"):
         asyncio.run(x_mod.require_login("测试"))
 
@@ -301,7 +295,7 @@ def test_open_feed_wires_gate_and_loader(monkeypatch: pytest.MonkeyPatch) -> Non
     async def jar(url: str) -> dict[str, str]:
         return {"auth_token": "a", "ct0": "c"}
 
-    monkeypatch.setattr(x_mod, "profile_cookies", jar)
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", jar)
     _mock(monkeypatch, lambda url: (None, _tl_payload(["1", "2"], None)))
     loader = asyncio.run(get_source("x").open_feed("foryou"))
     asyncio.run(loader.close())

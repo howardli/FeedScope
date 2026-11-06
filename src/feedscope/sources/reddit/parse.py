@@ -37,7 +37,7 @@ from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, count_kept, floor_comments
+from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, build_floors
 
 SOURCE_ID = "reddit"
 
@@ -64,6 +64,19 @@ _MEDIA_TYPES = {"image", "video", "gallery"}
 # ---- 列表 ----
 
 
+def _post_meta(a: dict[str, str], *, with_author: bool = False) -> str:
+    """帖子元信息列「N 点 · N 评 · r/版块（· u/作者）」：列表与详情共用。"""
+    parts = [
+        f"{fmt_count(safe_int(a.get('score')))} 点",
+        f"{fmt_count(safe_int(a.get('comment-count')))} 评",
+    ]
+    if subreddit := str(a.get("subreddit-name") or ""):
+        parts.append(f"r/{subreddit}")
+    if with_author and (author := str(a.get("author") or "")):
+        parts.append(f"u/{author}")
+    return " · ".join(parts)
+
+
 def parse_posts_html(html: str) -> list[FeedItem]:
     """页面/片段 HTML -> FeedItem 列表（保持文档序，广告与残条逐条防御跳过）。"""
     items: list[FeedItem] = []
@@ -77,10 +90,6 @@ def parse_posts_html(html: str) -> list[FeedItem]:
             continue
         subreddit = str(a.get("subreddit-name") or "")
         permalink = str(a.get("permalink") or "")
-        parts = [f"{fmt_count(safe_int(a.get('score')))} 点",
-                 f"{fmt_count(safe_int(a.get('comment-count')))} 评"]
-        if subreddit:
-            parts.append(f"r/{subreddit}")
         items.append(
             FeedItem(
                 source=SOURCE_ID,
@@ -88,7 +97,7 @@ def parse_posts_html(html: str) -> list[FeedItem]:
                 title=title,
                 url=urljoin(_SITE, permalink) if permalink else f"{_SITE}/comments/{pid[3:]}",
                 kind="self" if str(a.get("post-type") or "") in _SELF_TYPES else "link",
-                meta=" · ".join(parts),
+                meta=_post_meta(a),
                 extra={"subreddit": subreddit},
             )
         )
@@ -190,7 +199,19 @@ def _author_of(node: _CNode) -> str:
 
 # 差异注入：Reddit 的树是 HTML 按 depth 重建的 _CNode（拍平与 @ 规则在 core.tree）
 _ACC = {"keep": _keep, "kids_of": _kids_of, "author_of": _author_of, "comment_of": _comment_of}
-_COUNT = {"keep": _keep, "kids_of": _kids_of}  # count_kept 只要这两个
+
+
+def _answer_of(node: _CNode, n: int) -> Answer:
+    """楼层本体（core.tree.build_floors 注入）：字段来源是站差异，n 为回复数。"""
+    cp = str(node.attrs.get("permalink") or "")
+    return Answer(
+        author=node.author,
+        votes=node.votes,
+        content_md=_content(node),
+        time=fmt_iso(str(node.attrs.get("created") or "") or None),
+        url=urljoin(_SITE, cp) if cp.startswith("/") else "",
+        comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
+    )
 
 
 def _post_body(attrs: dict[str, str], html: str) -> str:
@@ -217,13 +238,6 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     m = _POST_TAG_RE.search(html)
     if m:
         post = tag_attrs(m.group(0))
-    subreddit = str(post.get("subreddit-name") or "")
-    parts = [f"{fmt_count(safe_int(post.get('score')))} 点",
-             f"{fmt_count(safe_int(post.get('comment-count')))} 评"]
-    if subreddit:
-        parts.append(f"r/{subreddit}")
-    if author := str(post.get("author") or ""):
-        parts.append(f"u/{author}")
 
     # 评论树：开标签按文档序拿属性与正文，depth 属性重建嵌套
     roots: list[_CNode] = []
@@ -243,25 +257,8 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
         (stack[-1][1] if stack else roots).append(node)
         stack.append((depth, node.children))
 
-    floors: list[Floor] = []
-    for node in roots:
-        if not _keep(node):
-            continue
-        n = count_kept(node, **_COUNT)
-        cp = str(node.attrs.get("permalink") or "")
-        floors.append(
-            Floor(
-                answer=Answer(
-                    author=node.author,
-                    votes=node.votes,
-                    content_md=_content(node),
-                    time=fmt_iso(str(node.attrs.get("created") or "") or None),
-                    url=urljoin(_SITE, cp) if cp.startswith("/") else "",
-                    comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
-                ),
-                comments=floor_comments(node.children, **_ACC),
-            )
-        )
+    # 顶层节点 -> 楼层（keep 过滤 / 计数 / 拍平的骨架在 core.tree.build_floors）
+    floors = build_floors(roots, **_ACC, answer_of=_answer_of)
     # 截断口：服务端只渲染了前一部分楼层（大帖常见），按 comment-count 诚实提示
     total = safe_int(post.get("comment-count"))
     loaded = sum(1 + len(f.comments) + sum(len(c.replies) for c in f.comments) for f in floors)
@@ -272,7 +269,7 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
         )
     return ThreadDetail(
         title=str(post.get("post-title") or "").strip() or fallback_title,
-        meta=" · ".join(parts),
+        meta=_post_meta(post, with_author=True),
         time=fmt_iso(str(post.get("created-timestamp") or "") or None),
         description_md=_post_body(post, html),
         floors=floors,

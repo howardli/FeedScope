@@ -23,30 +23,18 @@ from feedscope.core.source import (
     Source,
     SourceError,
     StaticFeedLoader,
-    require_feed_items,
 )
 from feedscope.sources.v2ex.fetch import fetch_replies, fetch_topics
-from feedscope.sources.v2ex.parse import SOURCE_ID, TopicDetail, parse_detail, parse_topics
-
-# 回复全量已在内存后的每页楼层数（内存切片，不是请求）：首批给一屏上下
-# 的量，Ctrl+N 增量补，几百楼的帖子不至于一次糊满屏（与 HN 楼层同宽）
-REPLY_PAGE = 15
+from feedscope.sources.v2ex.parse import SOURCE_ID, parse_detail, parse_topics
 
 
 class V2exDetailLoader(SliceDetailLoader):
-    """V2EX 详情加载器：回复已全在内存——楼层翻页是切片，零额外请求。"""
+    """V2EX 详情加载器：回复已全在内存——楼层翻页是切片，零额外请求。
+
+    全部结构在 SliceDetailLoader.from_detail（裸 Answer 楼层、无评论树），
+    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
 
     source_label = "V2EX"
-    floor_page = REPLY_PAGE
-
-    def __init__(self, topic: TopicDetail, fallback_title: str = "") -> None:
-        super().__init__(
-            topic.replies,
-            title=topic.title or fallback_title,
-            meta=topic.meta,
-            time=topic.time,
-            description_md=topic.description_md,
-        )
 
 
 @register
@@ -62,9 +50,8 @@ class V2exSource(Source):
 
     async def open_feed(self, name: str) -> StaticFeedLoader:
         label = self.label_of(name)
-        items = parse_topics(await fetch_topics(name, label))
-        require_feed_items(items, self.label, label)  # 0 条 = 接口可能已变
-        return StaticFeedLoader(items)  # v1 一页全量（hot 10 / latest 40），无翻页
+        # v1 一页全量（hot 10 / latest 40），无翻页：静态首屏出口收 0 条守卫
+        return self.static_feed(parse_topics(await fetch_topics(name, label)), label)
 
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         # 正文随列表透传（列表端点 content 即全量）；缺上下文的旧条目（如
@@ -73,4 +60,4 @@ class V2exSource(Source):
         if not isinstance(topic, dict) or not topic:
             raise SourceError("V2EX 详情缺少列表上下文，回到列表重进该主题")
         replies = await fetch_replies(item.id)
-        return V2exDetailLoader(parse_detail(topic, replies), fallback_title=item.title)
+        return V2exDetailLoader.from_detail(parse_detail(topic, replies), fallback_title=item.title)

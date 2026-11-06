@@ -22,7 +22,6 @@ import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import get_source
 from feedscope.core.source import LoginRequired, SourceError
-from feedscope.sources import reddit as reddit_mod
 from feedscope.sources.reddit import fetch as reddit_fetch
 from feedscope.sources.reddit.fetch import fetch_listing
 
@@ -69,7 +68,7 @@ def _fake_login(
     async def fake_profile_cookies(url: str) -> dict[str, str]:
         return dict(jar)
 
-    monkeypatch.setattr(reddit_mod, "profile_cookies", fake_profile_cookies)
+    monkeypatch.setattr("feedscope.core.browser.profile_cookies", fake_profile_cookies)
 
 
 def _page(html: str) -> str:
@@ -352,7 +351,7 @@ def test_open_detail_out_of_range_comments() -> None:
     from feedscope.sources.reddit import RedditDetailLoader
     from feedscope.sources.reddit.parse import parse_thread_html
 
-    loader = RedditDetailLoader(parse_thread_html(THREAD_HTML))
+    loader = RedditDetailLoader.from_detail(parse_thread_html(THREAD_HTML))
     with pytest.raises(SourceError, match="不在已加载范围内"):
         asyncio.run(loader.open_comments(99))
 

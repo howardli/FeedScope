@@ -13,6 +13,7 @@ import pytest
 
 import feedscope.sources  # noqa: F401  import 即注册
 from feedscope.core.registry import get_source
+from feedscope.core.source import FeedLoader, Source
 from feedscope.login import _clear_cookies, _logged_in
 
 
@@ -66,6 +67,42 @@ def test_logged_in_x_needs_both(x) -> None:
 def test_logged_in_zhihu_single(zhihu) -> None:
     assert asyncio.run(_logged_in(FakeContext({"z_c0"}), zhihu)) is True
     assert asyncio.run(_logged_in(FakeContext(set()), zhihu)) is False
+
+
+def test_logged_in_login_cookie_fallback() -> None:
+    """只声明 login_cookie（无 logout_cookies）的源：_logged_in 也要认单枚兜底——
+    轮询与判登口径必须一致（回归：_logged_in 曾漏掉兜底，login 报成功而
+    is_logged_in 恒 False）。judging_cookies 是真实 Source 属性（不是测试自造）。"""
+
+    class CookieOnly(Source):
+        source_id = "cookie-only-test"
+        label = "单枚判登"
+        login_url = "https://single.test/login"
+        login_cookie = "s_token"
+
+        async def open_feed(self, name: str) -> FeedLoader:  # pragma: no cover - 形参占位
+            raise NotImplementedError
+
+    src = CookieOnly()
+    assert src.judging_cookies == ["s_token"]  # 兜底口径：logout_cookies 空退单枚
+    assert asyncio.run(_logged_in(FakeContext({"s_token"}), src)) is True
+    assert asyncio.run(_logged_in(FakeContext(set()), src)) is False
+
+
+def test_logged_in_no_criteria_is_false() -> None:
+    """既无 login_verify 又无任何 cookie 声明的源恒为 False（不 KeyError）。"""
+
+    class Bare(Source):
+        source_id = "bare-test"
+        label = "无判据"
+        login_url = "https://bare.test/login"
+
+        async def open_feed(self, name: str) -> FeedLoader:  # pragma: no cover - 形参占位
+            raise NotImplementedError
+
+    bare = Bare()
+    assert bare.judging_cookies == []
+    assert asyncio.run(_logged_in(FakeContext({"whatever"}), bare)) is False
 
 
 def test_logged_in_reddit_uses_login_verify(reddit) -> None:

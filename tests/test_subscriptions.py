@@ -43,6 +43,18 @@ def test_derive_key_collision_numbered() -> None:
     assert subs.derive_key("https://a.test/f", ["a-test", "a-test-2"]) == "a-test-3"
 
 
+def test_add_feed_derived_key_avoids_reserved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """派生 key 不撞聚合流保留字 all：all.com 派生 all-2 而不是 all——
+    撞名订阅会被读取侧静默跳过，等于加了不生效（回归：派生路径曾绕过检查）。"""
+    use_config(monkeypatch, tmp_path, "")
+    _mock_title_fetch(monkeypatch)
+    feed = asyncio.run(subs.add_feed("https://all/atom.xml"))  # 单标签主机清洗后恰为 all
+    assert feed.key == "all-2"
+    assert [(f.key, f.url) for f in config.rss_feeds()] == [("all-2", "https://all/atom.xml")]
+
+
 # ---- add / remove ----
 
 
@@ -157,6 +169,14 @@ def test_import_opml_dedups_within_file(monkeypatch: pytest.MonkeyPatch, tmp_pat
     added, skipped = subs.import_opml(dup)
     assert len([f for f in added if f.url == "https://hnrss.org/frontpage"]) == 1
     assert any("HN-again" in s for s in skipped)  # 文件内重复地址只进一次
+
+
+def test_import_opml_avoids_reserved_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """OPML 派生 key 同样避开保留字 all（回归：导入路径曾绕过检查）。"""
+    use_config(monkeypatch, tmp_path, "")
+    opml = '<opml version="2.0"><body><outline type="rss" text="A" xmlUrl="https://all/a.xml"/></body></opml>'
+    added, _skipped = subs.import_opml(opml)
+    assert [f.key for f in added] == ["all-2"]
 
 
 def test_export_import_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

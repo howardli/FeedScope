@@ -156,9 +156,10 @@ class ChannelTab:
         补浏览器不会自动带的东西——headers 手动头；cookie_headers「cookie 值
         提升为头」的映射（如 X 的 ct0 -> X-Csrf-Token，页内就地读、永远新鲜，
         与 SPA 自己同一动作）；referrer 指定则覆盖页签自然 referer；as_text
-        拿 HTML 文本（Reddit）否则按 JSON 解析（知乎/X）。成功且拿到正文时
-        顺手落样本（samples 未开启零开销，probe 改版修复流水线三源同权）。
-        状态码原样上交，401/403 的语义转译归各源。
+        拿 HTML 文本（Reddit）否则按 JSON 解析（知乎/X），此时顶层不是 JSON
+        对象（登录墙 HTML / 代理错误页）也在这里一并报「结构异常」。成功且
+        拿到正文时顺手落样本（samples 未开启零开销，probe 改版修复流水线
+        三源同权）。状态码原样上交，401/403 的语义转译归各源。
         """
         try:
             data = await self.eval(
@@ -174,6 +175,8 @@ class ChannelTab:
         body = data.get("__body")
         if status is None and body is None:
             raise SourceError(f"{source} 返回结构异常")
+        if not as_text and body is not None and not isinstance(body, dict):
+            raise SourceError(f"{source} 返回结构异常（不是 JSON 对象）")
         status_i = int(status) if status else None
         if status_i is None and body is not None:
             # 样本名用通道名（ascii：zhihu/reddit/x），source 只管错误文案——

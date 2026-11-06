@@ -39,3 +39,15 @@ def get_class(source_id: str) -> type[Source] | None:
 def get_source(source_id: str) -> Source:
     """按 id 实例化源；未注册直接 KeyError（登录/巡检等内部路径 fail-fast）。"""
     return _REGISTRY[source_id]()
+
+
+def install_sources(classes: list[type[Source]]) -> None:
+    """整体替换注册表为给定源类（离线脚本 / 截图驱动 stub 源用）。
+
+    测试与 scripts/screenshot.py 之前直接改 _REGISTRY 私有字典——那是对
+    实现细节的耦合（换数据结构即断）；公开入口把「替换 + 恢复」的语义
+    收进本模块。
+    """
+    _REGISTRY.clear()
+    for cls in classes:
+        register(cls)

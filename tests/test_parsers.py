@@ -31,7 +31,7 @@ from feedscope.sources.zhihu.parse import (
     _hot_api_items,
 )
 from feedscope.sources.zhihu.parse import _md as _md_zhihu
-from feedscope.ui.wrap import display_width
+from feedscope.core.text import display_width
 
 _TIME_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 
@@ -641,7 +641,7 @@ def test_x_feed_loader_dedup_and_cursor(monkeypatch) -> None:
             None,
         )
 
-    monkeypatch.setattr("feedscope.sources.x.fetch._fetch_entries", _fake_fetch)
+    monkeypatch.setattr("feedscope.sources.x.fetch.fetch_entries", _fake_fetch)
     loader = XFeedLoader("following")
     new = asyncio.run(loader.load_more())
     assert [it.id for it in new] == ["status/1", "status/2"]
@@ -657,7 +657,7 @@ def test_x_feed_loader_done_stops(monkeypatch) -> None:
     async def _fake_fetch(feed: str, cursor: str | None):
         return _timeline([], None)
 
-    monkeypatch.setattr("feedscope.sources.x.fetch._fetch_entries", _fake_fetch)
+    monkeypatch.setattr("feedscope.sources.x.fetch.fetch_entries", _fake_fetch)
     loader = XFeedLoader("following")
     assert asyncio.run(loader.load_more()) == []
     assert loader.done
@@ -1044,7 +1044,7 @@ def test_x_tweet_detail_loader_first_batch_and_paging(monkeypatch) -> None:
         assert rest_id == "100"
         return (first, "more") if cursor is None else (page2, None)
 
-    monkeypatch.setattr("feedscope.sources.x.fetch._fetch_conversation", _fake_conv)
+    monkeypatch.setattr("feedscope.sources.x.fetch.fetch_conversation", _fake_conv)
     loader = XTweetDetailLoader("100", first, "more")
     assert loader.doc.title == "主推"
     assert loader.doc.description_md == "主推\n第二行"
@@ -1086,7 +1086,7 @@ def test_x_tweet_detail_loader_empty_page_marks_done(monkeypatch) -> None:
     async def _fake_conv(rest_id: str, cursor: str | None):
         return [_entry(entry_id="tweet-100", item_content=_item_content(_tweet_result("100", text="主推", new_user=True)))], "still-more"
 
-    monkeypatch.setattr("feedscope.sources.x.fetch._fetch_conversation", _fake_conv)
+    monkeypatch.setattr("feedscope.sources.x.fetch.fetch_conversation", _fake_conv)
     loader = XTweetDetailLoader("100", first, "more")
     assert not loader.done
     assert asyncio.run(loader.load_more()) == []

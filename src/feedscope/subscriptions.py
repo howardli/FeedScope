@@ -46,7 +46,11 @@ class BadSubscriptionFile(SubscriptionError):
 
 def derive_key(url: str, existing: Iterable[str]) -> str:
     """URL -> 订阅 key：域名清洗成 ASCII 段（www 剥掉、非法字符折叠成 -），
-    与已有 key 撞名则加 -2、-3…；域名清洗后为空（如纯 IP 端口）回退 feed。"""
+    与 existing 撞名则加 -2、-3…；域名清洗后为空（如纯 IP 端口）回退 feed。
+
+    existing 是「要避开的 key 全集」——调用方把保留字（聚合流名等，见
+    _reserved）并进已有订阅一起传：派生出的 key 撞保留字会同样加后缀绕开，
+    显式 key 撞保留字的报错路径只在用户真的手输时才触发。"""
     host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
     host = re.sub(r"^www\.", "", host)
     base = re.sub(r"[^a-z0-9]+", "-", host).strip("-") or "feed"
@@ -84,7 +88,9 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
         dup = next(f.key for f in feeds if f.url == url)
         raise SubscriptionError(f"这个地址已经订阅过了（key：{dup}）")
     if key is None:
-        key = derive_key(url, (f.key for f in feeds))
+        # 保留字并进避让集：https://all.com/… 派生出的 key 是 all-2 而不是 all
+        #（撞上聚合流名的订阅会被读取侧静默跳过，加了等于没加）
+        key = derive_key(url, (*_reserved("rss"), *(f.key for f in feeds)))
     elif key in _reserved("rss"):
         raise SubscriptionError(f"{key} 是聚合流保留字，不能用作订阅 key")
     elif key in {f.key for f in feeds}:
@@ -194,7 +200,9 @@ def import_opml(text: str) -> tuple[list[Subscription], list[str]]:
     """
     feeds = config.rss_feeds()
     known_urls = {f.url for f in feeds}
-    known_keys = {f.key for f in feeds}
+    # 保留字并进避让集（与 add_feed 的派生路径同一条规则）：OPML 里的
+    # all.com 订阅派生 all-2，不会产出被读取侧静默跳过的撞名 key
+    known_keys = {f.key for f in feeds} | set(_reserved("rss"))
     added: list[Subscription] = []
     skipped: list[str] = []
     for label, url in parse_opml(text):

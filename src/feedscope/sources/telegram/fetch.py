@@ -53,9 +53,6 @@ class TelegramFeedLoader(FeedLoader):
         self._before = min(int(it.id.rsplit("/", 1)[-1]) for it in new)
         return new
 
-    async def close(self) -> None:
-        pass  # 连接池由 core/http 进程级持有，无源内资源
-
 
 async def _fetch_one(feed: Subscription) -> list[FeedItem]:
     """拉一个频道的首页并解析；时间倒序（最新在前）。"""

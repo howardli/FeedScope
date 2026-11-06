@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import TypeVar
 
-from feedscope.core.models import Comment
+from feedscope.core.models import Answer, Comment, Floor
 
 _N = TypeVar("_N")
 
@@ -98,3 +98,36 @@ def count_kept(
 ) -> int:
     """node 子树内保留下来的评论总数（楼层头「N 条回复」与 meta 评论数用）。"""
     return sum(1 + count_kept(c, keep=keep, kids_of=kids_of) for c in kids_of(node) if keep(c))
+
+
+def build_floors(
+    nodes: Sequence[_N],
+    *,
+    keep: Callable[[_N], bool],
+    kids_of: Callable[[_N], Sequence[_N]],
+    author_of: Callable[[_N], str],
+    comment_of: Callable[[_N], Comment],
+    answer_of: Callable[[_N, int], Answer],
+) -> list[Floor]:
+    """顶层节点序列 -> Floor 列表（HN / Reddit 的「详情一次拉全树」共用）。
+
+    骨架：keep 过滤 → count_kept 数子树 → answer_of(node, n) 造楼层本体
+    （字段来源与 comment_count 引导词是站差异，n 为该层回复数）→
+    floor_comments 拍平该层的回复树。与 flatten/floor_comments 同一注入
+    四件套（keep/kids_of/author_of/comment_of），多一个 answer_of。
+    """
+    floors: list[Floor] = []
+    for node in nodes:
+        if not keep(node):
+            continue
+        n = count_kept(node, keep=keep, kids_of=kids_of)
+        floors.append(
+            Floor(
+                answer=answer_of(node, n),
+                comments=floor_comments(
+                    kids_of(node),
+                    keep=keep, kids_of=kids_of, author_of=author_of, comment_of=comment_of,
+                ),
+            )
+        )
+    return floors

@@ -21,8 +21,8 @@ from feedscope.sources.zhihu.fetch import (
     ZhihuApiFeedLoader,
     ZhihuQuestionLoader,
     _api_json,
-    _fetch_hot_list,
-    _open_question,
+    fetch_hot_list,
+    open_question,
 )
 
 _FEEDS_NEXT = "https://www.zhihu.com/api/v4/questions/123/feeds?cursor=n2"
@@ -183,7 +183,7 @@ def _open_loader(
     meta: dict | None = None,
     feeds: dict | None = None,
 ) -> ZhihuQuestionLoader:
-    """monkeypatch 出纯 API 的 _open_question（并行开题 payload 走 FakePage），
+    """monkeypatch 出纯 API 的 open_question（并行开题 payload 走 FakePage），
     评论层与后续 load_more 翻页走各自通道。"""
     page = page or FakePage()
     page._open_payload = {
@@ -192,7 +192,7 @@ def _open_loader(
     }
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
-    return asyncio.run(_open_question("123"))
+    return asyncio.run(open_question("123"))
 
 
 def test_open_question_doc_from_meta_api(monkeypatch) -> None:
@@ -340,7 +340,7 @@ def test_question_deleted_404_is_friendly(monkeypatch) -> None:
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
     with pytest.raises(SourceError, match="已被删除或不存在"):
-        asyncio.run(_open_question("999999999999999999"))
+        asyncio.run(open_question("999999999999999999"))
 
 
 def test_api_json_401_is_login_required(monkeypatch) -> None:
@@ -405,7 +405,7 @@ def test_hot_list_from_api(monkeypatch) -> None:
         }
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._api_json", _fake)
-    items = asyncio.run(_fetch_hot_list("https://www.zhihu.com/hot"))
+    items = asyncio.run(fetch_hot_list("https://www.zhihu.com/hot"))
     assert "topstory/hot-list" in seen["url"] and seen["referer"] == "https://www.zhihu.com/hot"
     assert [it.id for it in items] == ["question/2100"]
     assert items[0].url == "https://www.zhihu.com/question/2100"

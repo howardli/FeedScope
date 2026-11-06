@@ -14,27 +14,29 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from feedscope.core.browser import profile_cookies
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
     DetailLoader,
     FeedLoader,
-    LoginRequired,
     Source,
+    login_gate,
 )
 from feedscope.sources.x.fetch import (
     XFeedLoader,
     XTweetDetailLoader,
-    _fetch_conversation,
+    fetch_conversation,
 )
 
 
 async def require_login(what: str) -> None:
     """判登门：auth_token/ct0 成对在 profile 里即已登录（通道页签的 cookie 由浏览器自带）。"""
-    cookies = await profile_cookies("https://x.com")
-    if not cookies.get("auth_token") or not cookies.get("ct0"):
-        raise LoginRequired(f"X 需要登录后才能查看{what}")
+    await login_gate(
+        "https://x.com",
+        lambda c: bool(c.get("auth_token") and c.get("ct0")),
+        label="X",
+        what=what,
+    )
 
 
 @register
@@ -59,5 +61,5 @@ class XSource(Source):
         await require_login("推文详情")
         # 转发（RT）的会话在原推那里：列表已把原推 id 放进 extra（见 parse._tweet_from_result）
         rest_id = str(item.extra.get("conversation_id") or item.id.rsplit("/", 1)[-1])
-        entries, cursor = await _fetch_conversation(rest_id, None)
+        entries, cursor = await fetch_conversation(rest_id, None)
         return XTweetDetailLoader(rest_id, entries, cursor)

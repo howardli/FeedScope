@@ -23,6 +23,7 @@ from feedscope.core.source import (
     LoginRequired,
     SourceError,
     dedup_append,
+    dedup_by,
 )
 from feedscope.sources.zhihu.parse import (
     _api_comments,
@@ -107,8 +108,7 @@ async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False
     status, body = await _tab.fetch(url, source="知乎", headers=_headers(zse93), referrer=referrer)
     if status:
         raise SourceError(f"接口请求失败（HTTP {status}）")
-    if body is not None and not isinstance(body, dict):
-        raise SourceError("知乎 接口返回结构异常（不是 JSON 对象）")
+    # 顶层不是 JSON 对象（登录墙 HTML 等）由 ChannelTab.fetch 统一报结构异常
     return body or {}
 
 
@@ -191,7 +191,7 @@ async def _api_json(url: str, referer: str, zse93: bool = False) -> dict:
         raise
 
 
-async def _fetch_hot_list(referer: str) -> list[FeedItem]:
+async def fetch_hot_list(referer: str) -> list[FeedItem]:
     """热榜一次 API 调用拿全量（30 条上限，无翻页）。"""
     return _hot_api_items(await _api_json(HOT_API, referer))
 
@@ -241,7 +241,7 @@ async ([metaUrl, feedsUrl, referer]) => {
 # ---- 页面操作 ----
 
 
-async def _open_question(qid: str) -> DetailLoader:
+async def open_question(qid: str) -> DetailLoader:
     """问题详情纯 API：元信息 questions API + 首批回答 feeds 无 cursor 从头拉。
 
     全程不加载问题页面——通道页签发两个请求即得（提问人/描述/计数 + 完整
@@ -299,9 +299,6 @@ class ZhihuApiFeedLoader(FeedLoader):
             self.items, self._seen, (_feed_api_item(r) for r in data.get("data") or [])
         )
 
-    async def close(self) -> None:
-        pass  # 通道页签进程级共享，不归单个 Loader 关
-
 
 class ZhihuQuestionLoader(DetailLoader):
     """问题详情：纯 API（元信息 + 回答 feeds 游标翻页），不持有任何页签。
@@ -329,13 +326,8 @@ class ZhihuQuestionLoader(DetailLoader):
             self._done = True
             return []
         data = await _api_json(self._next, self._referer)
-        new: list[Answer] = []
-        for a in _feeds_answers(data, self._qid):
-            if a.url and a.url in self._seen_urls:
-                continue
-            if a.url:
-                self._seen_urls.add(a.url)
-            new.append(a)
+        # 回答按 url 去重防排序抖动（dedup_by：空 url 不去重直接放行）
+        new = dedup_by(_feeds_answers(data, self._qid), self._seen_urls, key=lambda a: a.url)
         self.doc.answers.extend(new)  # 维持「doc = 已加载全部」的不变量
         paging = data.get("paging") or {}
         self._next = paging.get("next") or None
@@ -363,9 +355,6 @@ class ZhihuQuestionLoader(DetailLoader):
         except Exception as exc:  # 评论打不开不算灾难：给出口让 UI 提示
             raise SourceError(f"知乎 评论区打开失败：{exc}") from exc
 
-    async def close(self) -> None:
-        pass  # 纯 API 无页签；通道进程级共享
-
 
 class ZhihuCommentsLoader(CommentLoader):
     """单条回答的评论加载器：纯 comment_v5 API 游标翻页（root_comment 每页
@@ -390,14 +379,9 @@ class ZhihuCommentsLoader(CommentLoader):
             comments, next_url, is_end = await _comment_page(self._next)
         except SourceError:
             return []  # 单页失败不判死：可以再按 Ctrl+N 重试
-        new = [c for c in comments if c.raw_id not in self._ids]
-        for c in new:
-            self._ids.add(c.raw_id)
+        new = dedup_by(comments, self._ids, key=lambda c: c.raw_id)
         self.comments.extend(new)
         self._next = next_url
         if is_end or not next_url:
             self._done = True
         return new
-
-    async def close(self) -> None:
-        pass  # 纯 API 无页签；通道进程级共享

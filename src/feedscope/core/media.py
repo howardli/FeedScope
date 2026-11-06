@@ -94,6 +94,16 @@ _ANCHOR_IMG_RE = re.compile(r"(<a\b[^>]*>)\s*\x00(\d+)\x00\s*</a>", re.IGNORECAS
 _H2T = new_h2t()  # 模块级实例复用（handle 自带状态复位，省每调用重建）
 
 
+def text_to_md(html: str) -> str:
+    """受限 HTML（p/a/i/code 等，不含 img/video）-> markdown：直通版管线。
+
+    HN 的评论正文用（站点只放行这几个标签，没有媒体标签可换记号），
+    与 html_to_md 同一收尾（strip_zwsp + strip）；带媒体的正文走 html_to_md。"""
+    if not html:
+        return ""
+    return strip_zwsp(_H2T.handle(html)).strip()
+
+
 def html_to_md(html: str) -> str:
     """整段 HTML -> markdown：img 换 [图片](原图直链)。RSS 与 V2EX 同管线。
 

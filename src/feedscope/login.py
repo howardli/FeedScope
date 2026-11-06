@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import urlparse
 
-from feedscope.core.browser import PROFILE_DIR, drop_stale_locks
+from feedscope.core.browser import PROFILE_DIR, close_session, drop_stale_locks
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
 
 LOGIN_TIMEOUT = 180  # 秒；3 分钟没扫上就退出
@@ -44,7 +44,6 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
 
     from playwright.async_api import async_playwright
 
-    domain = urlparse(source.login_url).netloc
     _say(quiet, f"启动浏览器（profile: {PROFILE_DIR}）")
     _say(quiet, f"请在弹出的 Chrome 窗口里登录 {source.label}，完成后本命令自动退出。")
     drop_stale_locks()
@@ -55,34 +54,19 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
                 headless=False,  # 登录窗口必须可见（扫码/手输密码）
                 **chrome_launch_kwargs(),  # channel/viewport/locale 等，与 browser.py 共用
             )
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(
-                source.login_url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS
-            )
             try:
-                deadline = asyncio.get_running_loop().time() + LOGIN_TIMEOUT
-                while asyncio.get_running_loop().time() < deadline:
-                    if source.login_verify is not None:
-                        # 浏览器级判据（声明 login_verify 的源）：本地判定，零网络
-                        # （如 Reddit 的 token_v2 JWT 解码）——有的源匿名访客也发
-                        # 判登 cookie（Reddit 的 token_v2 打开登录页即有），
-                        # cookie 出现 ≠ 登录完成
-                        ok = bool(await source.login_verify(context))
-                    else:
-                        cookies = await context.cookies(f"https://{domain}")
-                        # 有判登全集就要求全在（X 的 auth_token+ct0 成对），
-                        # 没声明才退回单枚 login_cookie
-                        needed = source.logout_cookies or [source.login_cookie]
-                        ok = bool(needed) and set(needed) <= {c["name"] for c in cookies}
-                    if ok:
-                        if source.login_verify is not None:
-                            how = "登录态已写入 profile"
-                        else:
-                            names = source.logout_cookies or [source.login_cookie]
-                            how = f"{'、'.join(names)} 已写入 profile"
-                        _say(quiet, f"登录成功：{how}，之后无头复用。")
+                page = context.pages[0] if context.pages else await context.new_page()
+                await page.goto(
+                    source.login_url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS
+                )
+                # 轮询单独兜底：判据钩子抛错报「登录检测出错」，不被外层误标成
+                # 「浏览器启动失败」（浏览器明明活着，误导排障）
+                try:
+                    if await _await_login(context, source, quiet):
                         return True
-                    await asyncio.sleep(POLL_INTERVAL)
+                except Exception as exc:
+                    _say(quiet, f"登录检测出错：{exc}")
+                    return False
             finally:
                 await context.close()
     except Exception as exc:  # 浏览器没装/起不来/导航超时：给中文出口，不裸栈
@@ -90,6 +74,31 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
         return False
     _say(quiet, f"超时：{LOGIN_TIMEOUT} 秒内未检测到登录，重新运行 feedscope login 再试。")
     return False
+
+
+async def _await_login(context, source, quiet: bool) -> bool:
+    """轮询源声明的判据（口径见 _logged_in）直到成功（True，已报喜）或超时（False）。"""
+    deadline = asyncio.get_running_loop().time() + LOGIN_TIMEOUT
+    while asyncio.get_running_loop().time() < deadline:
+        if await _logged_in(context, source):
+            if source.login_verify is not None:
+                how = "登录态已写入 profile"
+            else:
+                how = f"{'、'.join(source.judging_cookies)} 已写入 profile"
+            _say(quiet, f"登录成功：{how}，之后无头复用。")
+            return True
+        await asyncio.sleep(POLL_INTERVAL)
+    return False
+
+
+async def yield_profile() -> None:
+    """关掉无头会话让出 profile 锁（有头登录前必经；TUI 账号动线调用）。
+
+    persistent profile 同一时刻只允许一个实例：无头取数会话不先关掉，
+    有头登录窗口会撞锁起不来。登录完成后取数按需自然重开（get_session
+    惰性启动）。调用方还要先释放各自持有的活页签（TUI 的列表 loader）。
+    """
+    await close_session()
 
 
 async def _present_cookies(context, source) -> list[dict]:
@@ -101,15 +110,17 @@ async def _present_cookies(context, source) -> list[dict]:
 async def _logged_in(context, source) -> bool:
     """源声明的判据：login_verify 优先，否则判登 cookie 全集都在。
 
-    cookie 全集口径与 login() 轮询一致（X 要 auth_token+ct0 成对）；
-    Reddit 这类匿名访客也发 cookie 的源由 login_verify 做 JWT 解码。
+    cookie 全集口径与 login() 轮询一致（Source.judging_cookies：X 要
+    auth_token+ct0 成对，未声明全集才退单枚 login_cookie）；Reddit 这类
+    匿名访客也发 cookie 的源由 login_verify 做 JWT 解码。
     """
     if source.login_verify is not None:
         return bool(await source.login_verify(context))
-    if not source.logout_cookies:
+    needed = source.judging_cookies
+    if not needed:
         return False
     names = {c["name"] for c in await _present_cookies(context, source)}
-    return set(source.logout_cookies) <= names
+    return set(needed) <= names
 
 
 async def _clear_cookies(context, source) -> bool:
@@ -118,18 +129,19 @@ async def _clear_cookies(context, source) -> bool:
     「确有」与判登共用 _logged_in（login_verify 优先）；半套 cookie
     （如只剩 auth_token 没有 ct0）本就不算已登录，登出反馈「本就未登录」；
     cookie 照样全清，不留脏状态。"""
+
     had = await _logged_in(context, source)
-    for name in source.logout_cookies:
+    for name in source.judging_cookies:
         await context.clear_cookies(name=name)
     return had
 
 
 async def is_logged_in(source_id: str = "zhihu") -> bool:
-    """当前 profile 是否已登录某源；既无判登 cookie 也无 login_verify 的源恒为 False。"""
+    """当前 profile 是否已登录某源；无任何判据（login_verify / cookie）的源恒为 False。"""
     from feedscope.core.registry import get_source
 
     source = get_source(source_id)
-    if not source.logout_cookies and source.login_verify is None:
+    if source.login_verify is None and not source.judging_cookies:
         return False
     from feedscope.core.browser import get_session
 
@@ -141,7 +153,7 @@ async def logout(source_id: str = "zhihu") -> bool:
     from feedscope.core.registry import get_source
 
     source = get_source(source_id)
-    if not source.logout_cookies:
+    if not source.judging_cookies:
         return False
     from feedscope.core.browser import get_session
 

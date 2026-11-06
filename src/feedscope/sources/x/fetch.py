@@ -351,9 +351,7 @@ async def _raw(url: str, *, source: str) -> tuple[int | None, dict]:
     status, body = await _tab.fetch(
         url, source=source, headers=_GQL_HEADERS, cookie_headers=_CSRF_FROM_COOKIE
     )
-    if body is not None and not isinstance(body, dict):
-        # 登录墙 HTML / 代理错误页：不是 GraphQL JSON，按改版/通道异常上报
-        raise SourceError(f"{source} 返回结构异常（不是 JSON 对象）")
+    # 登录墙 HTML / 代理错误页（不是 GraphQL JSON）由 ChannelTab.fetch 统一报
     return status, (body or {})
 
 
@@ -407,14 +405,14 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
     )
 
 
-async def _fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict], str | None]:
+async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict], str | None]:
     """时间线一次 GraphQL 调用 -> (entries, 下一页 cursor)；feed 见 _TIMELINE_OPS。"""
     op_name = _TIMELINE_OPS[feed]
     data = await _graphql(op_name, {"cursor": cursor} if cursor else None, source="X 时间线")
     return _entries_and_cursor(data)
 
 
-async def _fetch_conversation(rest_id: str, cursor: str | None) -> tuple[list[dict], str | None]:
+async def fetch_conversation(rest_id: str, cursor: str | None) -> tuple[list[dict], str | None]:
     """推文会话一次 GraphQL 调用 -> (entries, 回复翻页 cursor)。"""
     extra = {"focalTweetId": rest_id}
     if cursor:
@@ -443,15 +441,12 @@ class XFeedLoader(FeedLoader):
     async def load_more(self) -> list[FeedItem]:
         if self._done:
             return []
-        entries, cursor = await _fetch_entries(self._feed, self._cursor)
+        entries, cursor = await fetch_entries(self._feed, self._cursor)
         self._cursor = cursor
         self._done = cursor is None
         return dedup_append(
             self.items, self._seen, (_tweet_from_result(r) for r in _iter_tweet_results(entries))
         )
-
-    async def close(self) -> None:
-        pass  # 通道页签进程级共享，不归单个 Loader 关
 
 
 class XTweetDetailLoader(DetailLoader):
@@ -477,15 +472,11 @@ class XTweetDetailLoader(DetailLoader):
             self._cursor = None  # 首批即无回复：会话确无回复，无谓的游标不再翻
 
     def _answers(self, results: list[dict]) -> list[Answer]:
-        """推文 result 列表 -> Answer 批次（残卡丢弃），登记去重并写入 doc。"""
-        new: list[Answer] = []
-        for r in results:
-            rid = str(r.get("rest_id") or "")
-            if rid:
-                self._seen.add(rid)
-            a = _reply_answer(r)
-            if a is not None:
-                new.append(a)
+        """推文 result 列表 -> Answer 批次（残卡丢弃），写入 doc。
+
+        去重登记（rest_id -> self._seen）在 parse._ordered_results 里随
+        摊平一起做——残卡也登记过，翻页不会再吐同一条。"""
+        new = [a for a in map(_reply_answer, results) if a is not None]
         self.doc.answers.extend(new)
         return new
 
@@ -496,12 +487,9 @@ class XTweetDetailLoader(DetailLoader):
     async def load_more(self) -> list[Answer]:
         if self._cursor is None:
             return []
-        entries, cursor = await _fetch_conversation(self._rest_id, self._cursor)
+        entries, cursor = await fetch_conversation(self._rest_id, self._cursor)
         self._cursor = cursor
         new = self._answers(_ordered_results(entries, self._seen))
         if not new:
             self._cursor = None  # 空页 = 真到头（游标会一直发，空页判死避免空转）
         return new
-
-    async def close(self) -> None:
-        pass  # 通道页签进程级共享，不归单个 Loader 关

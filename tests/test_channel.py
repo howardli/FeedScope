@@ -195,6 +195,20 @@ def test_fetch_error_and_garbage_are_source_error(monkeypatch) -> None:
         asyncio.run(tab.fetch("https://x/a", source="测试"))
 
 
+def test_fetch_json_mode_rejects_non_object_body(monkeypatch) -> None:
+    """JSON 形态（as_text=False）拿到非对象正文（登录墙 HTML / 代理错误页）：
+    统一在这里报「不是 JSON 对象」——知乎/X 的调用方不再各写一份检查。"""
+    from feedscope.core.source import SourceError
+
+    tab, _page = _fetch_tab(monkeypatch, {"__body": "<html>login</html>"})
+    with pytest.raises(SourceError, match="不是 JSON 对象"):
+        asyncio.run(tab.fetch("https://x/api", source="测试"))
+    # as_text=True 的同一正文是正常 HTML 响应（Reddit 通道），不受影响
+    tab, _page = _fetch_tab(monkeypatch, {"__body": "<html>login</html>"})
+    status, body = asyncio.run(tab.fetch("https://x/a", source="测试", as_text=True))
+    assert status is None and body == "<html>login</html>"
+
+
 def test_fetch_playwright_failure_wrapped(monkeypatch) -> None:
     """evaluate 层失败（重建重试也没救）：包成 SourceError，不裸抛。"""
     from feedscope.core.source import SourceError

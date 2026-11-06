@@ -21,16 +21,14 @@ from feedscope.core.source import (
     FeedLoader,
     Source,
     SourceError,
-    StaticFeedLoader,
-    require_feed_items,
 )
 from feedscope.sources.zhihu.fetch import (
     FOLLOW_API,
     HOT_API,
     RECOMMEND_API,
     ZhihuApiFeedLoader,
-    _fetch_hot_list,
-    _open_question,
+    fetch_hot_list,
+    open_question,
 )
 
 # 各流的 (API URL, referer)：URL 逐字照抄页面自己发的首请求；referer 是页面
@@ -65,8 +63,7 @@ class ZhihuSource(Source):
         label = self.label_of(name)
         url, referer = _FEED_CTX[name]
         if name == "hot":
-            items = require_feed_items(await _fetch_hot_list(referer), self.label, label)
-            return StaticFeedLoader(items)
+            return self.static_feed(await fetch_hot_list(referer), label)
         # 推荐/关注走游标 API：首批在通道页签里创建并判登，0 条守卫与 hn/x 同路
         return await self.first_batch(ZhihuApiFeedLoader(url, referer), label)
 
@@ -76,4 +73,4 @@ class ZhihuSource(Source):
         m = re.search(r"question/(\d+)", item.url or "")
         if not m:
             raise SourceError("知乎 该条目没有问题 id，无法进详情")
-        return await _open_question(m.group(1))
+        return await open_question(m.group(1))

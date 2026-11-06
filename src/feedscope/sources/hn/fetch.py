@@ -77,6 +77,3 @@ class HnFeedLoader(FeedLoader):
         except (TypeError, ValueError):
             self._nb_pages = 1
         return new
-
-    async def close(self) -> None:
-        pass  # 纯 httpx 无资源；连接池进程级共享

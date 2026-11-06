@@ -112,7 +112,7 @@ def test_open_detail_out_of_range_comments() -> None:
     from feedscope.sources.hn import HnDetailLoader
     from feedscope.sources.hn.parse import parse_story
 
-    loader = HnDetailLoader(parse_story(_TREE))
+    loader = HnDetailLoader.from_detail(parse_story(_TREE))
     with pytest.raises(SourceError, match="不在已加载范围内"):
         asyncio.run(loader.open_comments(99))
 

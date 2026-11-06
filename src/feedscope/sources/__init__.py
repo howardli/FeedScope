@@ -10,10 +10,12 @@
                     持资源的增量 Loader 也放这里；不碰 UI。
       parse.py      解析层：raw dict/HTML -> FeedItem/Answer/DetailDoc/markdown，
                     纯函数，直接可写 fixture 测试；不碰网络。
-      __init__.py   编排层：@register 的 Source 子类，只做能力声明与 open_* 分派
-                    （出口统一过 require_feed_items 首屏守卫）。
+      __init__.py   编排层：@register 的 Source 子类，做能力声明与 open_* 分派
+                    （出口统一过 require_feed_items 首屏守卫）、判登门
+                    （core.source.login_gate，判据是源差异）。
 
-编排层按源形态直接继承共享骨架，别重写机械件：
+编排层按源形态直接继承共享骨架，别重写机械件（详情骨架 / 批次去重 /
+判登 cookie 读取都已收口）：
 - 纯订阅聚合（RSS / Telegram 形）：继承 core.source.SubscribedSource——
   feeds 加法合成、「全部」流的四级错误出口全在基类，子类只注入
   _fetch_merged / _open_one 两个差异

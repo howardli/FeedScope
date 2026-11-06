@@ -25,29 +25,16 @@ from feedscope.core.source import (
     SourceError,
 )
 from feedscope.sources.hn.fetch import HnFeedLoader, fetch_item
-from feedscope.sources.hn.parse import SOURCE_ID, StoryDetail, parse_story
-
-# 详情一次拿全树后，楼层每页给多少（内存切片，不是请求）：首批给一屏
-# 上下的量，Ctrl+N 增量补，几百楼的线程不至于一次糊满屏；评论页宽
-# （20）用 core.SliceCommentsLoader 的默认值
-FLOOR_PAGE = 15
+from feedscope.sources.hn.parse import SOURCE_ID, parse_story
 
 
 class HnDetailLoader(SliceDetailLoader):
-    """HN 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。"""
+    """HN 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。
+
+    全部结构在 SliceDetailLoader.from_detail（楼层/评论树成对进切片），
+    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
 
     source_label = "HN"
-    floor_page = FLOOR_PAGE
-
-    def __init__(self, story: StoryDetail, fallback_title: str = "") -> None:
-        super().__init__(
-            [f.answer for f in story.floors],
-            comment_trees=[f.comments for f in story.floors],
-            title=story.title or fallback_title,
-            meta=story.meta,
-            time=story.time,
-            description_md=story.description_md,
-        )
 
 
 @register
@@ -74,4 +61,4 @@ class HnSource(Source):
         root = await fetch_item(item.id)
         if not root.get("id"):
             raise SourceError("HN 详情返回里没有 id，接口可能已变")
-        return HnDetailLoader(parse_story(root), fallback_title=item.title)
+        return HnDetailLoader.from_detail(parse_story(root), fallback_title=item.title)

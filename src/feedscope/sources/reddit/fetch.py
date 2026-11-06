@@ -174,6 +174,3 @@ class RedditFeedLoader(FeedLoader):
             self.done = nxt is None
             added.extend(dedup_append(self.items, self._seen, items))
         return added
-
-    async def close(self) -> None:
-        pass  # 通道页签进程级共享，不归单个 Loader 关

@@ -24,11 +24,12 @@ URT 条目三类：
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from feedscope.core.display import fmt_count, signature, votes_text
 from feedscope.core.media import mark
 from feedscope.core.models import Answer, FeedItem
+from feedscope.core.source import dedup_by
 from feedscope.core.text import strip_zwsp, truncate_display
 from feedscope.core.timefmt import fmt_twitter
 
@@ -204,6 +205,28 @@ def _who(r: dict) -> str:
     return signature(name, handle)
 
 
+def _urt_entries_and_cursor(
+    data: dict,
+    urt_of: Callable[[dict], dict],
+    cursor_of: Callable[[dict], str | None],
+) -> tuple[list[dict], str | None]:
+    """GraphQL URT 响应 -> (entries, 游标)：instructions 摊平 + 游标扫描的共享骨架。
+
+    时间线（home.home_timeline_urt）与详情（threaded_conversation_with_
+    injections_v2）同构；容器路径与「哪条算下一页游标」是端点差异，经
+    urt_of / cursor_of 注入（见 _entries_and_cursor / _detail_entries_and_cursor）。
+    """
+    entries: list[dict] = []
+    for ins in urt_of(data).get("instructions") or []:
+        if ins.get("type") == "TimelineAddEntries":
+            entries.extend(ins.get("entries") or [])
+    cursor: str | None = None
+    for e in entries:
+        if value := cursor_of(e):
+            cursor = value
+    return entries, cursor
+
+
 def _entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     """从 GraphQL 响应提取全部 entries 与下一页游标（cursor-bottom 条目的 value）。
 
@@ -212,16 +235,17 @@ def _entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     TimelineAddEntries（首批只有一个），全部摊平；游标取最后一条 cursor-bottom
     （顶部的 cursor-top 是「回到顶部」，不算下一页）。
     """
-    urt = ((data.get("data") or {}).get("home") or {}).get("home_timeline_urt") or {}
-    entries: list[dict] = []
-    for ins in urt.get("instructions") or []:
-        if ins.get("type") == "TimelineAddEntries":
-            entries.extend(ins.get("entries") or [])
-    cursor: str | None = None
-    for e in entries:
+
+    def _bottom(e: dict) -> str | None:
         if (e.get("entryId") or "").startswith("cursor-bottom"):
-            cursor = (e.get("content") or {}).get("value")
-    return entries, cursor
+            return (e.get("content") or {}).get("value")
+        return None
+
+    return _urt_entries_and_cursor(
+        data,
+        lambda d: (((d.get("data") or {}).get("home") or {}).get("home_timeline_urt") or {}),
+        _bottom,
+    )
 
 
 def _iter_tweet_results(entries: list[dict]) -> Iterator[dict]:
@@ -315,23 +339,23 @@ def _tweet_from_result(r: dict) -> FeedItem | None:
 def _detail_entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     """TweetDetail 响应 -> (entries, 回复翻页 cursor)。
 
-    与 _entries_and_cursor 同构：instructions 摊平，游标取最后一条 cursor-*
-    （ShowMore 回复）。焦点推文是 tweet-{id} 条目，回复在 conversationthread-*
-    模块里，条目序即阅读序（祖先推文混在最前，v1 当上下文读，不单独标注）。
+    与 _entries_and_cursor 同构（共享 _urt_entries_and_cursor 骨架），游标取
+    最后一条 cursor-*（ShowMore 回复；itemContent 形态优先，content.value 兜底）。
+    焦点推文是 tweet-{id} 条目，回复在 conversationthread-* 模块里，条目序
+    即阅读序（祖先推文混在最前，v1 当上下文读，不单独标注）。
     """
-    urt = ((data.get("data") or {}).get("threaded_conversation_with_injections_v2") or {})
-    entries: list[dict] = []
-    for ins in urt.get("instructions") or []:
-        if ins.get("type") == "TimelineAddEntries":
-            entries.extend(ins.get("entries") or [])
-    cursor: str | None = None
-    for e in entries:
+
+    def _any_cursor(e: dict) -> str | None:
         if (e.get("entryId") or "").startswith("cursor-"):
             item = (e.get("content") or {}).get("itemContent") or {}
-            value = item.get("value") or (e.get("content") or {}).get("value")
-            if value:
-                cursor = value
-    return entries, cursor
+            return item.get("value") or (e.get("content") or {}).get("value")
+        return None
+
+    return _urt_entries_and_cursor(
+        data,
+        lambda d: (d.get("data") or {}).get("threaded_conversation_with_injections_v2") or {},
+        _any_cursor,
+    )
 
 
 def _unwrap(res: dict | None) -> dict:
@@ -343,24 +367,23 @@ def _unwrap(res: dict | None) -> dict:
     return res
 
 
-def _ordered_results(entries: list[dict], skip: set[str]) -> list[dict]:
-    """entries 里的推文按条目序摊平去重，跳过 skip 里的 rest_id。
+def _ordered_results(entries: list[dict], seen: set[str]) -> list[dict]:
+    """entries 里的推文按条目序摊平，rest_id 去重并直接登记进 seen（持久集）。
 
     tweetdetailrelatedtweets-* 模块是「相关推文」推荐（详情页尾部），不是回复，
     整个丢弃。同一条回复可在顶层与 conversationthread 模块里各出现一次；
-    翻页页也用它，skip 装焦点与已输出过的回复 id。
+    翻页页也用它，seen 装焦点与已输出过的回复 id——本函数边过滤边登记
+    （残卡转换失败也已记下，翻页不会再吐同一条）。去重规则本体在
+    core.source.dedup_by（空 rest_id 不去重直接放行）。
     """
     clean = [
         e for e in entries if not (e.get("entryId") or "").startswith("tweetdetailrelatedtweets")
     ]
-    seen: set[str] = set(skip)
-    out: list[dict] = []
-    for r in (_unwrap(res) for res in _iter_tweet_results(clean)):
-        rid = str(r.get("rest_id") or "")
-        if rid and rid not in seen:
-            seen.add(rid)
-            out.append(r)
-    return out
+    return dedup_by(
+        (_unwrap(res) for res in _iter_tweet_results(clean)),
+        seen,
+        key=lambda r: str(r.get("rest_id") or ""),
+    )
 
 
 def _focal_and_replies(entries: list[dict], rest_id: str) -> tuple[dict, dict | None, list[dict]]:

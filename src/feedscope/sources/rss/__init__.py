@@ -14,19 +14,13 @@ feed 自带正文（content 优先、summary 兜底），摘要型源正文短�
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from feedscope.core.config import Subscription
 from feedscope.core.media import html_to_md
-from feedscope.core.models import DetailDoc, FeedItem
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    FeedLoader,
-    StaticDetailLoader,
-    StaticFeedLoader,
-    SubscribedSource,
-    require_feed_items,
-)
+from feedscope.core.source import FeedLoader, SubscribedSource
 from feedscope.core.timefmt import fmt_unix
 from feedscope.sources.rss.fetch import fetch_body, fetch_merged
 from feedscope.sources.rss.parse import SOURCE_ID, parse_feed
@@ -44,6 +38,7 @@ class RssSource(SubscribedSource):
     all_feed: ClassVar[str] = "all"  # 聚合流名（「全部」），feeds 首位
     sub_noun: ClassVar[str] = "订阅"
     reserved_feed_keys = (all_feed,)
+    _meta_extra_key = "feed_label"  # 详情元信息首段 = 订阅显示名
 
     async def _fetch_merged(
         self, feeds: list[Subscription]
@@ -58,19 +53,11 @@ class RssSource(SubscribedSource):
             all_view=False,
             fallback_url=feed.url,
         )
-        items = require_feed_items(items, self.label, feed.label)  # 0 条 = 大概率源坏了
-        return StaticFeedLoader(items)
+        # 0 条 = 大概率源坏了（改版/地址失效），静态首屏出口统一报
+        return self.static_feed(items, feed.label)
 
-    async def open_detail(self, item: FeedItem) -> StaticDetailLoader:
-        """正文已在列表抓取时带回来（extra），进详情不重新请求。"""
-        extra = item.extra
-        meta = " · ".join(
-            x for x in (str(extra.get("feed_label") or ""), str(extra.get("author") or "")) if x
-        )
-        doc = DetailDoc(
-            title=item.title,
-            meta=meta,
-            time=fmt_unix(extra.get("published") or None),
-            description_md=html_to_md(str(extra.get("content_html") or "")),
-        )
-        return StaticDetailLoader(doc)
+    def _detail_time(self, extra: dict[str, Any]) -> str:
+        return fmt_unix(extra.get("published") or None)
+
+    def _detail_body(self, extra: dict[str, Any]) -> str:
+        return html_to_md(str(extra.get("content_html") or ""))
