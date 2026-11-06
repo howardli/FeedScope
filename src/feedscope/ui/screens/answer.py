@@ -25,8 +25,7 @@ from feedscope.core.models import Comment, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import feedback
 from feedscope.ui.layout import md_body_width
-from feedscope.ui.screens.reading import READING_CSS, ReadingScreen
-from feedscope.ui.widgets import divider
+from feedscope.ui.screens.reading import READING_CSS, ReadingScreen, dim_line, divider
 from feedscope.ui.wrap import wrap_markdown
 
 
@@ -144,11 +143,11 @@ class AnswerScreen(ReadingScreen):
             for c in self.cloader.comments:
                 widgets.extend(self._comment_floor(c))
         elif self._exhausted:
-            widgets.append(Static(f"[dim]（没有{self._unit}）[/dim]", id="cm-empty"))
+            widgets.append(dim_line(f"（没有{self._unit}）", id="cm-empty"))
         else:
             widgets.append(Label(f"{self._unit}加载中…", id="cm-loading"))
         if self._exhausted:
-            widgets.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"))
+            widgets.append(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
         else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
@@ -218,10 +217,10 @@ class AnswerScreen(ReadingScreen):
                     await w.remove()
             if not comments:
                 self._remove_hint()
-                tail: list[Widget] = [Static(f"[dim]（没有{self._unit}）[/dim]", id="cm-empty")]
+                tail: list[Widget] = [dim_line(f"（没有{self._unit}）", id="cm-empty")]
                 if self._exhausted:
                     # 到头且为空 = 真没有评论（EOF 标记）
-                    tail.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"))
+                    tail.append(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
                 else:
                     # 首批拉空但没到头（网慢）：不判死，尾行保留 Ctrl+N 重试预告
                     self._hint = self._hint_widget()
@@ -274,7 +273,7 @@ class AnswerScreen(ReadingScreen):
             if self.cloader.done:
                 self._exhausted = True
                 self._remove_hint()
-                await body.mount(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="cm-no-more"))
+                await body.mount(dim_line(f"（没有更多{self._unit}了）", id="cm-no-more"))
             else:  # 拉空没到头（网慢/懒加载没触发）：可再按 Ctrl+N
                 await self._mount_hint()
             return

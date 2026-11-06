@@ -61,9 +61,7 @@ class V2exSource(Source):
     detail_unit_label = "回复"  # 楼层单位词：帖内回复（知乎「回答」、HN「评论」）
 
     async def open_feed(self, name: str) -> StaticFeedLoader:
-        label = self.feed_labels.get(name)
-        if label is None:
-            raise ValueError(f"未知信息流：{name}")
+        label = self.label_of(name)
         items = parse_topics(await fetch_topics(name, label))
         require_feed_items(items, self.label, label)  # 0 条 = 接口可能已变
         return StaticFeedLoader(items)  # v1 一页全量（hot 10 / latest 40），无翻页

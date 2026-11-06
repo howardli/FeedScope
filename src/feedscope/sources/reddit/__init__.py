@@ -158,9 +158,7 @@ class RedditSource(Source):
         self.feed_labels.update({k: f.label for k, f in self._subs.items()})
 
     async def open_feed(self, name: str) -> FeedLoader:
-        label = self.feed_labels.get(name)
-        if label is None:
-            raise ValueError(f"未知信息流：{name}")
+        label = self.label_of(name)
         page = (
             self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"
         )  # 订阅 key 即 subreddit 名

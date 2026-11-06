@@ -62,17 +62,18 @@ class ZhihuSource(Source):
     # ---- 信息流 ----
 
     async def open_feed(self, name: str) -> FeedLoader:
+        label = self.label_of(name)
         if name in ("recommend", "follow"):
             url, referer = _FEED_CTX[name]
             loader = ZhihuApiFeedLoader(url, referer)
             await loader.load_more()  # 首批（通道页签在此创建并判登）
-            require_feed_items(loader.items, self.label, name)  # 0 条 = 大概率改版
+            require_feed_items(loader.items, self.label, label)  # 0 条 = 大概率改版
             return loader
         if name == "hot":
             url, referer = _FEED_CTX["hot"]
-            items = require_feed_items(await _fetch_hot_list(referer), self.label, name)
+            items = require_feed_items(await _fetch_hot_list(referer), self.label, label)
             return StaticFeedLoader(items)
-        raise ValueError(f"未知信息流：{name}")
+        raise AssertionError(name)  # label_of 已挡未知流，这只为类型收窄
 
     # ---- 问题详情 ----
 

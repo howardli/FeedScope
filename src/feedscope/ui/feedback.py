@@ -12,18 +12,21 @@ from textual.app import App
 from feedscope.core.source import Source, SourceError
 
 
-def failure_text(source: Source, exc: Exception, action: str = "请求失败") -> str:
+def failure_text(source: Source | None, exc: Exception, action: str = "请求失败") -> str:
     """面向用户的失败文案。
 
     SourceError 的消息已是完整中文（源在边界包装时带上了源标签与原因）；
     其余技术异常（playwright 超时之类）才在这里补「{源} {动作}：」前缀。
+    source 为 None（无源语境的业务流，如订阅添加）只补「{动作}：」。
     """
     if isinstance(exc, SourceError):
         return str(exc)
+    if source is None:
+        return f"{action}：{exc}"
     return f"{source.label} {action}：{exc}"
 
 
-def fail(app: App, source: Source, exc: Exception, action: str = "请求失败") -> None:
+def fail(app: App, source: Source | None, exc: Exception, action: str = "请求失败") -> None:
     """失败通知（error 级）。"""
     app.notify(failure_text(source, exc, action), title="抓取失败", severity="error")
 

@@ -25,8 +25,7 @@ from feedscope.core.source import DetailLoader, Source
 from feedscope.ui import feedback
 from feedscope.ui.layout import md_body_width
 from feedscope.ui.screens.answer import AnswerScreen
-from feedscope.ui.screens.reading import READING_CSS, ReadingScreen
-from feedscope.ui.widgets import divider
+from feedscope.ui.screens.reading import READING_CSS, ReadingScreen, dim_line, divider
 from feedscope.ui.wrap import wrap_markdown
 
 
@@ -156,9 +155,9 @@ class DetailScreen(ReadingScreen):
             # Footer 的职责，尾行复读键位会被短帖读者当成正文的一部分；
             # 置 exhausted 让 Ctrl+N 走「没有更多」反馈而不是空跑 load_more
             self._exhausted = True
-            widgets.append(Static("[dim]（完）[/dim]", id="no-more"))
+            widgets.append(dim_line("（完）", id="no-more"))
         elif self._exhausted:
-            widgets.append(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="no-more"))
+            widgets.append(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
         else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
@@ -292,7 +291,7 @@ class DetailScreen(ReadingScreen):
             if self.loader.done:
                 self._exhausted = True
                 self._remove_hint()
-                await body.mount(Static(f"[dim]（没有更多{self._unit}了）[/dim]", id="no-more"))
+                await body.mount(dim_line(f"（没有更多{self._unit}了）", id="no-more"))
             else:
                 # 拉空但没到头（网慢/懒加载没触发）：不判死，可以再按 Ctrl+N
                 await self._mount_hint()

@@ -20,6 +20,16 @@ from textual.widgets import Static
 
 from feedscope.ui.layout import RESIZE_DEBOUNCE
 
+
+def divider() -> Static:
+    """全宽分隔线（dim 灰）：楼层/区块之间的边界，超宽由容器裁掉。"""
+    return Static("[dim]" + "─" * 200 + "[/dim]", classes="answer-divider")
+
+
+def dim_line(text: str, **kwargs) -> Static:
+    """dim 灰的一行尾注（「（没有更多…了）」「（完）」等同族）：markup 只写一次。"""
+    return Static(f"[dim]{text}[/dim]", **kwargs)
+
 # 两屏共享的样式：Textual 的 CSS 类属性不沿 MRO 合并（子类定义自己的 CSS
 # 会整体遮蔽基类的），共享规则以模块常量供两屏拼进各自的 CSS——显式拼接
 # 而不是依赖框架的继承细节
@@ -37,7 +47,7 @@ MarkdownH1, MarkdownH2, MarkdownH3, MarkdownH4, MarkdownH5, MarkdownH6 {
     margin: 0 0 1 0;
 }
 
-/* 楼层/区块分隔线（ui.widgets.divider）：两屏共用，超宽由容器裁掉 */
+/* 楼层/区块分隔线（divider()）：两屏共用，超宽由容器裁掉 */
 .answer-divider { width: 1fr; height: 1; }
 """
 

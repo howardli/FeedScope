@@ -121,8 +121,11 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
         except SubscriptionError as exc:
             feedback.warn(self.app, str(exc), title="添加失败")
             return
-        except Exception as exc:  # 网络等意外：订阅管理没有 Source 实例，不走 feedback.fail
-            feedback.warn(self.app, f"添加失败：{exc}", title="添加失败")
+        except Exception as exc:
+            # 网络等意外：无源语境（source=None），前缀拼接走 failure_text 同一条规则
+            feedback.warn(
+                self.app, feedback.failure_text(None, exc, action="添加失败"), title="添加失败"
+            )
             return
         self._changed = True
         await self._rebuild()

@@ -22,7 +22,6 @@ from feedscope.core.source import (
     FeedLoader,
     LoginRequired,
     Source,
-    require_feed_items,
 )
 from feedscope.sources.x.fetch import (
     XFeedLoader,
@@ -52,14 +51,9 @@ class XSource(Source):
     logout_cookies: ClassVar[list[str]] = ["auth_token", "ct0"]  # 登出清掉判登成对 cookie
 
     async def open_feed(self, name: str) -> FeedLoader:
-        if name not in self.feed_labels:
-            raise ValueError(f"未知信息流：{name}")
-        label = self.feed_labels[name]
+        label = self.label_of(name)
         await require_login(f"「{label}」时间线")
-        loader = XFeedLoader(name)
-        await loader.load_more()  # 首批
-        require_feed_items(loader.items, self.label, label)  # 0 条 = 大概率改版
-        return loader
+        return await self.first_batch(XFeedLoader(name), label)
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
         await require_login("推文详情")

@@ -338,6 +338,24 @@ class Source(ABC):
     async def open_feed(self, name: str) -> FeedLoader:
         """打开信息流返回可翻页加载器；子类必须实现（唯一主入口）。"""
 
+    def label_of(self, name: str) -> str:
+        """流名 -> 显示名；未知流统一抛 ValueError（各源 open_feed 的守卫收一处）。"""
+        label = self.feed_labels.get(name)
+        if label is None:
+            raise ValueError(f"未知信息流：{name}")
+        return label
+
+    async def first_batch(self, loader: FeedLoader, label: str) -> FeedLoader:
+        """open_feed 的首屏出口：拉首批 + 0 条守卫，返回 loader 供直接 return。
+
+        「构造 loader → load_more 首批 → require_feed_items → return」的样板
+        （hn/x/zhihu 信息流同形）收一处；首批后有 bespoke 校验的源（reddit
+        的空首页指引）自行拆开调这两步。
+        """
+        await loader.load_more()
+        require_feed_items(loader.items, self.label, label)
+        return loader
+
     async def fetch_feed(self, name: str) -> list[FeedItem]:
         """一次性抓取原语（脚本/测试用）：打开即取首批并释放，子类不要覆写。"""
         loader = await self.open_feed(name)

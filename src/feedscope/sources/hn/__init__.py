@@ -23,7 +23,6 @@ from feedscope.core.source import (
     SliceDetailLoader,
     Source,
     SourceError,
-    require_feed_items,
 )
 from feedscope.sources.hn.fetch import HnFeedLoader, fetch_item
 from feedscope.sources.hn.parse import SOURCE_ID, StoryDetail, parse_story
@@ -68,13 +67,8 @@ class HnSource(Source):
     comment_unit_label = "回复"  # 楼层内的讨论（知乎叫「评论」）
 
     async def open_feed(self, name: str) -> FeedLoader:
-        label = self.feed_labels.get(name)
-        if label is None:
-            raise ValueError(f"未知信息流：{name}")
-        loader = HnFeedLoader(name, label)
-        await loader.load_more()  # 首批
-        require_feed_items(loader.items, self.label, label)  # 0 条 = 接口可能已变
-        return loader
+        label = self.label_of(name)
+        return await self.first_batch(HnFeedLoader(name, label), label)
 
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         root = await fetch_item(item.id)
