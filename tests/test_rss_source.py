@@ -135,11 +135,9 @@ def test_open_all_feeds_via_slice_loader(monkeypatch: pytest.MonkeyPatch, tmp_pa
         from feedscope.core.source import SliceFeedLoader
 
         assert isinstance(loader, SliceFeedLoader)
-        total = len(loader.items) + len(loader._rest) if hasattr(loader, "_rest") else len(loader.items)
-        assert total == 3, "切片不动数据总量（3 条小样本全部在内存）"
         while not loader.done:
             asyncio.run(loader.load_more())
-        assert len(loader.items) == 3, "翻完 = 全部上屏"
+        assert len(loader.items) == 3, "切片不动数据总量：翻完 = 全部上屏（3 条小样本）"
     finally:
         asyncio.run(loader.close())
 

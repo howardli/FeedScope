@@ -171,7 +171,8 @@ class RedditSource(Source):
         await require_login("帖子详情")
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
         # 1.5MB 级 SSR 页的解析 ~160ms：放工作线程跑，不卡事件循环（解析是
-        # 纯函数；HTML2Text 已线程本地化，见 core.media._h2t）。换篇取消的是
-        # await，线程里跑完的旧结果随陈旧守卫丢弃
+        # 纯函数；HTML2Text 已线程本地化，见 core.media.h2t）。换篇取消的是
+        # await——线程会把旧结果跑完但协程已死、结果自然丢弃（线程无法取消，
+        # 白算一次是换篇的既有代价）
         detail = await asyncio.to_thread(parse_thread_html, html, fallback_title=item.title)
         return RedditDetailLoader.from_detail(detail)

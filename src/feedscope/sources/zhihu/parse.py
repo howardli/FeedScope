@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, urlparse
 
-from feedscope.core.const import new_h2t
+from feedscope.core.media import h2t as _h2t
 from feedscope.core.display import fmt_count, votes_text
 from feedscope.core.media import VIDEO_RE, Tokens, attrs, mark, pick_url, video_url
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
@@ -17,7 +17,7 @@ from feedscope.core.text import strip_zwsp
 from feedscope.core.timefmt import fmt_unix
 
 # html2text 统一配置见 core/const.py（不硬换行；img/video 进它之前已换成记号）
-_H2T = new_h2t()
+# HTML2Text 实例经 media.h2t() 取（线程本地，见其 docstring），源内不自建
 
 _NOSCRIPT_RE = re.compile(r"<noscript>.*?</noscript>", re.IGNORECASE | re.DOTALL)
 # 表情贴纸（class="sticker"）不是内容图：换成 alt 文本（如 "[大哭]"），
@@ -78,7 +78,7 @@ def _md(html: str) -> str:
         html,
     )
     html = VIDEO_RE.sub(lambda m: tok.stash(mark("[视频]", video_url(m.group(0)))), html)
-    text = strip_zwsp(tok.expand(_H2T.handle(html)))
+    text = strip_zwsp(tok.expand(_h2t().handle(html)))
     # 相邻同图合并（懒加载双标记会把同一张图渲染两次）；不同图各自保留。
     # 链接形式 [图片](url) 整体比对；纯记号合并的 (?!\() 断言防止把带地址的
     # [图片](…) 误吞成纯 [图片] 丢掉链接
