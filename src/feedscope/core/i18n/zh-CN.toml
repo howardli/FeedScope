@@ -39,7 +39,9 @@ title = "选择语言 / Choose Language"
 hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
 
 [main]
-language_saved_restart = "已保存，重启 feedscope 后生效"
+# 双语同值（en.toml 同）：切换方未必读得懂当前语言的提示，两个方向都要看懂
+language_saved_restart = "已保存，重启 feedscope 后生效 · Saved — restart feedscope to apply"
+language_unchanged = "语言未变：当前已是 {name}"
 hint_no_subscriptions = "{label} 已启用但还没有订阅——F2 里选中它按 → 添加"
 
 # 源与请求层的错误出口（SourceError 消息，UI 直接展示）

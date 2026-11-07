@@ -41,7 +41,10 @@ title = "选择语言 / Choose Language"
 hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
 
 [main]
-language_saved_restart = "Saved — restart feedscope to apply"
+# Bilingual by design (same value in zh-CN.toml): the reader may not read the
+# current UI language, so the restart hint must land in both directions
+language_saved_restart = "已保存，重启 feedscope 后生效 · Saved — restart feedscope to apply"
+language_unchanged = "Language unchanged: already {name}"
 hint_no_subscriptions = "{label} is enabled but has no subscriptions yet — pick it under F2 and press → to add one"
 
 # Error exits of the source & request layers (SourceError messages, shown as-is)

@@ -216,7 +216,11 @@ class MainSetupScreen(Screen[None]):
         code = await self.app.push_screen(
             LanguageScreen(highlight=i18n.language()), wait_for_dismiss=True
         )
-        if code is None or code == i18n.language():
-            return  # 取消 / 原语言重选：不动盘、不提示
+        if code is None:
+            return  # 取消：不动盘
+        if code == i18n.language():
+            # 原语言重选不落盘，但要出声：静默会让「以为切了」的用户误判成功
+            feedback.info(self, t("main.language_unchanged", name=i18n.name_of(code)))
+            return
         config.save_language(code)
         feedback.info(self, t("main.language_saved_restart"))

@@ -144,7 +144,9 @@ async def _run_ctrl_l_same_language(monkeypatch, tmp_path: Path) -> None:
         assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen))
         await pilot.press("enter")  # 重选当前语言（高亮即 zh-CN）
         await settle(pilot, lambda: not isinstance(app.screen, LanguageScreen))
-        assert not list(getattr(app, "_notifications", [])), "原语言重选：不提示不折腾"
+        # 原语言重选：不落盘但要出声（静默会让「以为切了」的用户误判成功）
+        assert "语言未变" in last_notification(app)
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["language"] == "zh-CN"
 
 
 def test_ctrl_l_same_language_no_toast(lang_stub_registry, monkeypatch, tmp_path) -> None:

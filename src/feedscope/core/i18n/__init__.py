@@ -103,6 +103,12 @@ def available() -> list[Language]:
     return [Language(code, name) for code, name in _names.items()]
 
 
+def name_of(code: str) -> str:
+    """语言代码 -> 自称（如 zh-CN -> 简体中文）；未知代码回退原码。"""
+    _ensure_loaded()
+    return _names.get(code, code)
+
+
 def set_language(code: str) -> None:
     """设定当前语言（进程内全局）。未知代码回退缺省并记警告（配置手写坏值
     不挡启动）。"""
