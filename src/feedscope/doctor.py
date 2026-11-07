@@ -8,6 +8,7 @@ from feedscope import __version__
 from feedscope.core.browser import PROFILE_DIR
 from feedscope.core.const import find_chrome
 from feedscope.report import line
+from feedscope.core.i18n import t
 
 
 def _check(label: str, ok: bool, detail: str = "") -> bool:
@@ -15,39 +16,39 @@ def _check(label: str, ok: bool, detail: str = "") -> bool:
 
 
 def run_checks() -> int:
-    print(f"FeedScope（观流）{__version__} 环境自检")
+    print(t("doctor.title", version=__version__))
     print()
 
     py_ok = sys.version_info >= (3, 11)
     ok = _check(
         f"Python {sys.version_info.major}.{sys.version_info.minor}",
         py_ok,
-        "" if py_ok else "需要 3.11+",
+        "" if py_ok else t("doctor.need_py"),
     )
 
     chrome = find_chrome()
     ok &= _check(
         "Google Chrome",
         bool(chrome),
-        chrome or '未找到（macOS 标准位置或 PATH 里的 google-chrome），channel="chrome" 依赖它',
+        chrome or t("doctor.chrome_missing"),
     )
 
     try:
         import playwright  # noqa: F401
         import textual  # noqa: F401
 
-        ok &= _check("依赖 textual / playwright", True, "可导入")
+        ok &= _check(t("doctor.deps_label"), True, t("doctor.importable"))
     except ImportError as exc:
-        ok &= _check("依赖 textual / playwright", False, f"导入失败：{exc}（先 uv sync）")
+        ok &= _check(t("doctor.deps_label"), False, t("doctor.import_failed", error=exc))
 
     # 信息项：不算失败
-    state = "已存在" if PROFILE_DIR.exists() else "首次运行时自动创建"
-    _check("浏览器 profile（信息）", True, f"{PROFILE_DIR}（{state}）")
+    state = t("doctor.profile_exists") if PROFILE_DIR.exists() else t("doctor.profile_will_create")
+    _check(t("doctor.profile_label"), True, f"{PROFILE_DIR}（{state}）")
 
     from feedscope.core.config import config_path, describe
 
-    _check("用户配置 sources.toml（信息）", True, f"{config_path()} - {describe()}")
+    _check(t("doctor.config_label"), True, f"{config_path()} - {describe()}")
 
     print()
-    print("全部通过" if ok else "存在失败项：按提示处理后重试")
+    print(t("doctor.all_ok") if ok else t("doctor.has_failures"))
     return 0 if ok else 1

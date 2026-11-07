@@ -18,10 +18,12 @@ from feedscope.core.config import (
     Subscription,
     describe,
     enabled_ids,
+    get_language,
     hidden_feeds,
     is_configured,
     rss_feeds,
     save_enabled,
+    save_language,
     update_feeds,
 )
 from feedscope.core.registry import get_source
@@ -232,6 +234,60 @@ def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "[rss]" in p.read_text(encoding="utf-8")  # 段名能裸写就裸写（["rss"] 合法但难读）
     assert "[rss.feeds]" in p.read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# ---- 语言（language）：读 / 容错 / 写入往返（i18n 的落盘键，丢 = 丢语言设置）----
+
+
+def test_get_language_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(tmp_path / "absent.toml"))
+    assert get_language() is None
+    use_config(monkeypatch, tmp_path, 'enabled = ["zhihu"]\n')
+    assert get_language() is None  # 老配置文件没有 language 键：未设置而非错误
+
+
+def test_get_language_bad_type_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    use_config(monkeypatch, tmp_path, 'language = 123\n')
+    assert get_language() is None
+
+
+def test_save_language_roundtrip_preserves_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """语言屏落盘只该动 language：enabled / hide / feeds 原样保留。"""
+    use_config(
+        monkeypatch,
+        tmp_path,
+        'enabled = ["zhihu", "rss"]\n'
+        "[rss.feeds]\n"
+        'ruanyq = { label = "阮一峰周刊", url = "https://r.test/atom.xml" }\n'
+        '[zhihu]\nhide = ["follow"]\n',
+    )
+    save_language("en")
+
+    assert get_language() == "en"
+    assert enabled_ids() == ["zhihu", "rss"]
+    assert hidden_feeds("zhihu") == ["follow"]
+    assert [(f.key, f.label) for f in rss_feeds()] == [("ruanyq", "阮一峰周刊")]
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_save_enabled_and_update_feeds_preserve_language(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """语言键是已知顶层键：F2 保存 / 订阅变更的重渲染不能把它抹掉（回归锁）。"""
+    p = use_config(monkeypatch, tmp_path, 'language = "en"\n')
+    save_enabled(["zhihu"])
+    assert get_language() == "en"
+    update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
+    assert get_language() == "en"
+    assert tomllib.loads(p.read_text(encoding="utf-8"))["language"] == "en"
+
+
+def test_describe_reports_language(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    use_config(monkeypatch, tmp_path, 'language = "en"\nenabled = ["zhihu"]\n')
+    d = describe()
+    assert "语言 en" in d and "启用 1 源" in d
 
 
 def test_describe_reports_subscriptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

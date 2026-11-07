@@ -23,7 +23,9 @@ from textual.widgets import Button, Label, ListItem, ListView, Static
 
 from feedscope.core.config import Subscription  # 仅类型注解用（列表行的 key/label/url 三段）
 from feedscope.subscriptions import SubscriptionError, SubsStore
+from feedscope.core.i18n import t
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
 
@@ -32,9 +34,9 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
     """订阅管理：dismiss(True) = 本次有过改动（调用方据此同步勾选与刷新）。"""
 
     BINDINGS: ClassVar[Bindings] = [
-        Binding("escape", "back", "返回"),
-        Binding("insert", "add", "添加"),
-        Binding("delete", "remove", "删除"),
+        Binding("escape", "back", "bindings.back"),
+        Binding("insert", "add", "bindings.add"),
+        Binding("delete", "remove", "bindings.remove"),
     ]
 
     CSS = """
@@ -57,16 +59,17 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="subs-dialog", classes="modal-card"):
-            yield Label(f"{self._store.label} 订阅管理", id="subs-title")
+            yield Label(t("subscriptions.title", label=self._store.label), id="subs-title")
             yield FocusNavListView(id="subs-list")
             yield Label("", id="subs-empty")
             yield Label(self._store.hint, id="subs-hint")
             with Horizontal(id="subs-actions"):
-                yield Button("添加", id="subs-add", variant="primary")
-                yield Button("改名", id="subs-rename")
-                yield Button("删除", id="subs-remove")
+                yield Button(t("subscriptions.add"), id="subs-add", variant="primary")
+                yield Button(t("subscriptions.rename"), id="subs-rename")
+                yield Button(t("subscriptions.remove"), id="subs-remove")
 
     async def on_mount(self) -> None:
+        retranslate_bindings(self)  # 键式键位文案解析（bindings.*），见 ui/labels.py
         await self._rebuild()
 
     # ---- 列表 ----
@@ -111,7 +114,9 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     async def _add_flow(self) -> None:
         text = await self.app.push_screen(
-            InputScreen("添加订阅", placeholder=self._store.add_placeholder),
+            InputScreen(
+                t("subscriptions.add_title"), placeholder=self._store.add_placeholder
+            ),
             wait_for_dismiss=True,
         )
         if not text:
@@ -119,12 +124,14 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
         try:
             _added, summary = await self._store.add(text)
         except SubscriptionError as exc:
-            feedback.warn(self.app, str(exc), title="添加失败")
+            feedback.warn(self.app, str(exc), title=t("feedback.action_add_failed"))
             return
         except Exception as exc:
             # 网络等意外：无源语境（source=None），前缀拼接走 failure_text 同一条规则
             feedback.warn(
-                self.app, feedback.failure_text(None, exc, action="添加失败"), title="添加失败"
+                self.app,
+                feedback.failure_text(None, exc, action="feedback.action_add_failed"),
+                title=t("feedback.action_add_failed"),
             )
             return
         self._changed = True
@@ -134,39 +141,43 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
     def action_remove(self) -> None:
         feed = self._current()
         if feed is None:
-            feedback.info(self.app, "先选中一条订阅")
+            feedback.info(self.app, t("subscriptions.pick_first"))
             return
         self.run_worker(self._remove_flow(feed.key, feed.label))
 
     async def _remove_flow(self, key: str, label: str) -> None:
         if not await self.app.push_screen(
-            ConfirmScreen(f"删除订阅「{label}」？", confirm_label="删除"), wait_for_dismiss=True
+            ConfirmScreen(
+                t("subscriptions.remove_confirm", label=label),
+                confirm_label=t("subscriptions.remove"),
+            ),
+            wait_for_dismiss=True,
         ):
             return
         if self._store.remove(key) is not None:
             self._changed = True
             await self._rebuild()
-            feedback.info(self.app, f"已删除 {label}（想看回来可重新添加）")
+            feedback.info(self.app, t("subscriptions.removed", label=label))
 
     def action_rename(self) -> None:
         feed = self._current()
         if feed is None:
-            feedback.info(self.app, "先选中一条订阅")
+            feedback.info(self.app, t("subscriptions.pick_first"))
             return
         self.run_worker(self._rename_flow(feed.key, feed.label))
 
     async def _rename_flow(self, key: str, label: str) -> None:
         text = await self.app.push_screen(
-            InputScreen("改显示名", initial=label), wait_for_dismiss=True
+            InputScreen(t("subscriptions.rename_title"), initial=label), wait_for_dismiss=True
         )
         if not text:
             return
         if self._store.rename(key, text) is None:
-            feedback.info(self.app, "名字没变（空名或订阅已不存在）")
+            feedback.info(self.app, t("subscriptions.rename_noop"))
             return
         self._changed = True
         await self._rebuild()
-        feedback.info(self.app, f"已改名为 {text}")
+        feedback.info(self.app, t("subscriptions.renamed", name=text))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == "subs-list":

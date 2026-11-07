@@ -14,9 +14,12 @@ from abc import abstractmethod
 from textual.screen import Screen
 
 from feedscope.core import config
+from feedscope.core import i18n
+from feedscope.core.i18n import t
 from feedscope.core.registry import all_sources, get_class
 from feedscope.core.source import Source
 from feedscope.ui import feedback
+from feedscope.ui.screens.language import LanguageScreen
 from feedscope.ui.screens.source_setup import (
     ManageSourcesScreen,
     OnboardingScreen,
@@ -72,20 +75,29 @@ class MainSetupScreen(Screen[None]):
         return [s for s in made if s.feeds]
 
     async def _start(self) -> None:
-        """启动序列：首启（配置文件不存在）先引导选源，确认落盘后才进正常渲染。
+        """启动序列：首启（配置文件不存在）先选语言、再引导选源，确认落盘后才进正常渲染。
 
-        勾选是使用源的前提：引导取消（None）= 放弃本次使用，不默认全开。
-        _start 本就在 worker 里，push_screen 的 wait_for_dismiss 合法。
+        语言屏在渲染前完成，选中即 set_language 立即生效（本会话后续文案
+        全是新语言）；Esc = 沿用缺省继续，完成首启时随 enabled 一并落定，
+        之后不再问。勾选是使用源的前提：引导取消（None）= 放弃本次使用，
+        不默认全开。_start 本就在 worker 里，push_screen 的 wait_for_dismiss 合法。
         """
         if not config.is_configured():
+            lang = await self.app.push_screen(
+                LanguageScreen(highlight=i18n.default_language()), wait_for_dismiss=True
+            )
+            if lang is not None:
+                i18n.set_language(lang)
             chosen = await self.app.push_screen(
                 OnboardingScreen(self._setup_entries(), [s.source_id for s in self.sources]),
                 wait_for_dismiss=True,
             )
             if chosen is None:
-                self.app.exit(message="未完成初始设置，重新运行 feedscope 再次选择")
+                self.app.exit(message=t("app.exit_onboarding_cancel"))
                 return
             config.save_enabled(chosen)
+            if config.get_language() is None:
+                config.save_language(i18n.language())  # 语言屏被跳过也随首启落定
             # 只重建状态，渲染统一交给 _bootstrap：_start 在 default 组里跑，
             # 若此处走 _apply_enabled 的 action_refresh（default 组 exclusive），
             # 会把还在 await 的自己取消在「旧子项已摘、新子项未挂」的中间态
@@ -151,7 +163,7 @@ class MainSetupScreen(Screen[None]):
         for sid in ids:
             cls = get_class(sid)
             if cls is not None and cls.subscribable and not cls().feeds:
-                feedback.info(self, f"{cls.label} 已启用但还没有订阅——F2 里选中它按 → 添加")
+                feedback.info(self, t("main.hint_no_subscriptions", label=cls().label_text))
 
     # ---- F2 源管理：勾选启用的源，保存即生效 ----
 
@@ -180,10 +192,31 @@ class MainSetupScreen(Screen[None]):
         self._subs_dirty = False  # 确认路径 _apply_enabled 全量重建，无需再消费
         await self._apply_enabled(chosen)
         if chosen:
-            feedback.info(self, f"已保存：{len(chosen)} 源启用")
+            feedback.info(self, t("main.saved_n_sources", n=len(chosen)))
         else:
-            feedback.info(self, "已保存：当前没有启用的源（F2 可再开启）")
+            feedback.info(self, t("main.saved_zero_sources"))
 
     def _mark_subs_dirty(self) -> None:
         """订阅管理屏回调：改过信息流。F2 收尾（无论确认取消）都要重建。"""
         self._subs_dirty = True
+
+    # ---- Ctrl+L 语言设置：确认落盘，重启后生效 ----
+
+    def action_language(self) -> None:
+        """Ctrl+L 语言设置：与首启同一屏，改的是落盘值。
+
+        生效要重启（不是当场切）：解析期已把数字/单位文案烙进数据（语言随
+        进程固定是最稳的模型，见 core/i18n 模块头），当场重渲染全 UI 必漏。
+        走 worker 因为 push_screen 的 wait_for_dismiss 只能在 worker 里用；
+        独立分组不打断在途的列表刷新。
+        """
+        self.run_worker(self._pick_language(), group="language", exclusive=True)
+
+    async def _pick_language(self) -> None:
+        code = await self.app.push_screen(
+            LanguageScreen(highlight=i18n.language()), wait_for_dismiss=True
+        )
+        if code is None or code == i18n.language():
+            return  # 取消 / 原语言重选：不动盘、不提示
+        config.save_language(code)
+        feedback.info(self, t("main.language_saved_restart"))

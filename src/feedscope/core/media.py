@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     import html2text
 
 from feedscope.core.const import new_h2t
+from feedscope.core.i18n import t
 from feedscope.core.text import strip_zwsp
 
 # 开标签属性：键 [\w-]+，值双/单引号皆可（反向引用配对——双引号值里的
@@ -136,12 +137,14 @@ def html_to_md(html: str) -> str:
         # 缩略图 src 只是预览（V2EX 自动内联两者相同，无行为差异）
         href = attrs(m.group(1)).get("href", "").strip()
         if href.startswith(("http://", "https://")):
-            tok.swap(int(m.group(2)), mark("[图片]", href))
+            tok.swap(int(m.group(2)), mark(t("media.image"), href))
         return f"\x00{m.group(2)}\x00"
 
     if not html:
         return ""
     tok = Tokens()
-    stashed = IMG_RE.sub(lambda m: tok.stash(mark("[图片]", pick_url(m.group(0), ("src",)))), html)
+    stashed = IMG_RE.sub(
+        lambda m: tok.stash(mark(t("media.image"), pick_url(m.group(0), ("src",)))), html
+    )
     stashed = _ANCHOR_IMG_RE.sub(_unwrap_anchor, stashed)
     return strip_zwsp(tok.expand(h2t().handle(stashed))).strip()

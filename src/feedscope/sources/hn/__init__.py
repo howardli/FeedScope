@@ -15,6 +15,7 @@ items/:id 一次给全树，楼层与评论翻页都是内存切片——详情�
 from __future__ import annotations
 
 from feedscope.core.models import FeedItem
+from feedscope.core.i18n import t
 from feedscope.core.registry import register
 from feedscope.core.source import (
     FeedLoader,
@@ -45,11 +46,14 @@ class HnSource(Source):
     # ask/show = Ask HN（向社区提问）/ Show HN（展示自己的项目），HN 官方两大
     # 经典分类；标签与其余源同款两字中文（列表里帖子标题仍带 Ask/Show HN 前缀）
     feed_labels: dict[str, str] = {
-        "front": "首页", "new": "最新", "ask": "提问", "show": "展示",
+        "front": "sources.hn.feeds.front",
+        "new": "sources.hn.feeds.new",
+        "ask": "sources.hn.feeds.ask",
+        "show": "sources.hn.feeds.show",
     }
     detail_kinds = frozenset({"story", "ask", "show"})  # 全部条目 Enter 都进终端详情
-    detail_unit_label = "评论"  # 楼层单位词：顶层评论串（知乎「回答」、X「回复」）
-    comment_unit_label = "回复"  # 楼层内的讨论（知乎叫「评论」）
+    detail_unit_label = "units.comment"  # 楼层单位词：顶层评论串（知乎「回答」、X「回复」）
+    comment_unit_label = "units.reply"  # 楼层内的讨论（知乎叫「评论」）
 
     async def open_feed(self, name: str) -> FeedLoader:
         label = self.label_of(name)
@@ -58,5 +62,5 @@ class HnSource(Source):
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
         root = await fetch_item(item.id)
         if not root.get("id"):
-            raise SourceError("HN 详情返回里没有 id，接口可能已变")
+            raise SourceError(t("errors.hn_no_id"))
         return HnDetailLoader.from_detail(parse_story(root), fallback_title=item.title)

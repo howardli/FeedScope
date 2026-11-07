@@ -33,6 +33,7 @@ import json as _json
 from typing import ClassVar
 
 from feedscope.core import config
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
@@ -112,8 +113,8 @@ class RedditSource(Source):
     supports_comments = True  # 详情屏 Enter 进楼层的回复树（树已全在内存）
     subscribable = True  # feeds 除内置流外还来自 [reddit.feeds] 订阅表：F2 里 → 进订阅管理
     detail_kinds = frozenset({"link", "self"})  # 全部条目 Enter 都进终端详情
-    detail_unit_label = "评论"  # 楼层单位词：顶层评论串（同 HN）
-    comment_unit_label = "回复"  # 楼层内的讨论（同 HN）
+    detail_unit_label = "units.comment"  # 楼层单位词：顶层评论串（同 HN）
+    comment_unit_label = "units.reply"  # 楼层内的讨论（同 HN）
     login_url = "https://www.reddit.com/login"
     login_cookie = "token_v2"  # 兜底显示用（真实判据是 login_verify 的 JWT 解码）
     login_verify = staticmethod(
@@ -126,7 +127,9 @@ class RedditSource(Source):
         "home": "https://www.reddit.com/",
         "popular": "https://www.reddit.com/r/popular/",
     }
-    _BUILTIN_LABELS: ClassVar[dict[str, str]] = {"home": "首页", "popular": "热门"}
+    _BUILTIN_LABELS: ClassVar[dict[str, str]] = {
+        "home": "sources.reddit.feeds.home", "popular": "sources.reddit.feeds.popular",
+    }
     # 订阅 key 不得撞内置流名（/r/home、/r/popular 真实存在，撞名会遮住内置流）：
     # 从 _BUILTIN 派生，新增内置流时保留字自动跟上（subscriptions 的拒收读这里）
     reserved_feed_keys = tuple(_BUILTIN)
@@ -154,21 +157,18 @@ class RedditSource(Source):
         page = (
             self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"
         )  # 订阅 key 即 subreddit 名
-        await require_login(f"「{label}」流")
+        await require_login(t("errors.what_feed", label=label))
         loader = RedditFeedLoader(page, label)
         await loader.load_more()  # 首批（判登在此抛 LoginRequired）
         if name == "home" and not loader.items:
             # 首页是账号在 Reddit 站内「关注版块」的聚合：账号没关注任何版块
             # 就是真空（实测新号如此），不是改版——通用 0 条守卫会误导
-            raise SourceError(
-                "Reddit「首页」是你账号在站内关注版块的聚合，当前为空——"
-                "去 reddit.com 关注一些版块，或 F2 → Reddit 添加 subreddit 订阅（单独成流）"
-            )
-        require_feed_items(loader.items, self.label, label)  # 0 条 = 大概率改版
+            raise SourceError(t("errors.reddit_home_empty"))
+        require_feed_items(loader.items, self.label_text, label)  # 0 条 = 大概率改版
         return loader
 
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
-        await require_login("帖子详情")
+        await require_login(t("errors.what_post_detail"))
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
         # 1.5MB 级 SSR 页的解析 ~160ms：放工作线程跑，不卡事件循环（解析是
         # 纯函数；HTML2Text 已线程本地化，见 core.media.h2t）。换篇取消的是

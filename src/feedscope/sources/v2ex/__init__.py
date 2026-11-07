@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from feedscope.core.models import FeedItem
+from feedscope.core.i18n import t
 from feedscope.core.registry import register
 from feedscope.core.source import (
     SliceDetailLoader,
@@ -42,9 +43,11 @@ class V2exSource(Source):
     supports_detail = True
     supports_comments = False  # 回复平铺无嵌套（楼中楼只是 @ 文字），详情到楼层为止
     feeds: list[str] = ["hot", "new"]
-    feed_labels: dict[str, str] = {"hot": "热门", "new": "最新"}
+    feed_labels: dict[str, str] = {
+        "hot": "sources.v2ex.feeds.hot", "new": "sources.v2ex.feeds.new",
+    }
     detail_kinds = frozenset({"topic"})  # 全部条目 Enter 都进终端详情
-    detail_unit_label = "回复"  # 楼层单位词：帖内回复（知乎「回答」、HN「评论」）
+    detail_unit_label = "units.reply"  # 楼层单位词：帖内回复（知乎「回答」、HN「评论」）
 
     async def open_feed(self, name: str) -> StaticFeedLoader:
         label = self.label_of(name)
@@ -56,6 +59,6 @@ class V2exSource(Source):
         # 跨进程恢复的列表）回列表重进即可，不值得为此多打一个端点
         topic = item.extra.get("topic")
         if not isinstance(topic, dict) or not topic:
-            raise SourceError("V2EX 详情缺少列表上下文，回到列表重进该主题")
+            raise SourceError(t("errors.v2ex_no_context"))
         replies = await fetch_replies(item.id)
         return V2exDetailLoader.from_detail(parse_detail(topic, replies), fallback_title=item.title)

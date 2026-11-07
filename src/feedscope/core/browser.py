@@ -22,6 +22,7 @@ from platformdirs import user_cache_path
 
 from feedscope.core import samples
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
+from feedscope.core.i18n import t
 from feedscope.core.source import SourceError
 
 logger = logging.getLogger(__name__)
@@ -166,17 +167,17 @@ class ChannelTab:
                 _FETCH_JS, [url, headers or {}, cookie_headers or {}, referrer, as_text]
             )
         except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
-            raise SourceError(f"{source} 请求失败：{exc}") from exc
+            raise SourceError(t("errors.http_failed", source=source, error=exc)) from exc
         if not isinstance(data, dict):
-            raise SourceError(f"{source} 返回结构异常")
+            raise SourceError(t("errors.bad_structure_short", source=source))
         if err := data.get("__error"):
-            raise SourceError(f"{source} 请求失败：{err}")
+            raise SourceError(t("errors.http_failed", source=source, error=err))
         status = data.get("__status")
         body = data.get("__body")
         if status is None and body is None:
-            raise SourceError(f"{source} 返回结构异常")
+            raise SourceError(t("errors.bad_structure_short", source=source))
         if not as_text and body is not None and not isinstance(body, dict):
-            raise SourceError(f"{source} 返回结构异常（不是 JSON 对象）")
+            raise SourceError(t("errors.bad_structure_not_object", source=source))
         status_i = int(status) if status else None
         if status_i is None and body is not None:
             # 样本名用通道名（ascii：zhihu/reddit/x），source 只管错误文案——

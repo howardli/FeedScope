@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, ClassVar, TypeVar
 
 from feedscope.core.config import Subscription, feeds_for, hidden_feeds
+from feedscope.core.i18n import t
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,8 @@ _T = TypeVar("_T")
 
 
 class SourceError(Exception):
-    """源侧失败的业务异常：消息为面向用户的中文（含源标签与原因），UI 可直接展示。
+    """源侧失败的业务异常：消息为面向用户的当前语言文案（含源标签与原因，
+    经 core.i18n.t 生成），UI 可直接展示。
 
     源在取数/解析边界把「自己认识的失败」（HTTP 状态、服务端错误体、超时）
     包成它；UI 出口对它直接展示消息，对其他技术异常才补「源标签 + 失败」前缀。
@@ -105,8 +107,11 @@ def require_feed_items(items: list[FeedItem], label: str, feed: str = "") -> lis
     （到底/全重复）是正常语义，不套这层。
     """
     if not items:
-        head = f"{label}「{feed}」" if feed else label
-        raise SourceError(f"{head} 解析到 0 条内容，站点可能已改版（feedscope probe 可复查）")
+        raise SourceError(
+            t("errors.zero_items_with_feed", label=label, feed=feed)
+            if feed
+            else t("errors.zero_items", label=label)
+        )
     return items
 
 
@@ -138,7 +143,7 @@ async def merge_feeds(
             try:
                 return await fetch_one(feed), None
             except Exception as exc:  # 单订阅失败隔离：错误上交，不拖垮聚合
-                return [], f"{error_label(feed)}：{exc}"
+                return [], t("errors.merge_one_failed", label=error_label(feed), error=exc)
 
     pairs = await asyncio.gather(*(one(f) for f in feeds))
     errors = [err for _, err in pairs if err]
@@ -181,7 +186,7 @@ class DetailLoader(ABC):
         入口）。评论 loader 契约见 CommentLoader——通常与问题 loader 共享
         资源，close 只收评论层不关底座。
         """
-        raise NotImplementedError(f"{type(self).__name__} 不支持评论层")
+        raise NotImplementedError(t("errors.comments_unsupported", name=type(self).__name__))
 
     async def close(self) -> None:
         """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
@@ -357,10 +362,12 @@ class SliceDetailLoader(DetailLoader):
 
     async def open_comments(self, index: int) -> SliceCommentsLoader:
         if self._comments is None:
-            raise NotImplementedError(f"{self.source_label} 不支持评论层")
+            raise NotImplementedError(
+                t("errors.comments_unsupported", name=self.source_label)
+            )
         if not 0 <= index < len(self.doc.answers):
             raise SourceError(
-                f"{self.source_label} 该评论不在已加载范围内，先按 Ctrl+N 加载更多楼层"
+                t("errors.comment_out_of_range", label=self.source_label)
             )
         return SliceCommentsLoader(self._comments[index])
 
@@ -371,13 +378,13 @@ async def login_gate(
     """判登门的共享实现：读 profile cookie 过谓词，不过抛 LoginRequired。
 
     x（auth_token+ct0 成对在）与 Reddit（token_v2 JWT 解码）共用——判据是
-    源差异（注入谓词），cookie 读取与「{label} 需要登录后才能查看{what}」
-    的消息模板只有这一份，不会措辞漂移。
+    源差异（注入谓词），cookie 读取与登录提示的消息模板只有这一份，不会
+    措辞漂移。
     """
     from feedscope.core.browser import profile_cookies  # 惰性导入：browser 已 import 本模块
 
     if not ok(await profile_cookies(url)):
-        raise LoginRequired(f"{label} 需要登录后才能查看{what}")
+        raise LoginRequired(t("errors.login_required", label=label, what=what))
 
 
 class Source(ABC):
@@ -393,18 +400,21 @@ class Source(ABC):
     """
 
     source_id: ClassVar[str]  # 注册键，如 "zhihu"
-    label: ClassVar[str]  # 展示名，如 "知乎"
+    label: ClassVar[str]  # 展示名的文案键（如 "sources.zhihu.label"），展示经 label_text 解析
     # feeds/feed_labels 两形同用（故不作 ClassVar）：类体写内置默认流，
     # __init__ 按配置合成实例视图（hide 剔减 / 订阅拼加），分派读实例
     feeds: list[str] = []  # 命名信息流；空 = 无可选流（不进 Tab）
-    feed_labels: dict[str, str] = {}  # 信息流显示名，缺省用 name 本身
+    # 流名 -> 显示名的文案键（订阅型源的订阅行是用户数据不是键，t() 对
+    # 无点字符串直通），展示统一经 feed_label() 解析
+    feed_labels: dict[str, str] = {}
     supports_detail: ClassVar[bool] = False  # 决定 Enter 是否可能进详情屏
     supports_comments: ClassVar[bool] = False  # 决定详情屏 Enter 是否可能进评论层
     subscribable: ClassVar[bool] = False  # 信息流来自用户订阅：F2 里 → 进订阅管理屏
-    kind_labels: ClassVar[dict[str, str]] = {}  # kind -> 元信息列标签
+    kind_labels: ClassVar[dict[str, str]] = {}  # kind -> 元信息列标签的文案键（共享 kinds.* 词表）
     detail_kinds: ClassVar[frozenset[str]] = frozenset({""})
-    detail_unit_label: ClassVar[str] = "回答"  # 详情屏楼层词（X/V2EX「回复」、HN/Reddit「评论」）
-    comment_unit_label: ClassVar[str] = "评论"  # 楼层内评论子区的单位词（无评论产出的源用不到）
+    # 详情屏楼层词键（X/V2EX 回复、HN/Reddit 评论）；楼层内评论子区的单位词键
+    detail_unit_label: ClassVar[str] = "units.answer"
+    comment_unit_label: ClassVar[str] = "units.comment"
     login_url: ClassVar[str] = ""  # 有登录需求的源声明登录页；空 = 无需登录
     login_cookie: ClassVar[str] = (
         ""  # 登录轮询的兜底 cookie（未声明 logout_cookies / login_verify 时用）
@@ -431,7 +441,28 @@ class Source(ABC):
         feeds = [f for f in self.feeds if f not in hidden]
         self.feeds = feeds
         if not feeds:
-            logger.warning("%s 的信息流已被配置全部隐藏", self.label)
+            logger.warning("%s 的信息流已被配置全部隐藏", self.label_text)
+
+    # ---- 词汇键 -> 展示文本（i18n；t() 对无点字符串直通，stub 源不受影响）----
+
+    @property
+    def label_text(self) -> str:
+        """源展示名（label 是文案键，这里给解析后的文本；日志/消息/展示用）。"""
+        return t(self.label)
+
+    @property
+    def detail_unit(self) -> str:
+        """详情屏楼层词（如 回答/评论/回复）的展示文本。"""
+        return t(self.detail_unit_label)
+
+    @property
+    def comment_unit(self) -> str:
+        """楼层内评论子区单位词的展示文本。"""
+        return t(self.comment_unit_label)
+
+    def feed_label(self, name: str) -> str:
+        """流名 -> 显示名（内置流查词汇键解析；未知流回退流名本身）。"""
+        return t(self.feed_labels.get(name, name))
 
     @property
     def judging_cookies(self) -> list[str]:
@@ -449,11 +480,12 @@ class Source(ABC):
         """打开信息流返回可翻页加载器；子类必须实现（唯一主入口）。"""
 
     def label_of(self, name: str) -> str:
-        """流名 -> 显示名；未知流统一抛 ValueError（命名流的 open_feed 守卫收一处）。"""
+        """流名 -> 显示名（词汇键解析后的文本）；未知流统一抛 ValueError
+        （命名流的 open_feed 守卫收一处）。"""
         label = self.feed_labels.get(name)
         if label is None:
-            raise ValueError(f"未知信息流：{name}")
-        return label
+            raise ValueError(t("errors.unknown_feed", name=name))
+        return t(label)
 
     def static_feed(self, items: list[FeedItem], label: str) -> StaticFeedLoader:
         """静态首屏出口：0 条守卫 + 一次性 loader（一次拉全的小流用）。
@@ -462,7 +494,7 @@ class Source(ABC):
         require_feed_items → StaticFeedLoader」三行收一处（知乎热榜 / V2EX
         这类一页几十条的小流同形；上百条的静态流用 sliced_feed 切片上屏）。
         """
-        require_feed_items(items, self.label, label)
+        require_feed_items(items, self.label_text, label)
         return StaticFeedLoader(items)
 
     def sliced_feed(self, items: list[FeedItem], label: str) -> SliceFeedLoader:
@@ -471,7 +503,7 @@ class Source(ABC):
         与 static_feed 同一道守卫，区别只在首屏给 feed_page 条、Ctrl+N
         增量补（零请求）——几百条一次性挂载会把无虚拟化的列表冻住秒级。
         """
-        require_feed_items(items, self.label, label)
+        require_feed_items(items, self.label_text, label)
         return SliceFeedLoader(items)
 
     async def first_batch(self, loader: FeedLoader, label: str) -> FeedLoader:
@@ -482,7 +514,7 @@ class Source(ABC):
         的空首页指引）自行拆开调这两步。
         """
         await loader.load_more()
-        require_feed_items(loader.items, self.label, label)
+        require_feed_items(loader.items, self.label_text, label)
         return loader
 
     async def fetch_feed(self, name: str) -> list[FeedItem]:
@@ -495,7 +527,7 @@ class Source(ABC):
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
         """打开详情，返回加载器；不支持详情的源不用覆写。"""
-        raise NotImplementedError(f"{self.label} 暂不支持终端内详情")
+        raise NotImplementedError(t("errors.detail_unsupported", label=self.label_text))
 
 
 class SubscribedSource(Source):
@@ -514,7 +546,7 @@ class SubscribedSource(Source):
     """
 
     all_feed: ClassVar[str]  # 聚合流名（「全部」），feeds 首位；订阅 key 的保留字
-    sub_noun: ClassVar[str]  # 订阅物名词（「订阅」/「频道」），错误与日志文案用
+    sub_noun: ClassVar[str]  # 订阅物名词的文案键（「订阅」/「频道」），展示经 sub_noun_text
     # 详情元信息首段读的 extra 键（rss: feed_label；telegram: channel）
     _meta_extra_key: ClassVar[str] = ""
 
@@ -533,16 +565,30 @@ class SubscribedSource(Source):
             self._by_key[f.key] = f
         keys = list(self._by_key)
         self.feeds = ([self.all_feed] if keys and self.all_feed not in hidden else []) + keys
+        # 「全部」是词汇键（units.all），订阅行的 value 是用户标签（非键，
+        # t() 直通）——展示统一走 feed_label()
         self.feed_labels = (
-            {self.all_feed: "全部", **{k: f.label for k, f in self._by_key.items()}}
+            {self.all_feed: "units.all", **{k: f.label for k, f in self._by_key.items()}}
             if self.feeds
             else {}
         )
         if not keys:
             logger.info(
                 "%s 暂无订阅：在 sources.toml 的 [%s.feeds] 配置后，F2 勾选启用",
-                self.label, self.source_id,
+                self.label_text, self.source_id,
             )
+
+    @property
+    def sub_noun_text(self) -> str:
+        """订阅物名词（订阅/频道）的展示文本。"""
+        return t(self.sub_noun)
+
+    def feed_label(self, name: str) -> str:
+        """订阅型流的显示名：聚合流查词汇键，订阅行直接用用户标签。"""
+        if name == self.all_feed:
+            return t(self.feed_labels[name])
+        feed = self._by_key.get(name)
+        return feed.label if feed is not None else name
 
     async def open_feed(self, name: str) -> FeedLoader:
         if name == self.all_feed:
@@ -550,7 +596,7 @@ class SubscribedSource(Source):
             return SliceFeedLoader(items)  # 几百条聚合一次拉全，切片上屏防秒冻
         feed = self._by_key.get(name)
         if feed is None:
-            raise ValueError(f"未知信息流：{name}")
+            raise ValueError(t("errors.unknown_feed", name=name))
         return await self._open_one(feed)
 
     async def _open_merged(self) -> list[FeedItem]:
@@ -559,20 +605,27 @@ class SubscribedSource(Source):
             # 订阅刚被删光的过渡窗口：旧实例还挂着「全部」流，别让空表走到
             # 0 条守卫报「站点可能已改版」——那是误导，指引才是实话
             raise SourceError(
-                f"{self.label} 还没有订阅——F2 里选中 {self.label} 按 → 添加{self.sub_noun}"
+                t(
+                    "errors.no_subscriptions_hint",
+                    label=self.label_text, sub=self.sub_noun_text,
+                )
             )
         items, errors = await self._fetch_merged(list(self._by_key.values()))
         if errors and items:  # 部分失败降级：时间线照出，失败原因进日志
             logger.warning(
                 "%s「全部」%d/%d 个%s拉取失败：%s",
-                self.label, len(errors), len(self._by_key), self.sub_noun, "；".join(errors[:3]),
+                self.label_text, len(errors), len(self._by_key),
+                self.sub_noun_text, "；".join(errors[:3]),
             )
         if not items and errors:
             raise SourceError(
-                f"{self.label}「全部」订阅全部拉取失败（共 {len(errors)} 个）："
-                + "；".join(errors[:3])
+                t(
+                    "errors.all_feeds_failed",
+                    label=self.label_text, feed=t("units.all"),
+                    n=len(errors), errors="；".join(errors[:3]),
+                )
             )
-        return require_feed_items(items, self.label, "全部")  # 全空且无错 = 可能改版
+        return require_feed_items(items, self.label_text, t("units.all"))  # 全空且无错 = 可能改版
 
     @abstractmethod
     async def _fetch_merged(

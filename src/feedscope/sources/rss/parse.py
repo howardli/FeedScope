@@ -16,6 +16,7 @@ from urllib.parse import urljoin
 import feedparser
 
 from feedscope.core.models import FeedItem
+from feedscope.core.i18n import t
 from feedscope.core.text import strip_zwsp
 
 SOURCE_ID = "rss"
@@ -98,7 +99,7 @@ def parse_feed(
             FeedItem(
                 source=SOURCE_ID,
                 id=f"{feed_key}/{guid or link}",
-                title=_clean(entry.get("title")) or "（无标题）",
+                title=_clean(entry.get("title")) or t("words.no_title"),
                 url=link,
                 meta=" · ".join(meta_parts),
                 extra={

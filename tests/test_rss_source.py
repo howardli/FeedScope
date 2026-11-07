@@ -56,7 +56,9 @@ def test_feeds_built_from_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> N
     use_config(monkeypatch, tmp_path, _CFG)
     src = get_source("rss")
     assert src.feeds == ["all", "one", "two", "dead"]  # 聚合流「全部」打头
-    assert src.feed_labels == {"all": "全部", "one": "源一", "two": "two", "dead": "死链"}  # label 缺省回 key
+    # 聚合流是词汇键（units.all，展示走 feed_label()），订阅行是用户标签原样
+    assert src.feed_labels == {"all": "units.all", "one": "源一", "two": "two", "dead": "死链"}
+    assert src.feed_label("all") == "全部" and src.feed_label("one") == "源一"
 
 
 def test_hide_aggregate_or_subscription(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

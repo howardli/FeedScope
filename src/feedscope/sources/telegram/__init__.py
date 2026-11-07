@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from feedscope.core.config import Subscription
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import FeedLoader, SourceError, SubscribedSource
@@ -33,10 +34,10 @@ class TelegramSource(SubscribedSource):
     subscribable = True  # feeds 来自用户订阅：F2 里 → 进订阅管理屏
     supports_comments = False  # 频道无评论层（讨论组在另一维度，预览页拿不到）
     detail_kinds = frozenset({""})  # 全部条目（kind 空）Enter 都进终端详情
-    detail_unit_label = "正文"  # 无楼层，详情屏尾行与 probe 用这个词（同 RSS）
+    detail_unit_label = "units.body"  # 无楼层，详情屏尾行与 probe 用这个词（同 RSS）
 
     all_feed: ClassVar[str] = "all"  # 聚合流名（「全部」），保留字：订阅 key 与它同名会遮住聚合流
-    sub_noun: ClassVar[str] = "频道"
+    sub_noun: ClassVar[str] = "units.channel"
     reserved_feed_keys = (all_feed,)
     _meta_extra_key = "channel"  # 详情元信息首段 = 频道名
 
@@ -50,10 +51,7 @@ class TelegramSource(SubscribedSource):
         await loader.load_more()  # 首批
         # 0 条大概率是频道不存在/为空/关闭了 Web 预览，不是站点改版——给专属指引
         if not loader.items:
-            raise SourceError(
-                f"Telegram @{feed.key} 一条也拉不到：频道可能不存在、为空、"
-                "或站长关闭了 Web 预览（t.me/s/ 页面需要站长开启）"
-            )
+            raise SourceError(t("errors.telegram_no_items", key=feed.key))
         return loader
 
     def _detail_time(self, extra: dict[str, Any]) -> str:

@@ -16,6 +16,7 @@ from typing import Any
 
 from feedscope.core.browser import ChannelTab
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
+from feedscope.core.i18n import raw, t
 from feedscope.core.source import (
     CommentLoader,
     DetailLoader,
@@ -83,11 +84,11 @@ def _raise_compound_error(data: Any) -> None:
     嵌套形态（{meta: {...}, feeds: {...}}，各自的 __status 分开查）。
     """
     if not isinstance(data, dict):
-        raise SourceError(f"接口返回异常：{type(data).__name__}")
+        raise SourceError(t("errors.zhihu_api_bad_data", kind=type(data).__name__))
     if status := data.get("__status"):
-        raise SourceError(f"接口请求失败（HTTP {status}）")
+        raise SourceError(t("errors.zhihu_api_status", status=status))
     if err := data.get("__error"):
-        raise SourceError(f"接口请求失败：{err}")
+        raise SourceError(t("errors.zhihu_api_failed", error=err))
 
 
 def _headers(zse93: bool) -> dict[str, str]:
@@ -105,9 +106,11 @@ async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False
     不传 = 页签自然 referer（评论用：通道页 URL）；信息流传对应页面 URL，
     与页面请求同形。401/403 的语义转译归 _api_json/调用方。
     """
-    status, body = await _tab.fetch(url, source="知乎", headers=_headers(zse93), referrer=referrer)
+    status, body = await _tab.fetch(
+        url, source=t("sources.zhihu.label"), headers=_headers(zse93), referrer=referrer
+    )
     if status:
-        raise SourceError(f"接口请求失败（HTTP {status}）")
+        raise SourceError(t("errors.zhihu_api_status", status=status))
     # 顶层不是 JSON 对象（登录墙 HTML 等）由 ChannelTab.fetch 统一报结构异常
     return body or {}
 
@@ -170,10 +173,16 @@ FOLLOW_API = "https://www.zhihu.com/api/v3/moments?limit=10&desktop=true"
 _CHANNEL_URL = "https://www.zhihu.com/"  # 通道页签停在 www 源上（cookie/CORS 的前提）
 
 
+def _answer_count_pattern() -> str:
+    """meta 里回读回答总数的正则：由 meta.zhihu_n_answers 模板生成（占位符
+    换捕获组），与 parse 层写入同键同语言，回读永远对得上。"""
+    return re.escape(raw("words.zhihu_n_answers")).replace(re.escape("{n}"), r"(\d+)")
+
+
 async def _login_wall(page: Any) -> None:
     """通道页签开页校验：goto 后确认没撞上登录墙（2026 起热榜也在墙后）。"""
     if "signin" in page.url:
-        raise LoginRequired("知乎需要登录后才能查看此内容")
+        raise LoginRequired(t("errors.zhihu_login_wall", label=t("sources.zhihu.label")))
 
 
 _tab = ChannelTab(
@@ -187,7 +196,9 @@ async def _api_json(url: str, referer: str, zse93: bool = False) -> dict:
         return await _fetch_json(url, referrer=referer, zse93=zse93)
     except SourceError as exc:
         if "HTTP 401" in str(exc):
-            raise LoginRequired("知乎 登录已过期，需要重新登录") from exc
+            raise LoginRequired(
+                t("errors.zhihu_session_expired", label=t("sources.zhihu.label"))
+            ) from exc
         raise
 
 
@@ -251,12 +262,14 @@ async def open_question(qid: str) -> DetailLoader:
     args = [QUESTION_API.format(qid=qid), _ANSWERS_FEEDS_TOP.format(qid=qid), referer]
     r = await _tab.eval(_OPEN_QUESTION_JS, args)  # 页签失效重建重试见 ChannelTab.eval
     if not isinstance(r, dict) or "meta" not in r or "feeds" not in r:
-        raise SourceError("知乎 开题接口返回结构异常")
+        raise SourceError(t("errors.zhihu_api_structure", label=t("sources.zhihu.label")))
     try:
         _raise_compound_error(r["meta"])
     except SourceError as exc:
         if "404" in str(exc):  # 元信息端点 404 = 问题本身没了，别让用户看 HTTP 码猜
-            raise SourceError("知乎 该问题可能已被删除或不存在") from exc
+            raise SourceError(
+                t("errors.zhihu_question_gone", label=t("sources.zhihu.label"))
+            ) from exc
         raise
     _raise_compound_error(r["feeds"])
     doc = _api_question_doc(r["meta"], _feeds_answers(r["feeds"], qid))
@@ -314,7 +327,7 @@ class ZhihuQuestionLoader(DetailLoader):
         self._qid = qid  # 翻页 URL 只带游标，回答里的 question 链接要本问题的 id
         self._seen_urls = {a.url for a in doc.answers if a.url}
         self._done = not next_url
-        m = re.search(r"(\d+)\s*个回答", doc.meta or "")
+        m = re.search(_answer_count_pattern(), doc.meta or "")
         self._total = int(m.group(1)) if m else None
 
     @property
@@ -343,17 +356,19 @@ class ZhihuQuestionLoader(DetailLoader):
     async def open_comments(self, index: int) -> ZhihuCommentsLoader:
         """按需抓第 index 个回答的评论首页（进评论层才调，走通道页签）。"""
         if not 0 <= index < len(self.doc.answers):
-            raise SourceError("知乎 该回答不在已加载范围内，先在问题里按 Ctrl+N 加载更多")
+            raise SourceError(t("errors.zhihu_answer_out_of_range", label=t("sources.zhihu.label")))
         m = re.search(r"/answer/(\d+)", self.doc.answers[index].url or "")
         if not m:
-            raise SourceError("知乎 拿不到该回答的 id，暂时无法进评论层")
+            raise SourceError(t("errors.zhihu_answer_no_id", label=t("sources.zhihu.label")))
         try:
             comments, next_url, _ = await _comment_page(_CM_FIRST_URL.format(aid=m.group(1)))
             return ZhihuCommentsLoader(comments, next_url)
         except SourceError:
             raise
         except Exception as exc:  # 评论打不开不算灾难：给出口让 UI 提示
-            raise SourceError(f"知乎 评论区打开失败：{exc}") from exc
+            raise SourceError(
+                t("errors.zhihu_comments_failed", label=t("sources.zhihu.label"), error=exc)
+            ) from exc
 
 
 class ZhihuCommentsLoader(CommentLoader):

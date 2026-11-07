@@ -20,13 +20,20 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from feedscope.core.i18n import t
 from feedscope.core.models import Answer, Comment, Floor
 
 _N = TypeVar("_N")
 
-# 删除态占位词（作者栏 / 正文），HN 与 Reddit 同形，UI 不特判
-DELETED_AUTHOR = "[已删除]"
-DELETED_BODY = "（已删除）"
+# 删除态占位词（作者栏 / 正文），HN 与 Reddit 同形，UI 不特判。按调用解析：
+# 常量在 import 期求值会冻住语言；@ 规则靠「同语言的相等比较」辨认删除态，
+# 进程内语言固定（见 core/i18n 模块头），调用点各自解析即自洽
+def deleted_author() -> str:
+    return t("words.deleted_author")
+
+
+def deleted_body() -> str:
+    return t("words.deleted_body")
 
 
 @dataclass(frozen=True)
@@ -47,7 +54,7 @@ class TreeAccessors(Generic[_N]):
 
 def _at(parent_author: str, *, direct: bool) -> str:
     """这层回复的 @ 前缀：direct（紧贴楼上）/ 父缺席 / 父已删 → 不加。"""
-    if direct or not parent_author or parent_author == DELETED_AUTHOR:
+    if direct or not parent_author or parent_author == deleted_author():
         return ""
     return f"@{parent_author}"
 

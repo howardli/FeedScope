@@ -16,11 +16,11 @@ from __future__ import annotations
 
 from feedscope.core.models import Answer, Comment
 from feedscope.core.tree import (
-    DELETED_AUTHOR,
-    DELETED_BODY,
     TreeAccessors,
     build_floors,
     count_kept,
+    deleted_author,
+    deleted_body,
     flatten_comments,
     floor_comments,
 )
@@ -39,11 +39,11 @@ def _kids_of(n: dict) -> list[dict]:
 
 
 def _author_of(n: dict) -> str:
-    return n["name"] if n["name"] else DELETED_AUTHOR
+    return n["name"] if n["name"] else deleted_author()
 
 
 def _comment_of(n: dict) -> Comment:
-    return Comment(author=_author_of(n), votes="", content_md=n["body"] or DELETED_BODY)
+    return Comment(author=_author_of(n), votes="", content_md=n["body"] or deleted_body())
 
 
 _ACC = TreeAccessors(keep=_keep, kids_of=_kids_of, author_of=_author_of, comment_of=_comment_of)
@@ -74,7 +74,7 @@ def test_flatten_skips_empty_shells_whole_branch() -> None:
     tree = [node("甲"), node("", body=None), node("乙", body=None, kids=[node("丙")])]
     flat = flatten_comments(tree, _ACC)
     assert [c.author for c in flat] == ["甲", "乙", "丙"]
-    assert flat[1].content_md == DELETED_BODY  # 本尊已删有孩子照常保留，正文占位
+    assert flat[1].content_md == deleted_body()  # 本尊已删有孩子照常保留，正文占位
 
 
 def test_flatten_no_at_for_deleted_parent() -> None:

@@ -26,12 +26,26 @@ from feedscope.core import http
 def _isolated_user_env(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 不用 tmp_path：不少用例断言 tmp_path 的文件清单，隔离目录不能混进去
+    # 不用 tmp_path：不少用例断言 tmp_path 的文件清单，隔离目录不能混进去。
+    # 预创建的配置显式钉 zh-CN：缺省语言是英文（core.i18n.DEFAULT_LANGUAGE），
+    # 而本仓库绝大多数断言写的是中文文案——测试语言必须确定，不随缺省漂
     env_dir = tmp_path_factory.mktemp("fs-user-env")
     config = env_dir / "sources.toml"
-    config.write_text("# 测试预创建：跳过首启引导，全默认全启用\n", encoding="utf-8")
+    config.write_text('language = "zh-CN"\n# 测试预创建：跳过首启引导，全默认全启用\n', encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(config))
     monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(env_dir / "samples"))
+
+
+@pytest.fixture(autouse=True)
+def _pin_chinese_for_direct_calls() -> None:
+    """直调 t() 的单元测试（不经 FeedScopeApp/配置）钉中文：语言是进程级
+    状态，别的用例（en 冒烟 / 语言屏）改过后不能泄漏过来。App 用例不受
+    影响——App.__init__ 总是按自己的配置重设语言。"""
+    from feedscope.core import i18n
+
+    i18n.set_language("zh-CN")
+    yield
+    i18n.set_language("zh-CN")
 
 
 # ---- 通用 helper（测试模块 `from conftest import …` 直接用）----

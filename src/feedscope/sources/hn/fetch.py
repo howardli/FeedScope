@@ -12,6 +12,7 @@ from __future__ import annotations
 from feedscope.core import http
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
+from feedscope.core.i18n import t
 from feedscope.sources.hn.parse import parse_search
 
 _API = "https://hn.algolia.com/api/v1"
@@ -41,7 +42,9 @@ async def fetch_feed(name: str, label: str, page: int) -> dict:
 
 async def fetch_item(object_id: str) -> dict:
     """一条 story 的 items/:id 整棵评论树（原始 JSON dict；解析/校验见 http.get_json）。"""
-    return await http.get_json(f"{_API}/items/{object_id}", source="HN 详情", expect=dict)
+    return await http.get_json(
+        f"{_API}/items/{object_id}", source=t("sources.hn.detail"), expect=dict
+    )
 
 
 class HnFeedLoader(FeedLoader):
@@ -69,7 +72,7 @@ class HnFeedLoader(FeedLoader):
         data = await fetch_feed(self._name, self._label, self._page)
         hits = data.get("hits")
         if not isinstance(hits, list):
-            raise SourceError(f"HN「{self._label}」返回里没有 hits，接口可能已变")
+            raise SourceError(t("errors.hn_no_hits", label=self._label))
         new = dedup_append(self.items, self._seen, parse_search(hits))
         self._page += 1
         try:

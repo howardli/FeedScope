@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from feedscope.core.const import safe_int
+from feedscope.core.i18n import t
 from feedscope.core.media import html_to_md
 from feedscope.core.models import Answer, FeedItem
 from feedscope.core.timefmt import fmt_unix
@@ -46,7 +47,7 @@ def _meta(topic: dict) -> str:
     if isinstance(node, dict) and (title := str(node.get("title") or "")):
         parts.append(title)
     if replies := safe_int(topic.get("replies")):
-        parts.append(f"{replies} 回复")
+        parts.append(t("display.replies_plain", n=replies))
     if author := _username(topic.get("member")):
         parts.append(author)
     return " · ".join(parts)
@@ -58,19 +59,19 @@ def parse_topics(topics: list[dict]) -> list[FeedItem]:
     整个 topic dict 进 extra：列表正文就是全量，详情打开只再拉回复一个请求。
     """
     items: list[FeedItem] = []
-    for t in topics:
-        tid = str(t.get("id") or "")
+    for tp in topics:
+        tid = str(tp.get("id") or "")
         if not tid.isdigit():
             continue  # 无 id 无法寻址，跳条不跳流
         items.append(
             FeedItem(
                 source=SOURCE_ID,
                 id=tid,
-                title=str(t.get("title") or "").strip() or "（无标题）",
+                title=str(tp.get("title") or "").strip() or t("words.no_title"),
                 url=f"{_TOPIC_URL}{tid}",
                 kind="topic",
-                meta=_meta(t),
-                extra={"topic": t},
+                meta=_meta(tp),
+                extra={"topic": tp},
             )
         )
     return items

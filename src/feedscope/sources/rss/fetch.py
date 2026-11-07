@@ -15,6 +15,7 @@ from feedscope.core import http
 from feedscope.core.config import Subscription
 from feedscope.core.models import FeedItem
 from feedscope.core.source import SourceError, merge_feeds
+from feedscope.core.i18n import t
 from feedscope.sources.rss.parse import parse_feed
 
 # RSS 专用 Accept：部分源对浏览器 UA + */* 的组合反而回 HTML 页，声明清楚要 feed
@@ -51,7 +52,7 @@ async def fetch_body(feed: Subscription) -> bytes:
     cached = _CACHE.get(feed.url)
     r = await http.get(
         feed.url,
-        source=f"RSS「{feed.label}」",
+        source=t("sources.rss.with_label", label=feed.label),
         headers=_conditional_headers(cached),
         allow_304=True,
     )
@@ -59,9 +60,13 @@ async def fetch_body(feed: Subscription) -> bytes:
         if cached is not None:
             return cached.body
         # 无缓存却 304（服务器不合规）：去掉条件头再来一次，还 304 才是真没辙
-        r = await http.get(feed.url, source=f"RSS「{feed.label}」", headers={"Accept": _ACCEPT})
+        r = await http.get(
+            feed.url,
+            source=t("sources.rss.with_label", label=feed.label),
+            headers={"Accept": _ACCEPT},
+        )
         if r.status_code == 304:
-            raise SourceError(f"RSS「{feed.label}」返回 304 但本地没有可用的缓存内容")
+            raise SourceError(t("errors.rss_304_no_cache", label=feed.label))
     _CACHE[feed.url] = _CondEntry(
         etag=r.headers.get("ETag"), last_modified=r.headers.get("Last-Modified"), body=r.content
     )

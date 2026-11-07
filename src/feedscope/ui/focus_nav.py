@@ -43,7 +43,7 @@ class ArrowModalScreen(ModalScreen[T]):
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
-        Binding("escape", "cancel", "取消", show=False),
+        Binding("escape", "cancel", "bindings.cancel", show=False),
     ]
 
     # 弹层卡片三件套的唯一实现（所有弹层同形）：宽度约束（min/max-width）

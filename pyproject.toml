@@ -1,7 +1,7 @@
 [project]
 name = "feedscope"
 version = "0.1.0"
-description = "观流（FeedScope）：终端信息流聚合阅读器——知乎 / X / Reddit / HN / V2EX / RSS / Telegram 一个终端全看"
+description = "FeedScope (观流): a terminal feed reader — Zhihu / X / Reddit / HN / V2EX / RSS / Telegram, all in one terminal"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

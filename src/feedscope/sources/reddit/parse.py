@@ -37,7 +37,8 @@ from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.tree import DELETED_AUTHOR, DELETED_BODY, TreeAccessors, build_floors
+from feedscope.core.i18n import t
+from feedscope.core.tree import deleted_author, deleted_body, TreeAccessors, build_floors
 
 SOURCE_ID = "reddit"
 
@@ -67,8 +68,8 @@ _MEDIA_TYPES = {"image", "video", "gallery"}
 def _post_meta(a: dict[str, str], *, with_author: bool = False) -> str:
     """帖子元信息列「N 点 · N 评 · r/版块（· u/作者）」：列表与详情共用。"""
     parts = [
-        f"{fmt_count(safe_int(a.get('score')))} 点",
-        f"{fmt_count(safe_int(a.get('comment-count')))} 评",
+        t("words.points", n=fmt_count(safe_int(a.get('score')))),
+        t("words.comments_short", n=fmt_count(safe_int(a.get('comment-count')))),
     ]
     if subreddit := str(a.get("subreddit-name") or ""):
         parts.append(f"r/{subreddit}")
@@ -142,7 +143,7 @@ class _CNode:
     @property
     def author(self) -> str:
         a = str(self.attrs.get("author") or "")
-        return a if a and a not in _DELETED_BODIES else DELETED_AUTHOR
+        return a if a and a not in _DELETED_BODIES else deleted_author()
 
     @property
     def votes(self) -> str:
@@ -162,16 +163,16 @@ def _slot_inner(segment: str, slot: str) -> str:
     if not m:
         return ""
     depth = 1
-    for t in _DIV_TOKEN_RE.finditer(segment, m.end()):
-        depth += 1 if t.group(0) == "<div" else -1
+    for tok in _DIV_TOKEN_RE.finditer(segment, m.end()):
+        depth += 1 if tok.group(0) == "<div" else -1
         if depth == 0:
-            return segment[m.end() : t.start()]
+            return segment[m.end() : tok.start()]
     return ""
 
 
 def _content(node: _CNode) -> str:
     """一条评论的正文：删除占位的兜底（@ 前缀由 core.tree 统一拼装）。"""
-    return node.body or DELETED_BODY
+    return node.body or deleted_body()
 
 
 def _comment_of(node: _CNode) -> Comment:
@@ -210,7 +211,7 @@ def _answer_of(node: _CNode, n: int) -> Answer:
         content_md=_content(node),
         time=fmt_iso(str(node.attrs.get("created") or "") or None),
         url=urljoin(_SITE, cp) if cp.startswith("/") else "",
-        comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
+        comment_count=t("display.replies_n", n=n) if n else "",  # 0 条不引导 Enter
     )
 
 
@@ -219,17 +220,20 @@ def _post_body(attrs: dict[str, str], html: str) -> str:
     ptype = str(attrs.get("post-type") or "")
     if ptype in _SELF_TYPES:
         md = html_to_md(_slot_inner(html, "text-body"))
-        return md or "（无正文）"
+        return md or t("words.no_body")
     href = str(attrs.get("content-href") or "")
     if ptype in _MEDIA_TYPES:
-        label = {"image": "[图片]", "video": "[视频]", "gallery": "[相册]"}.get(ptype, "[媒体]")
+        label = {
+            "image": t("media.image"), "video": t("media.video"),
+            "gallery": t("media.gallery"),
+        }.get(ptype, t("media.generic"))
         target = (
             urljoin(_SITE, href)
             if href
             else urljoin(_SITE, str(attrs.get("permalink") or ""))
         )
         return mark(label, target) if target else ""
-    return mark("[原文]", urljoin(_SITE, href)) if href else ""
+    return mark(t("words.original"), urljoin(_SITE, href)) if href else ""
 
 
 def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
@@ -243,13 +247,13 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     roots: list[_CNode] = []
     stack: list[tuple[int, list[_CNode]]] = []
     tags = list(_COMMENT_TAG_RE.finditer(html))
-    for i, t in enumerate(tags):
+    for i, tag in enumerate(tags):
         # 末条评论的正文区上界：200KB 足够容纳一条评论的 rtjson（再大只会
         # 白扫），配平逻辑保证越界内容也只是被丢弃而不是误吞
-        end = tags[i + 1].start() if i + 1 < len(tags) else min(t.end() + 200_000, len(html))
+        end = tags[i + 1].start() if i + 1 < len(tags) else min(tag.end() + 200_000, len(html))
         node = _CNode(
-            attrs=tag_attrs(t.group(0)),
-            body=html_to_md(_slot_inner(html[t.end() : end], "comment")),
+            attrs=tag_attrs(tag.group(0)),
+            body=html_to_md(_slot_inner(html[tag.end() : end], "comment")),
         )
         depth = max(0, safe_int(node.attrs.get("depth")))
         while stack and stack[-1][0] >= depth:
@@ -265,7 +269,12 @@ def parse_thread_html(html: str, fallback_title: str = "") -> ThreadDetail:
     if floors and total > loaded:
         last = floors[-1].answer
         last.comment_count = " · ".join(
-            x for x in (last.comment_count, f"另有 {fmt_count(total - loaded)} 条未展开") if x
+            x
+            for x in (
+                last.comment_count,
+                t("words.more_unexpanded", n=fmt_count(total - loaded)),
+            )
+            if x
         )
     return ThreadDetail(
         title=str(post.get("post-title") or "").strip() or fallback_title,

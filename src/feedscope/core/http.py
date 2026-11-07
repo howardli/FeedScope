@@ -18,6 +18,7 @@ import httpx
 
 from feedscope.core import samples
 from feedscope.core.const import DESKTOP_UA, HTTP_TIMEOUT
+from feedscope.core.i18n import t
 from feedscope.core.source import SourceError
 
 _J = TypeVar("_J", dict, list)  # get_json 的期望顶层形状（dict / list）
@@ -58,11 +59,15 @@ async def get(
         if not (allow_304 and r.status_code == 304):
             r.raise_for_status()  # httpx 新版对 3xx 也抛，304 必须先放行
     except httpx.TimeoutException:
-        raise SourceError(f"{source} 请求超时（{HTTP_TIMEOUT} 秒）：{url}") from None
+        raise SourceError(
+            t("errors.http_timeout", source=source, seconds=HTTP_TIMEOUT, url=url)
+        ) from None
     except httpx.HTTPStatusError as exc:
-        raise SourceError(f"{source} 请求失败（HTTP {exc.response.status_code}）：{url}") from None
+        raise SourceError(
+            t("errors.http_status", source=source, code=exc.response.status_code, url=url)
+        ) from None
     except httpx.HTTPError as exc:
-        raise SourceError(f"{source} 请求失败：{exc}") from exc
+        raise SourceError(t("errors.http_failed", source=source, error=exc)) from exc
     if sample:
         samples.save(samples.url_name(source, str(r.url)), r.content)
     return r
@@ -85,9 +90,9 @@ async def get_json(
     try:
         data = r.json()
     except ValueError:
-        raise SourceError(f"{source} 返回的不是 JSON") from None
+        raise SourceError(t("errors.not_json", source=source)) from None
     if not isinstance(data, expect):
-        raise SourceError(f"{source} 返回结构异常，接口可能已变") from None
+        raise SourceError(t("errors.bad_structure", source=source)) from None
     return data
 
 

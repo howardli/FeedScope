@@ -16,12 +16,13 @@ from dataclasses import dataclass, field
 
 from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count
+from feedscope.core.i18n import t
 from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
 from feedscope.core.tree import (
-    DELETED_AUTHOR,
-    DELETED_BODY,
+    deleted_author,
+    deleted_body,
     TreeAccessors,
     build_floors,
     count_kept,
@@ -49,7 +50,7 @@ def _keep(node: dict) -> bool:
 
 
 def _author(node: dict) -> str:
-    return str(node.get("author") or "") or DELETED_AUTHOR
+    return str(node.get("author") or "") or deleted_author()
 
 
 def _time(node: dict) -> str:
@@ -62,7 +63,7 @@ def _comment_of(node: dict) -> Comment:
     return Comment(
         author=_author(node),
         votes="",  # Algolia 树节点不带分值，HN 评论也无赞数语义
-        content_md=_md(node.get("text")) or DELETED_BODY,
+        content_md=_md(node.get("text")) or deleted_body(),
         time=_time(node),
         raw_id=str(node.get("id") or ""),
     )
@@ -74,10 +75,10 @@ def _answer_of(node: dict, n: int) -> Answer:
     return Answer(
         author=_author(node),
         votes="",
-        content_md=_md(node.get("text")) or DELETED_BODY,
+        content_md=_md(node.get("text")) or deleted_body(),
         time=_time(node),
         url=f"{_ITEM_URL}{cid}" if cid else "",
-        comment_count=f"{n} 条回复" if n else "",  # 0 条不引导 Enter
+        comment_count=t("display.replies_n", n=n) if n else "",  # 0 条不引导 Enter
     )
 
 
@@ -87,7 +88,10 @@ _ACC = TreeAccessors(keep=_keep, kids_of=_kids, author_of=_author, comment_of=_c
 
 def _meta(points: int, comments: int, author: str) -> str:
     """元信息列「N 点 · N 评 · 作者」：列表 hit 与详情 root 共用。"""
-    parts = [f"{fmt_count(points)} 点", f"{fmt_count(comments)} 评"]
+    parts = [
+        t("words.points", n=fmt_count(points)),
+        t("words.comments_short", n=fmt_count(comments)),
+    ]
     if author:
         parts.append(author)
     return " · ".join(parts)
@@ -107,7 +111,7 @@ def parse_search(hits: list[dict]) -> list[FeedItem]:
             FeedItem(
                 source=SOURCE_ID,
                 id=oid,
-                title=str(hit.get("title") or "").strip() or "（无标题）",
+                title=str(hit.get("title") or "").strip() or t("words.no_title"),
                 url=str(hit.get("url") or "") or f"{_ITEM_URL}{oid}",  # 自帖无外链，兜底条目页
                 kind=kind,
                 meta=_meta(
@@ -134,7 +138,7 @@ def parse_story(root: dict) -> StoryDetail:
     """items/:id 根 -> StoryDetail（story 本体 + 顶层评论楼层与各自回复树）。"""
     blocks = []
     if url := str(root.get("url") or ""):
-        blocks.append(f"[原文]({url})")  # 链接帖正文就是外链一行，Ctrl+O 直达
+        blocks.append(f"{t('words.original')}({url})")  # 链接帖正文就是外链一行，Ctrl+O 直达
     if text_md := _md(root.get("text")):
         blocks.append(text_md)  # Ask/Show 的自述全文
     # 顶层节点 -> 楼层（keep 过滤 / 计数 / 拍平的骨架在 core.tree.build_floors）

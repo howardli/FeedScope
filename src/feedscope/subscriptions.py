@@ -23,6 +23,7 @@ from xml.sax.saxutils import escape
 from feedscope.core import config
 from feedscope.core.config import Subscription
 from feedscope.core.registry import get_class
+from feedscope.core.i18n import t
 from feedscope.core.source import SourceError
 
 
@@ -86,15 +87,15 @@ async def add_feed(url: str, *, key: str | None = None, label: str | None = None
     feeds = config.rss_feeds()
     if any(f.url == url for f in feeds):
         dup = next(f.key for f in feeds if f.url == url)
-        raise SubscriptionError(f"这个地址已经订阅过了（key：{dup}）")
+        raise SubscriptionError(t("subs.dup_url", key=dup))
     if key is None:
         # 保留字并进避让集：https://all.com/… 派生出的 key 是 all-2 而不是 all
         #（撞上聚合流名的订阅会被读取侧静默跳过，加了等于没加）
         key = derive_key(url, (*_reserved("rss"), *(f.key for f in feeds)))
     elif key in _reserved("rss"):
-        raise SubscriptionError(f"{key} 是聚合流保留字，不能用作订阅 key")
+        raise SubscriptionError(t("subs.reserved_key", key=key))
     elif key in {f.key for f in feeds}:
-        raise SubscriptionError(f"key {key!r} 已被占用（feedscope rss list 查看）")
+        raise SubscriptionError(t("subs.key_taken", key=repr(key)))
     if not label:
         body = await _fetch_body_or_none(url)
         if body is not None:
@@ -136,13 +137,13 @@ async def add_from_input(text: str) -> tuple[list[Subscription], str]:
     """
     text = text.strip()
     if not text:
-        raise SubscriptionError("输入为空")
+        raise SubscriptionError(t("subs.empty_input"))
     if text.startswith(("http://", "https://")):
         feed = await add_feed(text)
-        return [feed], f"已订阅 {feed.key}：{feed.label}"
+        return [feed], t("subs.added_feed", key=feed.key, label=feed.label)
     added, skipped = import_opml(read_opml_file(text))
-    detail = f"，跳过 {len(skipped)} 条" if skipped else ""
-    return added, f"导入 {len(added)} 条订阅{detail}"
+    detail = t("subs.imported_skip", n=len(skipped)) if skipped else ""
+    return added, t("subs.imported", n=len(added), detail=detail)
 
 
 def _remove(source_id: str, key: str, *, drop_when_empty: bool) -> Subscription | None:
@@ -172,7 +173,7 @@ def read_opml_file(path: str | Path) -> str:
     try:
         return Path(path).expanduser().read_text(encoding="utf-8")
     except OSError as exc:
-        raise BadSubscriptionFile(f"OPML 文件读不了：{exc}") from None
+        raise BadSubscriptionFile(t("subs.opml_unreadable", error=exc)) from None
 
 
 def parse_opml(text: str) -> list[tuple[str, str]]:
@@ -180,7 +181,7 @@ def parse_opml(text: str) -> list[tuple[str, str]]:
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
-        raise BadSubscriptionFile(f"不是合法的 OPML：{exc}") from None
+        raise BadSubscriptionFile(t("subs.opml_invalid", error=exc)) from None
     out: list[tuple[str, str]] = []
     for outline in root.iter("outline"):
         url = (outline.get("xmlUrl") or "").strip()
@@ -207,7 +208,7 @@ def import_opml(text: str) -> tuple[list[Subscription], list[str]]:
     skipped: list[str] = []
     for label, url in parse_opml(text):
         if url in known_urls:
-            skipped.append(f"{label or url}：地址已订阅")
+            skipped.append(t("subs.opml_dup", name=label or url))
             continue
         key = derive_key(url, known_keys)
         known_urls.add(url)
@@ -232,7 +233,7 @@ def export_opml(feeds: list[Subscription]) -> str:
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<opml version="2.0">',
-        "  <head><title>FeedScope 订阅导出</title></head>",
+        f"  <head><title>{t('subs.opml_title')}</title></head>",
         "  <body>",
     ]
     lines += [
@@ -263,17 +264,17 @@ async def add_subreddit(text: str, *, label: str | None = None) -> Subscription:
 
     name = parse_subreddit_input(text)
     if not name:
-        raise SubscriptionError("没认出 subreddit 名（支持：rust、r/rust、/r/rust/ 或站点地址）")
+        raise SubscriptionError(t("subs.subreddit_unrecognized"))
     if name in _reserved("reddit"):
-        raise SubscriptionError(f"{name} 与内置流重名（首页/热门），不能用作订阅名")
+        raise SubscriptionError(t("subs.subreddit_reserved", name=name))
     feeds = config.feeds_for("reddit")
     if any(f.key == name for f in feeds):
-        raise SubscriptionError(f"r/{name} 已经订阅过了")
+        raise SubscriptionError(t("subs.subreddit_dup", name=name))
     try:
         await require_login(f"r/{name}")
         real = await fetch_subreddit(name)
     except SourceError as exc:  # 含 LoginRequired：订阅管理屏没有账号动线，消息自带指引
-        raise SubscriptionError(f"r/{name} 加不上：{exc}") from None
+        raise SubscriptionError(t("subs.subreddit_failed", name=name, error=exc)) from None
     display = real or name
     feed = Subscription(key=name, label=label or display, url=f"https://www.reddit.com/r/{name}/")
     config.update_feeds("reddit", [*feeds, feed])
@@ -283,7 +284,7 @@ async def add_subreddit(text: str, *, label: str | None = None) -> Subscription:
 async def add_subreddit_from_input(text: str) -> tuple[list[Subscription], str]:
     """订阅管理屏的 reddit 添加入口（与 rss 的 add_from_input 同形，store 注入用）。"""
     feed = await add_subreddit(text)
-    return [feed], f"已订阅 r/{feed.key}：{feed.label}"
+    return [feed], t("subs.added_subreddit", key=feed.key, label=feed.label)
 
 
 def remove_subreddit(key: str) -> Subscription | None:
@@ -312,18 +313,18 @@ async def add_channel(text: str, *, label: str | None = None) -> Subscription:
 
     name = parse_telegram_input(text)
     if not name:
-        raise SubscriptionError("没认出频道名（支持：durov、@durov、t.me/durov 或帖子链接）")
+        raise SubscriptionError(t("subs.channel_unrecognized"))
     if name in _reserved("telegram"):
         # 防御分支：当前保留字 all 只有 3 字符，Telegram 用户名最短 5 字符，
         # 实际到不了这里（先被输入归一拦下）——留给保留字集日后扩展长词
-        raise SubscriptionError(f"{name} 是聚合流保留字，不能用作订阅名")
+        raise SubscriptionError(t("subs.channel_reserved", name=name))
     feeds = config.feeds_for("telegram")
     if any(f.key == name for f in feeds):
-        raise SubscriptionError(f"@{name} 已经订阅过了")
+        raise SubscriptionError(t("subs.channel_dup", name=name))
     html = await fetch_channel_html(name)  # SourceError 顺势上抛（HTTP 层的中文消息够用）
     items = parse_channel_html(html, channel=name, label=name)
     if not items:
-        raise SubscriptionError(f"@{name} 拉不到任何帖子：频道可能不存在、为空，或关闭了 Web 预览")
+        raise SubscriptionError(t("subs.channel_no_items", name=name))
     display = channel_title(html) or name
     feed = Subscription(key=name, label=label or display, url=f"https://t.me/{name}/")
     config.update_feeds("telegram", [*feeds, feed])
@@ -333,7 +334,7 @@ async def add_channel(text: str, *, label: str | None = None) -> Subscription:
 async def add_channel_from_input(text: str) -> tuple[list[Subscription], str]:
     """订阅管理屏的 Telegram 添加入口（与 rss 的 add_from_input 同形，store 注入用）。"""
     feed = await add_channel(text)
-    return [feed], f"已订阅 @{feed.key}：{feed.label}"
+    return [feed], t("subs.added_channel", key=feed.key, label=feed.label)
 
 
 def remove_channel(key: str) -> Subscription | None:
@@ -371,9 +372,9 @@ class SubsStore:
 def rss_store() -> SubsStore:
     return SubsStore(
         label="RSS",
-        add_placeholder="RSS/Atom 地址、站点首页或 OPML 文件路径（可从 Finder 拖入终端）",
-        hint="↑↓ 选择 · Enter 改名 · Insert 添加（地址 / 首页 / OPML 路径）· Delete 删除",
-        empty="还没有订阅 · Insert 添加（可粘贴 OPML 路径）",
+        add_placeholder=t("subs.rss_placeholder"),
+        hint=t("subs.rss_hint"),
+        empty=t("subs.rss_empty"),
         feeds=config.rss_feeds,
         add=add_from_input,
         remove=remove_feed,
@@ -384,9 +385,9 @@ def rss_store() -> SubsStore:
 def reddit_store() -> SubsStore:
     return SubsStore(
         label="Reddit",
-        add_placeholder="subreddit 名或地址（如 rust、r/rust、reddit.com/r/rust）",
-        hint="↑↓ 选择 · Enter 改名 · Insert 添加 · Delete 删除",
-        empty="还没有订阅 · Insert 添加（输入 subreddit 名即可）",
+        add_placeholder=t("subs.reddit_placeholder"),
+        hint=t("subs.hint_basic"),
+        empty=t("subs.reddit_empty"),
         feeds=lambda: config.feeds_for("reddit"),
         add=add_subreddit_from_input,
         remove=remove_subreddit,
@@ -397,9 +398,9 @@ def reddit_store() -> SubsStore:
 def telegram_store() -> SubsStore:
     return SubsStore(
         label="Telegram",
-        add_placeholder="频道名或链接（如 durov、@durov、t.me/durov）",
-        hint="↑↓ 选择 · Enter 改名 · Insert 添加 · Delete 删除",
-        empty="还没有订阅 · Insert 添加（输入频道名或链接即可）",
+        add_placeholder=t("subs.telegram_placeholder"),
+        hint=t("subs.hint_basic"),
+        empty=t("subs.telegram_empty"),
         feeds=lambda: config.feeds_for("telegram"),
         add=add_channel_from_input,
         remove=remove_channel,
@@ -419,4 +420,4 @@ def store_for(source_id: str) -> SubsStore:
     """订阅管理屏的入口工厂；未登记的 id = subscribable 声明与 store 不一致，尽早炸。"""
     if build := _STORES.get(source_id):
         return build()
-    raise ValueError(f"{source_id} 没有订阅管理适配器（subscribable 与 SubsStore 缺一不可）")
+    raise ValueError(t("subs.no_store", source=source_id))

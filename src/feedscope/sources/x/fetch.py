@@ -47,6 +47,7 @@ from feedscope.core.browser import ChannelTab, drop_profile_cookies, get_session
 from feedscope.core.const import PAGE_TIMEOUT_MS
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, FeedLoader, LoginRequired, SourceError, dedup_append
+from feedscope.core.i18n import t
 from feedscope.sources.x.parse import (
     BASE,
     _detail_doc,
@@ -371,7 +372,7 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
         await harvest()
         op = _resolve(op_name)
         if op is None:
-            raise SourceError(f"{source} 拿不到接口请求形状（收割与种子都缺），请反馈维护者")
+            raise SourceError(t("errors.x_no_shape", source=source))
     for attempt in range(2):
         url = _url(op_name, op, extra_vars)
         status, body = await _raw(url, source=source)
@@ -379,16 +380,11 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
             status == 401
         ):  # auth_token 被服务端吊销：清失效 cookie（判登 cookie 在即算已登录会一直被骗）再引导重登
             await drop_profile_cookies("https://x.com", ("auth_token", "ct0"))
-            raise LoginRequired("X 登录已失效（服务端已不认本地登录态），Ctrl+U 重新登录") from None
+            raise LoginRequired(t("errors.x_login_expired")) from None
         if status == 403:
-            raise SourceError(
-                f"{source} 请求失败（HTTP 403）——可能被风控或账号受限，"
-                "重新登录救不了，稍后再试或换网络"
-            ) from None
+            raise SourceError(t("errors.x_403", source=source)) from None
         if status and status not in _SHAPE_ROT:
-            raise SourceError(
-                f"{source} 请求失败（HTTP {status}）：接口限流或抖动，稍后再试"
-            ) from None
+            raise SourceError(t("errors.x_status_retry", source=source, status=status)) from None
         if not status and not body.get("errors"):
             return body
         if attempt == 0:  # 形状腐烂（errors/400/404/422）：重割一次，形状确实换过才重试
@@ -399,16 +395,15 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
             if healed is None or healed == op:
                 break
             op = healed
-    raise SourceError(
-        f"{source} 接口报错（请求形状可能已失效，自动收割未修复——"
-        "跑 scripts/x_probe.py 诊断或反馈维护者）"
-    )
+    raise SourceError(t("errors.x_shape_stale", source=source))
 
 
 async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict], str | None]:
     """时间线一次 GraphQL 调用 -> (entries, 下一页 cursor)；feed 见 _TIMELINE_OPS。"""
     op_name = _TIMELINE_OPS[feed]
-    data = await _graphql(op_name, {"cursor": cursor} if cursor else None, source="X 时间线")
+    data = await _graphql(
+        op_name, {"cursor": cursor} if cursor else None, source=t("sources.x.timeline")
+    )
     return _entries_and_cursor(data)
 
 
@@ -417,7 +412,7 @@ async def fetch_conversation(rest_id: str, cursor: str | None) -> tuple[list[dic
     extra = {"focalTweetId": rest_id}
     if cursor:
         extra["cursor"] = cursor
-    data = await _graphql(_DETAIL_OP, extra, source="X 详情")
+    data = await _graphql(_DETAIL_OP, extra, source=t("sources.x.detail"))
     return _detail_entries_and_cursor(data)
 
 
@@ -462,7 +457,7 @@ class XTweetDetailLoader(DetailLoader):
         self._seen: set[str] = set()  # 已输出的推文 id（焦点 + 父推 + 回复，跨页去重）
         focal, parent, replies = _focal_and_replies(entries, rest_id)
         if not focal:
-            raise SourceError("X 详情数据为空（推文可能已被删除或隐藏）")
+            raise SourceError(t("errors.x_detail_empty"))
         title, meta, desc, time = _detail_doc(focal, parent)
         self.doc = DetailDoc(title=title, meta=meta, description_md=desc, time=time)
         self._seen.add(str(focal.get("rest_id") or ""))

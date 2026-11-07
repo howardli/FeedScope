@@ -1,0 +1,442 @@
+# FeedScope 文案目录 · 简体中文（基准语言）
+#
+# - 键为点分嵌套域，代码里用 core.i18n.t("domain.key", 占位=值) 查找
+# - 占位符 {name} 走 str.format；文案里要出现字面花括号双写 {{ }}
+# - 各语言文件键树必须完全一致（tests/test_i18n.py 奇偶校验），漏译会红
+# - 新增语言：复制本文件为 <code>.toml 改 [meta] name 与文案即可被自动发现
+
+[meta]
+name = "简体中文"
+
+[common]
+enum_comma = "、"
+
+[app]
+exit_onboarding_cancel = "未完成初始设置，重新运行 feedscope 再次选择"
+exit_no_sources = "没有注册任何源"
+
+title = "FeedScope（观流）"
+
+[bindings]
+language = "语言"
+
+# 语言选择屏是「语言未定时无法翻译自身」的元控件：标题/提示双语同值（en.toml 同）
+quit = "退出"
+cancel = "取消"
+back = "返回"
+add = "添加"
+remove = "删除"
+refresh = "刷新"
+browser = "浏览器"
+manage_sources = "源管理"
+account = "账号"
+more = "更多"
+sidebar = "边栏"
+switch_source = "切站"
+
+[language]
+title = "选择语言 / Choose Language"
+hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
+
+[main]
+language_saved_restart = "已保存，重启 feedscope 后生效"
+hint_no_subscriptions = "{label} 已启用但还没有订阅——F2 里选中它按 → 添加"
+
+# 源与请求层的错误出口（SourceError 消息，UI 直接展示）
+sidebar_no_sources = "（未启用任何源，F2 管理）"
+sidebar_no_feeds = "（无信息流）"
+empty_no_sources = "没有启用的源 · 按 F2 管理"
+toast_no_sources = "没有启用的源 · F2 管理"
+empty_no_content = "没有内容 · F5 刷新 · Tab 或点击顶部 tab 切换站点"
+empty_load_failed = "加载失败：{text}"
+status_signed_out = "未登录"
+hint_login = "{error} · Ctrl+U 登录"
+status_count = "{n} 条"
+status_more_loading = "{n} 条 · 加载更多…"
+status_more_failed = "{n} 条 · 加载更多失败"
+status_no_more = "{n} 条 · 没有更多了"
+status_no_new = "{n} 条 · 这轮没拉到新内容"
+toast_no_more = "没有更多了"
+toast_no_new_retry = "这轮没拉到新内容，稍后再按 Ctrl+N 重试"
+toast_last_feed = "已是最后一个流"
+toast_no_selection = "当前没有选中的条目"
+toast_nothing_to_load = "当前列表没有可加载的内容"
+toast_cjk_input = "检测到中文输入：快捷键全部是非打印键，不受输入法影响"
+hint_top_bar = "顶部源栏：←→ 切站，↓ 进边栏"
+hint_sidebar = "左侧边栏：↑↓ 切流，→ 回列表"
+saved_n_sources = "已保存：{n} 源启用"
+saved_zero_sources = "已保存：当前没有启用的源（F2 可再开启）"
+[errors]
+zero_items = "{label} 解析到 0 条内容，站点可能已改版（feedscope probe 可复查）"
+zero_items_with_feed = "{label}「{feed}」解析到 0 条内容，站点可能已改版（feedscope probe 可复查）"
+merge_one_failed = "{label}：{error}"
+comments_unsupported = "{name} 不支持评论层"
+comment_out_of_range = "{label} 该评论不在已加载范围内，先按 Ctrl+N 加载更多楼层"
+login_required = "{label} 需要登录后才能查看{what}"
+unknown_feed = "未知信息流：{name}"
+detail_unsupported = "{label} 暂不支持终端内详情"
+no_subscriptions_hint = "{label} 还没有订阅——F2 里选中 {label} 按 → 添加{sub}"
+all_feeds_failed = "{label}「{feed}」订阅全部拉取失败（共 {n} 个）：{errors}"
+http_timeout = "{source} 请求超时（{seconds} 秒）：{url}"
+http_status = "{source} 请求失败（HTTP {code}）：{url}"
+http_failed = "{source} 请求失败：{error}"
+not_json = "{source} 返回的不是 JSON"
+bad_structure = "{source} 返回结构异常，接口可能已变"
+bad_structure_short = "{source} 返回结构异常"
+bad_structure_not_object = "{source} 返回结构异常（不是 JSON 对象）"
+what_feed = "「{label}」流"
+what_post_detail = "帖子详情"
+what_timeline = "「{label}」时间线"
+what_tweet_detail = "推文详情"
+hn_no_hits = "HN「{label}」返回里没有 hits，接口可能已变"
+hn_no_id = "HN 详情返回里没有 id，接口可能已变"
+reddit_status_login = "{source} 请求失败（HTTP {status}）——登录态可能已过期或被风控，Ctrl+U 重新登录"
+reddit_subreddit_gone = "r/{name} 不存在或不可访问"
+reddit_home_empty = "Reddit「首页」是你账号在站内关注版块的聚合，当前为空——去 reddit.com 关注一些版块，或 F2 → Reddit 添加 subreddit 订阅（单独成流）"
+rss_304_no_cache = "RSS「{label}」返回 304 但本地没有可用的缓存内容"
+telegram_no_items = "Telegram @{key} 一条也拉不到：频道可能不存在、为空、或站长关闭了 Web 预览（t.me/s/ 页面需要站长开启）"
+v2ex_no_context = "V2EX 详情缺少列表上下文，回到列表重进该主题"
+x_no_shape = "{source} 拿不到接口请求形状（收割与种子都缺），请反馈维护者"
+x_login_expired = "X 登录已失效（服务端已不认本地登录态），Ctrl+U 重新登录"
+x_403 = "{source} 请求失败（HTTP 403）——可能被风控或账号受限，重新登录救不了，稍后再试或换网络"
+x_status_retry = "{source} 请求失败（HTTP {status}）：接口限流或抖动，稍后再试"
+x_shape_stale = "{source} 接口报错（请求形状可能已失效，自动收割未修复——跑 scripts/x_probe.py 诊断或反馈维护者）"
+x_detail_empty = "X 详情数据为空（推文可能已被删除或隐藏）"
+zhihu_api_bad_data = "接口返回异常：{kind}"
+zhihu_api_status = "接口请求失败（HTTP {status}）"
+zhihu_api_failed = "接口请求失败：{error}"
+zhihu_login_wall = "{label}需要登录后才能查看此内容"
+zhihu_session_expired = "{label} 登录已过期，需要重新登录"
+zhihu_api_structure = "{label} 开题接口返回结构异常"
+zhihu_question_gone = "{label} 该问题可能已被删除或不存在"
+zhihu_answer_out_of_range = "{label} 该回答不在已加载范围内，先在问题里按 Ctrl+N 加载更多"
+zhihu_answer_no_id = "{label} 拿不到该回答的 id，暂时无法进评论层"
+zhihu_comments_failed = "{label} 评论区打开失败：{error}"
+zhihu_no_question_id = "{label} 该条目没有问题 id，无法进详情"
+
+# 共享词汇（源词汇表 ClassVar 指向这里；各源专有词在 sources.<id>.*）
+[units]
+all = "全部"
+answer = "回答"
+comment = "评论"
+reply = "回复"
+body = "正文"
+subscription = "订阅"
+channel = "频道"
+
+[source_setup]
+not_subscribable = "{label} 的信息流是内置的，没有可管理的订阅"
+
+onboarding_title = "欢迎使用观流（FeedScope）"
+onboarding_prompt = "选择要启用的信息源（空格勾选 / 取消）；序号即站点排列顺序"
+onboarding_confirm = "开始使用"
+manage_title = "源管理"
+manage_prompt = "空格/Enter 勾选；序号即站点顺序，取消再勾选 = 移到末尾；→ 管理订阅"
+manage_confirm = "保存"
+n_feeds_more = " 等 {n} 个流"
+no_subs = "无订阅 · → 添加"
+
+[media]
+image = "[图片]"
+video = "[视频]"
+gallery = "[相册]"
+generic = "[媒体]"
+images_n = "[图片 {n}]"
+
+
+[display]
+wan = "万"
+votes = "赞 {n}"
+comments_n = "{n} 条评论"
+replies_n = "{n} 条回复"
+replies_plain = "{n} 回复"
+favorites = "{n} 赞"
+visits = " · {n} 浏览"
+visits_wan = " · {n} 万浏览"
+
+
+[config]
+file_header = """FeedScope 源配置：language = 界面语言；enabled = 启用的源；各源 hide = 隐藏的信息流
+feeds = 订阅表（key = {{ label, url }}）：rss 订 feed、reddit 订 subreddit、
+telegram 订频道；由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），
+也可手动编辑"""
+describe_not_created = "未创建（全部用内置默认）"
+describe_unparsable = "无法解析（{error}）"
+describe_language = "语言 {lang}"
+describe_enabled = "启用 {n} 源"
+describe_enabled_with_ids = "启用 {n} 源（{ids}）"
+describe_overrides = "{n} 源覆写：{hidden} 隐藏"
+describe_feeds = "{n} 订阅"
+
+[words]
+deleted_author = "[已删除]"
+deleted_body = "（已删除）"
+points = "{n} 点"
+comments_short = "{n} 评"
+no_title = "（无标题）"
+no_body = "（无正文）"
+anonymous = "匿名用户"
+original = "[原文]"
+views = "{n} 观看"
+zhihu_asked = "{asker} 提问"
+zhihu_n_answers = " · {n} 个回答"
+more_unexpanded = "另有 {n} 条未展开"
+
+[sources.zhihu]
+label = "知乎"
+
+[sources.zhihu.feeds]
+hot = "热榜"
+recommend = "推荐"
+follow = "关注"
+
+[sources.hn]
+detail = "HN 详情"
+
+[sources.hn.feeds]
+front = "首页"
+new = "最新"
+ask = "提问"
+show = "展示"
+
+[sources.v2ex]
+with_label = "V2EX「{label}」"
+replies = "V2EX 回复"
+
+[sources.v2ex.feeds]
+hot = "热门"
+new = "最新"
+
+[sources.x]
+timeline = "X 时间线"
+detail = "X 详情"
+
+[sources.x.feeds]
+foryou = "推荐"
+following = "正在关注"
+
+[sources.reddit]
+post = "Reddit 帖子"
+
+[sources.reddit.feeds]
+home = "首页"
+popular = "热门"
+
+[sources.rss]
+with_label = "RSS「{label}」"
+[x]
+translation_label = "**译文**（{lang}）"
+translation_plain = "**译文**"
+translation_quote = "> {label}：{text}"
+quote_line = " ▸ 引用 {who}：{body}"
+tweet_fallback = "推文"
+parent_tweet = "原推"
+quoted_tweet = "被引推文"
+
+
+[x_langs]
+en = "英语"
+ja = "日语"
+ko = "韩语"
+ru = "俄语"
+fr = "法语"
+de = "德语"
+es = "西班牙语"
+pt = "葡萄牙语"
+it = "意大利语"
+ar = "阿拉伯语"
+tr = "土耳其语"
+th = "泰语"
+vi = "越南语"
+id = "印尼语"
+hi = "印地语"
+uk = "乌克兰语"
+nl = "荷兰语"
+pl = "波兰语"
+sv = "瑞典语"
+da = "丹麦语"
+fi = "芬兰语"
+no = "挪威语"
+el = "希腊语"
+he = "希伯来语"
+cs = "捷克语"
+hu = "匈牙利语"
+ro = "罗马尼亚语"
+ms = "马来语"
+fa = "波斯语"
+ur = "乌尔都语"
+bn = "孟加拉语"
+tl = "菲律宾语"
+
+# 订阅管理（SubsStore 文案 + SubscriptionError 消息）
+[subs]
+dup_url = "这个地址已经订阅过了（key：{key}）"
+reserved_key = "{key} 是聚合流保留字，不能用作订阅 key"
+key_taken = "key {key} 已被占用（feedscope rss list 查看）"
+empty_input = "输入为空"
+added_feed = "已订阅 {key}：{label}"
+imported = "导入 {n} 条订阅{detail}"
+imported_skip = "，跳过 {n} 条"
+opml_unreadable = "OPML 文件读不了：{error}"
+opml_invalid = "不是合法的 OPML：{error}"
+opml_dup = "{name}：地址已订阅"
+opml_title = "FeedScope 订阅导出"
+subreddit_unrecognized = "没认出 subreddit 名（支持：rust、r/rust、/r/rust/ 或站点地址）"
+subreddit_reserved = "{name} 与内置流重名（首页/热门），不能用作订阅名"
+subreddit_dup = "r/{name} 已经订阅过了"
+subreddit_failed = "r/{name} 加不上：{error}"
+added_subreddit = "已订阅 r/{key}：{label}"
+channel_unrecognized = "没认出频道名（支持：durov、@durov、t.me/durov 或帖子链接）"
+channel_reserved = "{name} 是聚合流保留字，不能用作订阅名"
+channel_dup = "@{name} 已经订阅过了"
+channel_no_items = "@{name} 拉不到任何帖子：频道可能不存在、为空，或关闭了 Web 预览"
+added_channel = "已订阅 @{key}：{label}"
+rss_placeholder = "RSS/Atom 地址、站点首页或 OPML 文件路径（可从 Finder 拖入终端）"
+rss_hint = "↑↓ 选择 · Enter 改名 · Insert 添加（地址 / 首页 / OPML 路径）· Delete 删除"
+rss_empty = "还没有订阅 · Insert 添加（可粘贴 OPML 路径）"
+reddit_placeholder = "subreddit 名或地址（如 rust、r/rust、reddit.com/r/rust）"
+hint_basic = "↑↓ 选择 · Enter 改名 · Insert 添加 · Delete 删除"
+reddit_empty = "还没有订阅 · Insert 添加（输入 subreddit 名即可）"
+telegram_placeholder = "频道名或链接（如 durov、@durov、t.me/durov）"
+telegram_empty = "还没有订阅 · Insert 添加（输入频道名或链接即可）"
+no_store = "{source} 没有订阅管理适配器（subscribable 与 SubsStore 缺一不可）"
+
+[doctor]
+title = "FeedScope（观流）{version} 环境自检"
+need_py = "需要 3.11+"
+chrome_missing = "未找到（macOS 标准位置或 PATH 里的 google-chrome），channel=\"chrome\" 依赖它"
+deps_label = "依赖 textual / playwright"
+importable = "可导入"
+import_failed = "导入失败：{error}（先 uv sync）"
+profile_label = "浏览器 profile（信息）"
+profile_exists = "已存在"
+profile_will_create = "首次运行时自动创建"
+config_label = "用户配置 sources.toml（信息）"
+all_ok = "全部通过"
+has_failures = "存在失败项：按提示处理后重试"
+
+[probe]
+unexpected = "未预期异常：{exc}"
+detail_label = "{label} 详情"
+n_items = "{n} 条"
+detail_empty = "标题/正文/楼层全空：详情页可能已改版"
+detail_ok = "「{title}」{n} {unit}"
+unknown_ids = "未知源 id：{unknown}（可选：{known}）"
+title = "FeedScope（观流）源巡检（原始样本存 {dir}）"
+summary = "{ok} 通过 / {fail} 失败 / {skip} 跳过"
+fail_hint = "失败源的原始样本在 {dir}，可对着样本修 parse.py 并补 fixture"
+
+[login]
+unknown_source = "未知源：{source}（已注册：{ids}）"
+not_needed = "{label} 无需登录（匿名可访问）"
+starting = "启动浏览器（profile: {dir}）"
+prompt = "请在弹出的 Chrome 窗口里登录 {label}，完成后本命令自动退出。"
+check_error = "登录检测出错：{error}"
+browser_failed = "浏览器启动或打开登录页失败：{error}"
+timeout = "超时：{seconds} 秒内未检测到登录，重新运行 feedscope login 再试。"
+success_state = "登录态已写入 profile"
+success_cookies = "{cookies} 已写入 profile"
+success = "登录成功：{how}，之后无头复用。"
+
+[cli]
+description = "FeedScope（观流）- 终端信息流聚合阅读器"
+help_tui = "启动 TUI（默认）"
+help_login = "打开浏览器窗口登录某个源"
+help_login_source = "源 id（默认 zhihu）"
+help_probe = "巡检全部源（改版诊断 + 原始样本落盘）"
+help_probe_sources = "只测这些源 id（缺省全部；未登录的源报 SKIP）"
+help_doctor = "环境自检（Chrome / profile / 用户配置）"
+help_rss = "RSS 订阅管理（list / add / remove / import / export）"
+help_rss_list = "列出全部订阅"
+help_rss_add = "添加订阅（显示名缺省拉一次 feed 标题）"
+help_rss_add_url = "RSS / Atom 地址、站点首页（自动发现 feed）或 OPML 文件路径"
+help_rss_add_key = "订阅 key（缺省按域名生成）"
+help_rss_add_label = "显示名（缺省用 feed 自述标题）"
+help_rss_remove = "删除订阅"
+help_rss_remove_key = "要删的订阅 key（feedscope rss list 查看）"
+help_rss_import = "从 OPML 批量导入（幂等合并，已订阅的跳过）"
+help_rss_import_path = "OPML 文件路径"
+help_rss_export = "导出订阅为 OPML 2.0"
+help_rss_export_path = "写入的文件路径（缺省打印到 stdout，可重定向）"
+rss_list_empty = "还没有订阅：feedscope rss add <地址> 或 import <OPML 文件>"
+rss_list_total = "共 {n} 条订阅"
+rss_added = "已订阅 {key}：{label} <{url}>"
+not_added = "未添加：{error}"
+restart_hint = "（重启 TUI 生效）"
+no_such_key = "没有 key 为 {key} 的订阅（feedscope rss list 查看）"
+removed = "已删除 {key}：{label}"
+import_failed = "导入失败：{error}"
+skipped_line = "跳过 {line}"
+more_skipped = "…另有 {n} 条跳过"
+import_result = "导入 {added} 条，跳过 {skipped} 条"
+exported = "已导出 {n} 条订阅到 {path}"
+
+[dialogs]
+confirm = "确认"
+cancel = "取消"
+ok = "确定"
+login = "登录"
+logout = "登出"
+login_prompt = "{label}需要登录"
+logout_prompt = "登出 {label}？"
+
+[account]
+login_refused = "已取消，本次运行不再自动询问；Ctrl+U 可登录"
+no_login_needed = "{label} 无需登录"
+login_in_progress = "登录进行中，稍候"
+login_refresh_later = "登录进行中，稍候刷新"
+title_login = "登录"
+login_ok = "{label} 登录成功"
+login_incomplete = "{label} 登录未完成，可再试一次"
+logged_out = "已登出 {label}"
+not_logged_in = "{label} 本就没有登录"
+
+[feedback]
+failure = "{action}：{error}"
+failure_with_source = "{source} {action}：{error}"
+title_fetch_failed = "抓取失败"
+action_fetch = "请求失败"
+action_add_failed = "添加失败"
+action_logout_failed = "登出失败"
+action_comments_failed = "评论加载失败"
+action_more_failed = "加载更多失败"
+
+[subscriptions]
+title = "{label} 订阅管理"
+add = "添加"
+rename = "改名"
+remove = "删除"
+add_title = "添加订阅"
+rename_title = "改显示名"
+pick_first = "先选中一条订阅"
+remove_confirm = "删除订阅「{label}」？"
+removed = "已删除 {label}（想看回来可重新添加）"
+rename_noop = "名字没变（空名或订阅已不存在）"
+renamed = "已改名为 {name}"
+
+[read]
+loading = "加载中…"
+loading_more = "加载更多…"
+status_failed = "加载失败"
+eof = "（完）"
+no_more = "（没有更多{unit}了）"
+no_more_plain = "没有更多{unit}了"
+none = "（没有{unit}）"
+unit_loading = "{unit}加载中…"
+load_failed_retry = "加载失败：{text} · Ctrl+N 重试"
+comments_failed_retry = "评论加载失败：{text} · Ctrl+N 重试"
+hint_more = "Ctrl+N 加载更多{unit}"
+hint_comments = "Enter 看{unit}的{cunit}"
+floor_head = "{unit} {n}"
+answer_title = "{author} 的{unit}"
+still_loading = "内容还在加载"
+no_floors_yet = "还没有可进入的回答"
+single_floor_unsupported = "{label} 暂不支持进入单条{unit}"
+no_next_readable = "后面没有可读的了"
+no_prev_readable = "前面没有可读的了"
+no_next_loaded = "后面没有已加载的{unit}了"
+no_prev_unit = "前面没有{unit}了"
+binding_more_unit = "更多{unit}"
+binding_next_unit = "下一{unit}"
+binding_prev_unit = "上一{unit}"
+

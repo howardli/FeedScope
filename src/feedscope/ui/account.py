@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from feedscope import login
 from feedscope.core.source import Source
+from feedscope.core.i18n import t
 from feedscope.ui import feedback
 from feedscope.ui.dialogs import AccountScreen
 
@@ -35,7 +36,7 @@ class AccountFlow:
         打断。调用方（_refresh）已在 worker 里，wait_for_dismiss 合法。
         """
         proceed = await self.app.push_screen(
-            AccountScreen(source.label, "登录"), wait_for_dismiss=True
+            AccountScreen(source.label_text, "dialogs.login"), wait_for_dismiss=True
         )
         if proceed:
             self.app.run_worker(self.login(source), group="login", exclusive=True)
@@ -43,7 +44,7 @@ class AccountFlow:
             self.refused.add(source.source_id)
             if (main := self.app.main) is not None:
                 main.show_empty(hint)
-            feedback.info(self.app, "已取消，本次运行不再自动询问；Ctrl+U 可登录")
+            feedback.info(self.app, t("account.login_refused"))
 
     async def open(self, source: Source) -> None:
         """Ctrl+U 的账号框：按当前源状态分派——匿名源提示、已登录弹登出、
@@ -53,18 +54,18 @@ class AccountFlow:
         group 独立于列表加载的 default 组，Ctrl+U 不会打断在途的 _refresh。
         """
         if not source.login_url:
-            feedback.info(self.app, f"{source.label} 无需登录")
+            feedback.info(self.app, t("account.no_login_needed", label=source.label_text))
             return
         if self.in_progress:
-            feedback.info(self.app, "登录进行中，稍候")
+            feedback.info(self.app, t("account.login_in_progress"))
             return
         logged_in = await login.is_logged_in(source.source_id)
-        action = "登出" if logged_in else "登录"
+        action_key = "dialogs.logout" if logged_in else "dialogs.login"
         proceed = await self.app.push_screen(
-            AccountScreen(source.label, action), wait_for_dismiss=True
+            AccountScreen(source.label_text, action_key), wait_for_dismiss=True
         )
         if not proceed:
-            if action == "登录":
+            if action_key == "dialogs.login":
                 # 手动框里取消同样算拒绝：之后撞墙不再自动弹（登出框取消无此语义）
                 self.refused.add(source.source_id)
             return
@@ -93,11 +94,15 @@ class AccountFlow:
                 ok = False
             if ok:
                 self.refused.discard(source.source_id)  # 后续撞墙（过期）恢复自动询问
-                feedback.info(self.app, f"{source.label} 登录成功")
+                feedback.info(self.app, t("account.login_ok", label=source.label_text))
             else:
                 # 未完成（超时/关窗放弃）：别再自动追问，重试入口在 toast 与常驻提示里
                 self.refused.add(source.source_id)
-                feedback.warn(self.app, f"{source.label} 登录未完成，可再试一次", title="登录")
+                feedback.warn(
+                    self.app,
+                    t("account.login_incomplete", label=source.label_text),
+                    title=t("account.title_login"),
+                )
         finally:
             self.in_progress = False
             if self.app.main is not None:
@@ -110,8 +115,11 @@ class AccountFlow:
         try:
             had = await login.logout(source.source_id)
         except Exception as exc:
-            feedback.fail(self.app, source, exc, action="登出失败")
+            feedback.fail(self.app, source, exc, action="feedback.action_logout_failed")
             return
-        feedback.info(self.app, f"已登出 {source.label}" if had else f"{source.label} 本就没有登录")
+        if had:
+            feedback.info(self.app, t("account.logged_out", label=source.label_text))
+        else:
+            feedback.info(self.app, t("account.not_logged_in", label=source.label_text))
         if self.app.main is not None:
             self.app.main.action_refresh()

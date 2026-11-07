@@ -4,11 +4,11 @@
   sources.toml（platformdirs，Linux 为 ~/.config/feedscope/sources.toml）
 - 容错哲学：配置问题绝不挡启动——文件不存在 = 全默认；TOML 语法错 / 结构
   不符 = 警告日志 + 当作不存在（feedscope doctor 可诊断）。
-- 写入走 save_enabled（首启引导 / F2 管理界面）与 update_feeds（订阅管理
-  屏 / rss 子命令）：保留各源 hide 段与 feeds 订阅表（订阅是用户数据，
-  覆写丢段 = 丢订阅；rss 的 feed、reddit 的 subreddit、telegram 的频道
-  同款），无法识别的键丢弃；原子落盘（临时文件 + os.replace），不留
-  半截文件。
+- 写入走 save_enabled（首启引导 / F2 管理界面）、update_feeds（订阅管理
+  屏 / rss 子命令）与 save_language（语言选择屏）：保留各源 hide 段与
+  feeds 订阅表（订阅是用户数据，覆写丢段 = 丢订阅；rss 的 feed、reddit
+  的 subreddit、telegram 的频道同款）与顶层 language，无法识别的键丢弃；
+  原子落盘（临时文件 + os.replace），不留半截文件。
 - 本模块对「源」只认 id 字符串，不认识任何具体源：订阅 key 的保留字
   （聚合流名 / 内置流名）由各源自己声明（Source.reserved_feed_keys），
   读取侧的过滤在 SubscribedSource、添加侧的拒收在 subscriptions。
@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from platformdirs import user_config_path
+
+from feedscope.core.i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +54,12 @@ def _read() -> tuple[dict, str]:
         with path.open("rb") as f:
             return tomllib.load(f), ""
     except FileNotFoundError:
-        return {}, "未创建（全部用内置默认）"
+        return {}, t("config.describe_not_created")
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         # 非 UTF-8 字节（手编/别的工具写坏）也是「坏配置」：容错哲学要求
         # 绝不挡启动，不能让它以 UnicodeDecodeError 逃出 _read
         logger.warning("用户配置 %s 无法解析，已忽略：%s", path, exc)
-        return {}, f"无法解析（{exc}）"
+        return {}, t("config.describe_unparsable", error=exc)
 
 
 def hidden_feeds(source_id: str) -> list[str]:
@@ -168,6 +170,28 @@ def is_configured() -> bool:
     return config_path().exists()
 
 
+def get_language() -> str | None:
+    """读顶层语言设置（i18n 语言代码，如 "zh-CN" / "en"）；None = 未设置。
+
+    未设置不是错误：读侧缺省在 core.i18n（回退基准语言），未设置的用户
+    会在下次启动被语言选择屏询问（首启流程见 ui/screens/language.py）。
+    """
+    lang = _read()[0].get("language")
+    if lang is None:
+        return None
+    if not isinstance(lang, str) or not lang:
+        logger.warning("配置 language 应为语言代码字符串，已忽略")
+        return None
+    return lang
+
+
+def save_language(code: str) -> None:
+    """保存语言设置（语言选择屏的落盘路径）；enabled / hide / feeds 原样保留。"""
+    data = _read()[0]
+    data["language"] = code
+    _write_config(_render_config(_enabled_from_data(data), data))
+
+
 def _toml_str(s: str) -> str:
     # json 字符串即合法 TOML 基本串（转义规则同源），不为此引入写库
     return json.dumps(s, ensure_ascii=False)
@@ -204,25 +228,32 @@ def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
     return out
 
 
+def _enabled_from_data(data: dict) -> list[str] | None:
+    """从配置数据里取出规范化的 enabled（坏值按未配置；空列表是合法的零启用）。"""
+    raw = data.get("enabled")
+    if not isinstance(raw, list):
+        return None
+    kept = list(dict.fromkeys(x for x in raw if isinstance(x, str)))
+    return kept if kept or not raw else None
+
+
 def _render_config(ids: list[str] | None, data: dict) -> list[str]:
     """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
 
-    只写本工具认识的键：enabled + 各源非空 hide 段 + feeds 订阅表（其余
-    丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消彼长，注释头
-    已说明归属）。feeds 是用户数据（不是工具生成的状态），必须原样保留——
-    丢段等于丢订阅。
+    只写本工具认识的键：language + enabled + 各源非空 hide 段 + feeds 订阅表
+    （其余丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消彼长，
+    注释头已说明归属）。feeds 是用户数据（不是工具生成的状态），必须原样
+    保留——丢段等于丢订阅；language 同理（i18n 的落盘键，漏写 = 丢语言设置）。
     """
-    lines = [
-        "# FeedScope 源配置：enabled = 启用的源；各源 hide = 隐藏的信息流",
-        "# feeds = 订阅表（key = { label, url }）：rss 订 feed、reddit 订 subreddit、",
-        "# telegram 订频道；由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），",
-        "# 也可手动编辑",
-    ]
+    lines = [f"# {line}" for line in t("config.file_header").splitlines()]
+    language = data.get("language")
+    if isinstance(language, str) and language:
+        lines += ["", f"language = {_toml_str(language)}"]
     if ids is not None:
         lines += ["", f"enabled = {_toml_array(ids)}"]
     for sid, section in data.items():
-        if sid == "enabled":
-            continue  # 已由参数 ids 统一重写，不是「无法识别的顶层键」
+        if sid in ("enabled", "language"):
+            continue  # 已由参数 ids / language 行统一重写，不是「无法识别的顶层键」
         if not isinstance(section, dict):
             logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)
             continue
@@ -285,15 +316,10 @@ def update_feeds(
         data[source_id] = section
     elif source_id in data:
         del data[source_id]
-    raw_enabled = data.get("enabled")
     # 坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，
     # 也不把畸形值原样写回去——读侧本来就是当默认全启用；空列表是
     # 合法状态（零启用），保留
-    enabled: list[str] | None = None
-    if isinstance(raw_enabled, list):
-        kept = list(dict.fromkeys(x for x in raw_enabled if isinstance(x, str)))
-        if kept or not raw_enabled:
-            enabled = kept  # 空列表是合法状态（零启用）；全非 str 才当未配置
+    enabled = _enabled_from_data(data)
     if enabled is not None:
         if feeds and source_id not in enabled:
             enabled.append(source_id)
@@ -308,15 +334,23 @@ def update_rss_feeds(feeds: list[Subscription]) -> None:
 
 
 def describe() -> str:
-    """doctor 用的一句话状态：未创建 / 解析失败原因 / 启用与隐藏概况。"""
+    """doctor 用的一句话状态：未创建 / 解析失败原因 / 语言、启用与隐藏概况。"""
     data, reason = _read()
     if reason:
         return reason
     parts: list[str] = []
+    lang = data.get("language")
+    if isinstance(lang, str) and lang:
+        parts.append(t("config.describe_language", lang=lang))
     enabled = data.get("enabled")
     if isinstance(enabled, list):
-        ids = "、".join(str(i) for i in enabled)
-        parts.append(f"启用 {len(enabled)} 源" + (f"（{ids}）" if enabled else ""))
+        joiner = t("common.enum_comma")
+        ids = joiner.join(str(i) for i in enabled)
+        parts.append(
+            t("config.describe_enabled_with_ids", n=len(enabled), ids=ids)
+            if enabled
+            else t("config.describe_enabled", n=len(enabled))
+        )
     n_hidden = n_sources = n_feeds = 0
     for section in data.values():
         if not isinstance(section, dict):
@@ -327,7 +361,7 @@ def describe() -> str:
         feeds = section.get("feeds")
         n_feeds += len(feeds) if isinstance(feeds, dict) else 0
     if n_sources:
-        parts.append(f"{n_sources} 源覆写：{n_hidden} 隐藏")
+        parts.append(t("config.describe_overrides", n=n_sources, hidden=n_hidden))
     if n_feeds:
-        parts.append(f"{n_feeds} 订阅")
-    return " · ".join(parts) if parts else "未创建（全部用内置默认）"
+        parts.append(t("config.describe_feeds", n=n_feeds))
+    return " · ".join(parts) if parts else t("config.describe_not_created")

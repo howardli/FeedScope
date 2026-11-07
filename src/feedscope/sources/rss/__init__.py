@@ -33,10 +33,10 @@ class RssSource(SubscribedSource):
     supports_detail = True
     subscribable = True  # feeds 来自用户订阅：F2 里 → 进订阅管理屏
     detail_kinds = frozenset({""})  # 全部条目（kind 空）Enter 都进终端详情
-    detail_unit_label = "正文"  # 无楼层，详情屏尾行与 probe 用这个词
+    detail_unit_label = "units.body"  # 无楼层，详情屏尾行与 probe 用这个词
 
     all_feed: ClassVar[str] = "all"  # 聚合流名（「全部」），feeds 首位
-    sub_noun: ClassVar[str] = "订阅"
+    sub_noun: ClassVar[str] = "units.subscription"
     reserved_feed_keys = (all_feed,)
     _meta_extra_key = "feed_label"  # 详情元信息首段 = 订阅显示名
 

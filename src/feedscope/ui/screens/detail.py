@@ -20,6 +20,7 @@ from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, Source
+from feedscope.core.i18n import t
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.reading import (
@@ -38,12 +39,12 @@ class DetailScreen(PagedReadingScreen):
     BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明；Esc 返回继承自 ReadingScreen
-        Binding("ctrl+n", "more", "更多"),
-        # Enter 的标签是占位：__init__ 换源词汇表；无评论层的源隐藏该键位
-        Binding("enter", "pick_answer", "评论"),
-        Binding("ctrl+o", "open_browser", "浏览器"),
-        Binding("right", "next_article", "下一篇"),
-        Binding("left", "prev_article", "上一篇"),
+        Binding("ctrl+n", "more", "bindings.more"),
+        # Enter 的标签是占位（空串）：__init__ 换源词汇表；无评论层的源隐藏该键位
+        Binding("enter", "pick_answer", ""),
+        Binding("ctrl+o", "open_browser", "bindings.browser"),
+        Binding("right", "next_article", "bindings.next"),
+        Binding("left", "prev_article", "bindings.prev"),
     ]
 
     # Markdown 标题规则必须 CSS 级（见 reading.READING_CSS 的说明），其余
@@ -68,7 +69,7 @@ class DetailScreen(PagedReadingScreen):
         # 误按仍走 action_pick_answer 的「暂不支持」反馈，不无声（与尾行预告
         # 同一能力判定）。
         self._relabel_bindings(
-            {"enter": source.comment_unit_label},
+            {"enter": source.comment_unit},
             hide="" if source.supports_comments else "enter",
         )
         self._step_item = step_item  # 向 App 要相邻的可读条目（←/→ 换篇，同步推进列表选中）
@@ -78,7 +79,7 @@ class DetailScreen(PagedReadingScreen):
     @property
     def _unit(self) -> str:
         """楼层单位词：源词汇表（知乎「回答」、X「回复」），详情屏不硬编码。"""
-        return self.source.detail_unit_label
+        return self.source.detail_unit
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -100,18 +101,19 @@ class DetailScreen(PagedReadingScreen):
 
     async def _load(self) -> None:
         body = self._body_scroll()
-        loading = Label("加载中…", id="detail-loading")
+        loading = Label(t("read.loading"), id="detail-loading")
         await body.mount(loading)
         try:
             self.loader = await self.source.open_detail(self.item)
         except Exception as exc:
             # notify 给细节（瞬时），屏内留一行常驻失败态：notify 会消失，屏幕不能空着
             feedback.fail(self.app, self.source, exc)
-            self.app.sub_title = "加载失败"  # 状态行常驻标记失败（与列表屏面包屑同一手法）
-            loading.update(
-                f"[red]加载失败：{escape(feedback.failure_text(self.source, exc))}"
-                " · Ctrl+N 重试[/red]"
+            self.app.sub_title = t("read.status_failed")  # 常驻失败标记（与列表屏面包屑同一手法）
+            failure = t(
+                "read.load_failed_retry",
+                text=escape(feedback.failure_text(self.source, exc)),
             )
+            loading.update(f"[red]{failure}[/red]")
             return
         loading.remove()
         # 首批即到头（V2EX 一页全量 / HN·Reddit 楼层不足一页）：立刻按完成态渲染，
@@ -161,9 +163,11 @@ class DetailScreen(PagedReadingScreen):
             # Footer 的职责，尾行复读键位会被短帖读者当成正文的一部分；
             # 置 exhausted 让 Ctrl+N 走「没有更多」反馈而不是空跑 load_more
             self._exhausted = True
-            widgets.append(dim_line("（完）", classes="tail-line tail-eof"))
+            widgets.append(dim_line(t("read.eof"), classes="tail-line tail-eof"))
         elif self._exhausted:
-            widgets.append(dim_line(f"（没有更多{self._unit}了）", classes="tail-line tail-eof"))
+            widgets.append(
+                dim_line(t("read.no_more", unit=self._unit), classes="tail-line tail-eof")
+            )
         else:
             self._hint = self._hint_widget()
             widgets.append(self._hint)
@@ -173,9 +177,9 @@ class DetailScreen(PagedReadingScreen):
         """尾行动线预告：只留 Footer 没有的语义增量（按了会加载/进入什么）；
         纯键位复读（换篇/返回）是常驻 Footer 的职责——尾行复读会被短帖
         读者当成正文的一部分。Enter 评论段只在源有评论层时列出。"""
-        segs = [f"Ctrl+N 加载更多{self._unit}"]
+        segs = [t("read.hint_more", unit=self._unit)]
         if self.source.supports_comments:
-            segs.append(f"Enter 看{self._unit}的{self.source.comment_unit_label}")
+            segs.append(t("read.hint_comments", unit=self._unit, cunit=self.source.comment_unit))
         return Static(f"[dim]── {' · '.join(segs)} ──[/dim]", classes="tail-line tail-hint")
 
     def _answer_widgets(self, ans: Answer) -> list[Widget]:
@@ -185,7 +189,7 @@ class DetailScreen(PagedReadingScreen):
         """
         self._answer_count += 1
         head = floor_head(
-            f"{self._unit} {self._answer_count}",
+            t("read.floor_head", unit=self._unit, n=self._answer_count),
             ans.author,
             (ans.votes, ans.comment_count, ans.time),
             classes="floor-head",
@@ -212,14 +216,21 @@ class DetailScreen(PagedReadingScreen):
     def action_pick_answer(self) -> None:
         """Enter：进「视口正在阅读」的那个回答的评论层（读到哪进哪，评论那时才请求）。"""
         if self.loader is None or not self._rendered:
-            feedback.info(self.app, "内容还在加载")
+            feedback.info(self.app, t("read.still_loading"))
             return
         if not self.source.supports_comments:
             # 键位已隐藏，这里只剩误按兜底：给一句反馈而不是无声（X/RSS 的详情没有评论层）
-            feedback.info(self.app, f"{self.source.label} 暂不支持进入单条{self._unit}")
+            feedback.info(
+                self.app,
+                t(
+                    "read.single_floor_unsupported",
+                    label=self.source.label_text,
+                    unit=self._unit,
+                ),
+            )
             return
         if not self.loader.doc.answers:
-            feedback.info(self.app, "还没有可进入的回答")
+            feedback.info(self.app, t("read.no_floors_yet"))
             return
         self.open_answer(self._visible_answer_index())
 
@@ -254,7 +265,7 @@ class DetailScreen(PagedReadingScreen):
         return self._step_item(delta)
 
     def _no_target_text(self, delta: int) -> str:
-        return "后面没有可读的了" if delta > 0 else "前面没有可读的了"
+        return t("read.no_next_readable") if delta > 0 else t("read.no_prev_readable")
 
     async def _adopt_target(self, target: FeedItem) -> None:
         """收下相邻条目原地重载；列表选中已由 step_readable_item 同步推进，

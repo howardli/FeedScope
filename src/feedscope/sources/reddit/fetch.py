@@ -36,6 +36,7 @@ import re
 from feedscope.core.browser import ChannelTab
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
+from feedscope.core.i18n import t
 from feedscope.sources.reddit.parse import (
     parse_next_html,
     parse_posts_html,
@@ -113,7 +114,7 @@ async def _get_html(url: str, *, source: str, partial: bool = False) -> str:
                 status, body = await _raw_fetch(url, accept, _version, source=source)
         if status:
             raise SourceError(
-                f"{source} 请求失败（HTTP {status}）——登录态可能已过期或被风控，Ctrl+U 重新登录"
+                t("errors.reddit_status_login", source=source, status=status)
             ) from None
     if not partial and (m := _VERSION_RE.search(body)):
         _version = m.group(0)  # 服务端把版本织进每个页面：顺手收割，首批 partial 免一次专割
@@ -126,9 +127,9 @@ async def fetch_listing(url: str, *, source: str = "Reddit") -> tuple[list[FeedI
     return parse_posts_html(html), parse_next_html(html)
 
 
-async def fetch_thread_html(permalink: str, *, source: str = "Reddit 帖子") -> str:
+async def fetch_thread_html(permalink: str, *, source: str = "") -> str:
     """帖子 permalink 页的 SSR HTML（解析见 parse.parse_thread_html）。"""
-    return await _get_html(permalink, source=source)
+    return await _get_html(permalink, source=source or t("sources.reddit.post"))
 
 
 async def fetch_subreddit(name: str) -> str:
@@ -137,7 +138,7 @@ async def fetch_subreddit(name: str) -> str:
     html = await _get_html(f"{_API}/r/{name}/", source=f"Reddit r/{name}")
     real = parse_subreddit_page(html)
     if not real:
-        raise SourceError(f"r/{name} 不存在或不可访问")
+        raise SourceError(t("errors.reddit_subreddit_gone", name=name))
     return real
 
 

@@ -26,6 +26,7 @@ from textual.widgets import Footer, Header, Label, ListView, Static
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
+from feedscope.core.i18n import t
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.layout import (
@@ -34,6 +35,7 @@ from feedscope.ui.layout import (
     list_title_width,
     score_col_width,
 )
+from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.list_render import build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
@@ -110,8 +112,8 @@ class FeedListView(ListView):
 
     BINDINGS: ClassVar[Bindings] = [
         # 切站进页脚（与 ←/→ 切流同款）：Tab 是切站唯一键位，页脚要给出来路
-        Binding("tab", "screen.next_source", "切站"),
-        Binding("shift+tab", "screen.prev_source", "切站"),
+        Binding("tab", "screen.next_source", "bindings.switch_source"),
+        Binding("shift+tab", "screen.prev_source", "bindings.switch_source"),
         # ↑/↓/Enter 同键改派主屏导航动作（压过 ListView 原生选中/移动）：
         # 焦点在列表上是主屏常态，区域焦点 _pane 决定这组键到哪——
         # 逻辑集中在主屏，这里只负责把键活着送过去
@@ -177,12 +179,14 @@ class MainScreen(MainSetupScreen):
     # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
     # 列表 → 抵屏幕右缘无事。详情/评论屏的 ←/→ 换篇在各屏自己的绑定。
     BINDINGS: ClassVar[Bindings] = [
-        Binding("f5", "refresh", "刷新"),
-        Binding("ctrl+o", "open_browser", "浏览器"),
-        Binding("f2", "manage_sources", "源管理"),
-        Binding("ctrl+u", "account", "账号", show=False),
-        Binding("ctrl+n", "more", "加载更多"),
-        Binding("left", "nav_left", "边栏"),
+        Binding("f5", "refresh", "bindings.refresh"),
+        Binding("ctrl+o", "open_browser", "bindings.browser"),
+        Binding("f2", "manage_sources", "bindings.manage_sources"),
+        Binding("ctrl+u", "account", "bindings.account", show=False),
+        Binding("ctrl+n", "more", "bindings.more"),
+        # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
+        Binding("ctrl+l", "language", "bindings.language"),
+        Binding("left", "nav_left", "bindings.sidebar"),
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
@@ -259,6 +263,7 @@ class MainScreen(MainSetupScreen):
         yield Footer()
 
     async def on_mount(self) -> None:
+        retranslate_bindings(self)  # 键式键位文案解析（bindings.*），见 ui/labels.py
         self.query_one("#feed", ListView).focus()
         self.run_worker(self._start())  # 启动序列（首启引导 + 初始渲染）在 MainSetupMixin
 
@@ -273,7 +278,7 @@ class MainScreen(MainSetupScreen):
         tabs = self.query_one("#source-tabs", Horizontal)
         await tabs.remove_children()
         for idx, source in enumerate(self.sources):
-            await tabs.mount(SourceTab(idx, source.label, active=(idx == self.source_idx)))
+            await tabs.mount(SourceTab(idx, source.label_text, active=(idx == self.source_idx)))
 
     async def _render_feed_sidebar(self) -> None:
         """按当前源重建左侧信息流边栏，高亮当前流（←/→ 依序切换）。"""
@@ -283,11 +288,13 @@ class MainScreen(MainSetupScreen):
         if self.sources:
             source = self.current_source
             items = [
-                FeedNavItem(idx, source.feed_labels.get(name, name), active=(idx == self.feed_idx))
+                FeedNavItem(idx, source.feed_label(name), active=(idx == self.feed_idx))
                 for idx, name in enumerate(source.feeds)
             ]
         if not items:
-            hint = "（未启用任何源，F2 管理）" if not self.sources else "（无信息流）"
+            hint = (
+                t("main.sidebar_no_sources") if not self.sources else t("main.sidebar_no_feeds")
+            )
             items.append(Static(f"[dim]{hint}[/dim]"))
         await nav.mount(*items)
 
@@ -316,7 +323,9 @@ class MainScreen(MainSetupScreen):
 
     def action_refresh(self) -> None:
         if self._tui.accounts.in_progress:
-            feedback.info(self, "登录进行中，稍候刷新")  # 有头登录独占 profile，此时别碰浏览器
+            feedback.info(
+                self, t("account.login_refresh_later")
+            )  # 有头登录独占 profile，此时别碰浏览器
             return
         # 详情屏在前台时不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
         if not self.is_current:
@@ -338,7 +347,7 @@ class MainScreen(MainSetupScreen):
             view.clear()
             self.items = []
             self.app.sub_title = ""
-            self.show_empty("没有启用的源 · 按 F2 管理")
+            self.show_empty(t("main.empty_no_sources"))
             return
         source = self.current_source
 
@@ -346,15 +355,15 @@ class MainScreen(MainSetupScreen):
 
         # Header 副标题 = 状态行（站点/信息流位置由 tab 条与边栏承担）；纯文本
         # 不写 markup（Header 的 Content 解析行为不确定）
-        self.app.sub_title = "加载中…"
+        self.app.sub_title = t("read.loading")
         view = self.query_one("#feed", ListView)
         view.clear()
         self.items = []
         try:
             loader = await open_coro
         except LoginRequired as exc:
-            self.app.sub_title = "未登录"
-            hint = f"{exc} · Ctrl+U 登录"
+            self.app.sub_title = t("main.status_signed_out")
+            hint = t("main.hint_login", error=exc)
             if source.source_id in self._tui.accounts.refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
                 self.show_empty(hint)
@@ -365,9 +374,9 @@ class MainScreen(MainSetupScreen):
             await self._tui.accounts.on_login_wall(source, hint)
             return
         except Exception as exc:
-            self.app.sub_title = "加载失败"
+            self.app.sub_title = t("read.status_failed")
             feedback.fail(self, source, exc)
-            self.show_empty(f"加载失败：{feedback.failure_text(source, exc)}")
+            self.show_empty(t("main.empty_load_failed", text=feedback.failure_text(source, exc)))
             return
 
         self.feed_loader = loader
@@ -382,8 +391,8 @@ class MainScreen(MainSetupScreen):
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
         else:
-            self.show_empty("没有内容 · F5 刷新 · Tab 或点击顶部 tab 切换站点")
-        self.app.sub_title = f"{len(self.items)} 条"
+            self.show_empty(t("main.empty_no_content"))
+        self.app.sub_title = t("main.status_count", n=len(self.items))
 
     def show_empty(self, text: str) -> None:
         """空态/失败态：列表区无内容时的常驻屏内提示（notify 是瞬时反馈，这是常驻状态）。"""
@@ -400,22 +409,24 @@ class MainScreen(MainSetupScreen):
             return
         # 列表屏的加载更多没有独立加载行：进行中/结果全部落进常驻状态行
         # （Cloudflare 顶跳最长能到数十秒，没有进行中提示会像按键失灵）
-        self.app.sub_title = f"{len(self.items)} 条 · 加载更多…"
+        self.app.sub_title = t("main.status_more_loading", n=len(self.items))
         try:
             new = await loader.load_more()
         except Exception as exc:
-            self.app.sub_title = f"{len(self.items)} 条 · 加载更多失败"
-            feedback.fail(self, self.current_source, exc, action="加载更多失败")
+            self.app.sub_title = t("main.status_more_failed", n=len(self.items))
+            feedback.fail(
+                self, self.current_source, exc, action="feedback.action_more_failed"
+            )
             return
         if loader is not self.feed_loader:
             return  # 期间切流/刷新：旧 loader 的迟到结果不能混进新列表
         if not new:
             if loader.done:
-                self.app.sub_title = f"{len(self.items)} 条 · 没有更多了"
-                feedback.info(self, "没有更多了")
+                self.app.sub_title = t("main.status_no_more", n=len(self.items))
+                feedback.info(self, t("main.toast_no_more"))
             else:
-                self.app.sub_title = f"{len(self.items)} 条 · 这轮没拉到新内容"
-                feedback.info(self, "这轮没拉到新内容，稍后再按 Ctrl+N 重试")
+                self.app.sub_title = t("main.status_no_new", n=len(self.items))
+                feedback.info(self, t("main.toast_no_new_retry"))
             return
         self.items = loader.items
         view = self.query_one("#feed", ListView)
@@ -431,7 +442,7 @@ class MainScreen(MainSetupScreen):
                 [build_item(it, width, self._score_width, self.current_source) for it in new]
             )  # 单次挂载 = 单次布局
         self._hide_empty()
-        self.app.sub_title = f"{len(self.items)} 条"
+        self.app.sub_title = t("main.status_count", n=len(self.items))
 
     # ---- 列表项构建与折行 ----
 
@@ -527,7 +538,7 @@ class MainScreen(MainSetupScreen):
             if delta < 0:
                 self._enter_pane(Pane.TABS)  # 首个流再 ↑：上探源栏
             else:
-                feedback.info(self, "已是最后一个流")
+                feedback.info(self, t("main.toast_last_feed"))
             return
         await self.action_select_feed(target)
 
@@ -552,9 +563,7 @@ class MainScreen(MainSetupScreen):
         if pane != Pane.LIST:
             feedback.info(
                 self,
-                "顶部源栏：←→ 切站，↓ 进边栏"
-                if pane == Pane.TABS
-                else "左侧边栏：↑↓ 切流，→ 回列表",
+                t("main.hint_top_bar") if pane == Pane.TABS else t("main.hint_sidebar"),
             )
 
     async def action_nav_up(self) -> None:
@@ -629,13 +638,13 @@ class MainScreen(MainSetupScreen):
     def action_open_browser(self) -> None:
         item = self.current_item()
         if item is None:
-            feedback.info(self, "当前没有选中的条目")  # 空态/加载中按 Ctrl+O 也绝不无声
+            feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按 Ctrl+O 也绝不无声
             return
         webbrowser.open(item.url)
 
     def action_more(self) -> None:
         if self.feed_loader is None:
-            feedback.info(self, "当前列表没有可加载的内容")  # 失败/空态下按 Ctrl+N 也绝不无声
+            feedback.info(self, t("main.toast_nothing_to_load"))  # 失败/空态下按 Ctrl+N 也绝不无声
             return
         self.run_worker(self._load_more_feed(), group="more", exclusive=True)
 
@@ -648,7 +657,7 @@ class MainScreen(MainSetupScreen):
         group 独立于列表加载的 default 组，Ctrl+U 不会打断在途的 _refresh。
         """
         if not self.sources:
-            feedback.info(self, "没有启用的源 · F2 管理")
+            feedback.info(self, t("main.toast_no_sources"))
             return
         self.app.run_worker(
             self._tui.accounts.open(self.current_source), group="account", exclusive=True
@@ -715,7 +724,7 @@ class MainScreen(MainSetupScreen):
         if now - self._cjk_hint_at < _CJK_HINT_INTERVAL:
             return
         self._cjk_hint_at = now
-        feedback.info(self, "检测到中文输入：快捷键全部是非打印键，不受输入法影响")
+        feedback.info(self, t("main.toast_cjk_input"))
 
     # ---- 清理 ----
 

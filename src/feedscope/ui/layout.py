@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import Source
 from feedscope.core.text import display_width
@@ -50,7 +51,7 @@ def meta_col_text(source: Source, it: FeedItem) -> str:
     最长内容自适应（见 score_col_width），超上限的长署名在列内折行（换行可以，
     缩略不行），名字与账号必须完整可见。
     """
-    tag = source.kind_labels.get(it.kind, "")
+    tag = t(source.kind_labels.get(it.kind, ""))
     return f"[{tag}] {it.meta}".strip() if tag else it.meta
 
 

@@ -27,6 +27,7 @@ import re
 from collections.abc import Callable, Iterator
 
 from feedscope.core.display import fmt_count, signature, votes_text
+from feedscope.core.i18n import has, t
 from feedscope.core.media import mark
 from feedscope.core.models import Answer, FeedItem
 from feedscope.core.source import dedup_by
@@ -84,9 +85,9 @@ def _media_markers(r: dict) -> str:
     has_video = any(m.get("type") in ("video", "animated_gif") for m in media)
     markers = ""
     if n_img:
-        markers += f" [图片 {n_img}]"
+        markers += " " + t("media.images_n", n=n_img)
     if has_video:
-        markers += " [视频]"
+        markers += " " + t("media.video")
     return markers
 
 
@@ -115,48 +116,21 @@ def _media_links(r: dict) -> str:
     for m in media:
         if m.get("type") == "photo":
             url = str(m.get("media_url_https") or m.get("media_url") or "")
-            tokens.append(mark("[图片]", url))
+            tokens.append(mark(t("media.image"), url))
         elif m.get("type") in ("video", "animated_gif"):
-            tokens.append(mark("[视频]", _best_video_url(m)))
+            tokens.append(mark(t("media.video"), _best_video_url(m)))
     return f" {' '.join(tokens)}" if tokens else ""
 
 
-# Grok 译文源语言码 -> 中文名，括注在「译文」后（网页「翻译自 英语」的紧凑形）；
-# 查无此码退原码
-_LANG_NAMES = {
-    "en": "英语",
-    "ja": "日语",
-    "ko": "韩语",
-    "ru": "俄语",
-    "fr": "法语",
-    "de": "德语",
-    "es": "西班牙语",
-    "pt": "葡萄牙语",
-    "it": "意大利语",
-    "ar": "阿拉伯语",
-    "tr": "土耳其语",
-    "th": "泰语",
-    "vi": "越南语",
-    "id": "印尼语",
-    "hi": "印地语",
-    "uk": "乌克兰语",
-    "nl": "荷兰语",
-    "pl": "波兰语",
-    "sv": "瑞典语",
-    "da": "丹麦语",
-    "fi": "芬兰语",
-    "no": "挪威语",
-    "el": "希腊语",
-    "he": "希伯来语",
-    "cs": "捷克语",
-    "hu": "匈牙利语",
-    "ro": "罗马尼亚语",
-    "ms": "马来语",
-    "fa": "波斯语",
-    "ur": "乌尔都语",
-    "bn": "孟加拉语",
-    "tl": "菲律宾语",
-}
+# Grok 译文源语言码 -> 语言名（括注在「译文」后）：按语言分文件维护在
+# core/i18n/*.toml 的 [x_langs] 表（中文「英语」/英文「English」）；查无此码
+# 退原码
+
+
+def _lang_name(code: str) -> str:
+    key = f"x_langs.{code}"
+    return t(key) if code and has(key) else code
+
 
 
 def _grok_translation(r: dict) -> str:
@@ -176,9 +150,9 @@ def _grok_translation(r: dict) -> str:
         return ""
     text = re.sub(r"\s+", " ", _expand_urls(text, data)).strip()
     src_lang = str(data.get("source_language") or "")
-    lang = _LANG_NAMES.get(src_lang, src_lang)
-    label = f"**译文**（{lang}）" if lang else "**译文**"
-    return f"> {label}：{text}"
+    lang = _lang_name(src_lang)
+    label = t("x.translation_label", lang=lang) if lang else t("x.translation_plain")
+    return t("x.translation_quote", label=label, text=text)
 
 
 def _author(r: dict) -> tuple[str, str]:
@@ -286,7 +260,7 @@ def _quote_snippet(r: dict) -> str:
     body = truncate_display((body + _media_markers(q)).strip(), _QUOTE_SNIPPET_CELLS)
     if not body:
         return ""
-    return f" ▸ 引用 {_who(q)}：{body}"
+    return t("x.quote_line", who=_who(q), body=body)
 
 
 def _tweet_from_result(r: dict) -> FeedItem | None:
@@ -438,22 +412,22 @@ def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
     title = (
         truncate_display(body.split("\n", 1)[0].strip(), _DETAIL_TITLE_CELLS)
         or _media_markers(focal).strip()
-        or "推文"
+        or t("x.tweet_fallback")
     )
     meta = signature(name, handle)  # 署名「名字 @handle」（详情行全宽，不再截 8 格）
     if legacy.get("reply_count"):
-        meta += f" · {fmt_count(legacy['reply_count'])} 回复"
+        meta += " · " + t("display.replies_plain", n=fmt_count(legacy['reply_count']))
     if legacy.get("favorite_count"):
-        meta += f" · {fmt_count(legacy['favorite_count'])} 赞"
+        meta += " · " + t("display.favorites", n=fmt_count(legacy['favorite_count']))
     desc = (body + _media_links(focal)).strip()
     tr = _grok_translation(focal)
     if tr:
         desc = f"{desc}\n\n{tr}" if desc else tr
     if parent:
-        desc = _quote_context(parent, "原推") + "\n\n" + desc
+        desc = _quote_context(parent, t("x.parent_tweet")) + "\n\n" + desc
     quoted = _quote_result(focal)
     if quoted:
-        desc += "\n\n" + _quote_context(quoted, "被引推文")
+        desc += "\n\n" + _quote_context(quoted, t("x.quoted_tweet"))
     return title, meta, "" if desc == title else desc, fmt_twitter(legacy.get("created_at"))
 
 
@@ -491,11 +465,11 @@ def _strip_trailing_media(text: str, legacy: dict) -> str:
         str(m.get("url")) for m in (legacy.get("entities") or {}).get("media") or [] if m.get("url")
     }
     for _ in range(len(media_urls)):
-        t = text.rstrip()
-        hit = next((u for u in media_urls if t.endswith(u)), None)
+        trailing = text.rstrip()
+        hit = next((u for u in media_urls if trailing.endswith(u)), None)
         if not hit:
             break
-        text = t[: -len(hit)].rstrip()
+        text = trailing[: -len(hit)].rstrip()
     return text
 
 

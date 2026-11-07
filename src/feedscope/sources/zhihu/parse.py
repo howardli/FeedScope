@@ -10,7 +10,8 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 from feedscope.core.media import h2t as _h2t
-from feedscope.core.display import fmt_count, votes_text
+from feedscope.core.display import fmt_count, view_count_text, votes_text
+from feedscope.core.i18n import t
 from feedscope.core.media import VIDEO_RE, Tokens, attrs, mark, pick_url, video_url
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.text import strip_zwsp
@@ -51,10 +52,10 @@ def _video_box_md(block: str) -> str:
     m = re.match(r"<a\b[^>]*>", block)
     a = attrs(m.group(0)) if m else {}
     if lens := a.get("data-lens-id", ""):
-        return mark("[视频]", f"https://www.zhihu.com/video/{lens}")
+        return mark(t("media.video"), f"https://www.zhihu.com/video/{lens}")
     href = a.get("href", "")
     target = parse_qs(urlparse(href).query).get("target")
-    return mark("[视频]", target[0] if target else href)
+    return mark(t("media.video"), target[0] if target else href)
 
 
 def _md(html: str) -> str:
@@ -74,16 +75,19 @@ def _md(html: str) -> str:
         lambda m: tok.stash(_video_box_md(m.group(0))), html
     )
     html = _IMG_RE.sub(
-        lambda m: tok.stash(mark("[图片]", _upgrade_img_url(pick_url(m.group(0), _IMG_URL_ATTRS)))),
+        lambda m: tok.stash(
+            mark(t("media.image"), _upgrade_img_url(pick_url(m.group(0), _IMG_URL_ATTRS)))
+        ),
         html,
     )
-    html = VIDEO_RE.sub(lambda m: tok.stash(mark("[视频]", video_url(m.group(0)))), html)
+    html = VIDEO_RE.sub(lambda m: tok.stash(mark(t("media.video"), video_url(m.group(0)))), html)
     text = strip_zwsp(tok.expand(_h2t().handle(html)))
     # 相邻同图合并（懒加载双标记会把同一张图渲染两次）；不同图各自保留。
     # 链接形式 [图片](url) 整体比对；纯记号合并的 (?!\() 断言防止把带地址的
     # [图片](…) 误吞成纯 [图片] 丢掉链接
-    text = re.sub(r"(\[图片\]\([^)]*\))(?:[ \t]*\1)+", r"\1", text)
-    return re.sub(r"(\[图片\](?!\())(?:[ \t]*\[图片\](?!\())+", r"\1", text)
+    img = re.escape(t("media.image"))  # 记号随语言：正则由当前文案生成，回读永远对得上
+    text = re.sub(rf"({img}\([^)]*\))(?:[ \t]*\1)+", r"\1", text)
+    return re.sub(rf"({img}(?!\())(?:[ \t]*{img}(?!\())+", r"\1", text)
 
 
 def _hot_api_items(data: dict) -> list[FeedItem]:
@@ -98,11 +102,11 @@ def _hot_api_items(data: dict) -> list[FeedItem]:
     """
     out: list[FeedItem] = []
     for r in data.get("data") or []:
-        t = r.get("target") or {}
-        m = re.search(r"/questions?/(\d+)", t.get("url") or "")
-        qid = m.group(1) if m else str(t.get("id") or "")
-        title = strip_zwsp(t.get("title") or "")
-        if t.get("type") != "question" or not qid or not title:
+        tgt = r.get("target") or {}
+        m = re.search(r"/questions?/(\d+)", tgt.get("url") or "")
+        qid = m.group(1) if m else str(tgt.get("id") or "")
+        title = strip_zwsp(tgt.get("title") or "")
+        if tgt.get("type") != "question" or not qid or not title:
             continue
         out.append(
             FeedItem(
@@ -155,13 +159,12 @@ def _api_question_doc(q: dict, answers: list[Answer]) -> DetailDoc:
     展示文本（与 X 详情同形，不带「提问于」前缀——各源元信息行/楼层头的
     时间统一裸时间，词汇归 core/timefmt 一处）；描述 detail 是 HTML，走 _md。
     """
-    asker = strip_zwsp((q.get("author") or {}).get("name") or "匿名用户")
-    meta = f"{asker} 提问"
+    asker = strip_zwsp((q.get("author") or {}).get("name") or t("words.anonymous"))
+    meta = t("words.zhihu_asked", asker=asker)
     if n := q.get("answer_count"):
-        meta += f" · {n} 个回答"
+        meta += t("words.zhihu_n_answers", n=n)
     if visit := q.get("visit_count"):
-        # 「万浏览」是复合词（fmt_count 出「1234 万」会多个空格），分支拼写与站方同形
-        meta += f" · {visit // 10000} 万浏览" if visit >= 10000 else f" · {visit} 浏览"
+        meta += view_count_text(visit)  # 万浏览/浏览的分支拼写收在 core.display
     created = q.get("created") or 0
     return DetailDoc(
         title=strip_zwsp(q.get("title") or ""),
@@ -182,7 +185,7 @@ def _api_comment(c: dict) -> Comment:
     text = c.get("content") or ""
     content_md = _md(text) if re.search(r"<[a-zA-Z]", text) else strip_zwsp(text)
     return Comment(
-        author=strip_zwsp((c.get("author") or {}).get("name") or "匿名用户"),
+        author=strip_zwsp((c.get("author") or {}).get("name") or t("words.anonymous")),
         votes=votes_text(likes),
         content_md=content_md,
         time=fmt_unix(created) if created else "",
@@ -210,21 +213,21 @@ def _feeds_answers(data: dict, qid: str) -> list[Answer]:
     """
     out: list[Answer] = []
     for a in data.get("data") or []:
-        t = a.get("target") or {}
-        aid = str(t.get("id") or "")
-        if t.get("type") != "answer" or not aid:
+        tgt = a.get("target") or {}
+        aid = str(tgt.get("id") or "")
+        if tgt.get("type") != "answer" or not aid:
             continue
-        votes = t.get("voteup_count") or 0
-        cc = t.get("comment_count") or 0
-        created = t.get("created_time") or 0
+        votes = tgt.get("voteup_count") or 0
+        cc = tgt.get("comment_count") or 0
+        created = tgt.get("created_time") or 0
         out.append(
             Answer(
-                author=strip_zwsp((t.get("author") or {}).get("name") or "匿名用户"),
+                author=strip_zwsp((tgt.get("author") or {}).get("name") or t("words.anonymous")),
                 votes=votes_text(votes),
-                content_md=_md(t.get("content") or ""),
+                content_md=_md(tgt.get("content") or ""),
                 time=fmt_unix(created),
                 url=f"https://www.zhihu.com/question/{qid}/answer/{aid}",
-                comment_count=f"{fmt_count(cc)} 条评论" if cc else "",
+                comment_count=t("display.comments_n", n=fmt_count(cc)) if cc else "",
             )
         )
     return out

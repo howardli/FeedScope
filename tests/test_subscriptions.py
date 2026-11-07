@@ -203,7 +203,7 @@ def test_export_import_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path) -> N
 
 
 def test_cli_rss_list_add_remove_export(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, 'language = "zh-CN"\n')  # cli.main 按配置设语言：断言中文
     _mock_title_fetch(monkeypatch)
 
     assert main(["rss", "list"]) == 0
@@ -235,7 +235,7 @@ def test_cli_rss_export_stdout(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
 
 
 def test_cli_rss_import_file(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    use_config(monkeypatch, tmp_path, "")
+    use_config(monkeypatch, tmp_path, 'language = "zh-CN"\n')
     opml_file = tmp_path / "subs.opml"
     opml_file.write_text(_OPML, encoding="utf-8")
 

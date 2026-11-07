@@ -278,12 +278,14 @@ def test_feeds_composition_builtins_plus_subs(monkeypatch: pytest.MonkeyPatch, t
     use_config(monkeypatch, tmp_path, _CFG)
     src = get_source("reddit")
     assert src.feeds == ["home", "popular", "rust", "python"]  # 内置在前，订阅按书写序
+    # 内置流值是词汇键（展示走 feed_label()），订阅行是用户标签原样
     assert src.feed_labels == {
-        "home": "首页",
-        "popular": "热门",
+        "home": "sources.reddit.feeds.home",
+        "popular": "sources.reddit.feeds.popular",
         "rust": "Rust",
         "python": "python",
     }
+    assert src.feed_label("home") == "首页" and src.feed_label("rust") == "Rust"
     assert src.subscribable
 
 
@@ -296,7 +298,8 @@ def test_feeds_composition_hide_and_collision(monkeypatch: pytest.MonkeyPatch, t
     )
     src = get_source("reddit")
     assert src.feeds == ["home", "rust"]
-    assert src.feed_labels == {"home": "首页", "rust": "rust"}
+    assert src.feed_labels == {"home": "sources.reddit.feeds.home", "rust": "rust"}
+    assert src.feed_label("home") == "首页"
 
 
 def test_open_feed_subscription_pages(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

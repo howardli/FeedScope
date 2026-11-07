@@ -25,6 +25,7 @@ from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, LoginRequired, Source, SourceError
 from feedscope.report import line as _line
+from feedscope.core.i18n import t
 
 
 def _classify(exc: BaseException) -> tuple[Literal["SKIP", "FAIL"], str]:
@@ -35,14 +36,14 @@ def _classify(exc: BaseException) -> tuple[Literal["SKIP", "FAIL"], str]:
         return "SKIP", str(exc)
     if isinstance(exc, SourceError):
         return "FAIL", str(exc)
-    return "FAIL", f"未预期异常：{exc!r}"
+    return "FAIL", t("probe.unexpected", exc=repr(exc))
 
 
 async def _try_open_feed(
     source: Source, name: str
 ) -> tuple[Literal["OK", "SKIP", "FAIL"], FeedLoader | None, str]:
     """打开一个流，返回 (状态, loader, 消息)；异常一律兜住转成状态行。"""
-    label = f"{source.label} {name}"
+    label = f"{source.label_text} {name}"
     try:
         return "OK", await source.open_feed(name), label
     except Exception as exc:
@@ -60,7 +61,7 @@ async def _probe_source(source: Source, stats: dict[str, int]) -> None:
             stats[state.lower()] += 1
             continue
         try:
-            _line("OK", line, f"{len(loader.items)} 条")
+            _line("OK", line, t("probe.n_items", n=len(loader.items)))
             stats["ok"] += 1
             if detail_item is None:  # 挑一条可进详情屏的条目测 open_detail
                 detail_item = next(
@@ -74,7 +75,7 @@ async def _probe_source(source: Source, stats: dict[str, int]) -> None:
 
 
 async def _probe_detail(source: Source, item: FeedItem, stats: dict[str, int]) -> None:
-    label = f"{source.label} 详情"
+    label = t("probe.detail_label", label=source.label_text)
     try:
         loader = await source.open_detail(item)
     except Exception as exc:
@@ -85,11 +86,14 @@ async def _probe_detail(source: Source, item: FeedItem, stats: dict[str, int]) -
     try:
         doc = loader.doc
         if not (doc.title or doc.description_md or doc.answers):
-            _line("FAIL", label, "标题/正文/楼层全空：详情页可能已改版")
+            _line("FAIL", label, t("probe.detail_empty"))
             stats["fail"] += 1
         else:
             title = doc.title[:24] + ("…" if len(doc.title) > 24 else "")
-            _line("OK", label, f"「{title}」{len(doc.answers)} {source.detail_unit_label}")
+            _line(
+                "OK", label,
+                t("probe.detail_ok", title=title, n=len(doc.answers), unit=source.detail_unit),
+            )
             stats["ok"] += 1
     finally:
         await loader.close()
@@ -98,12 +102,15 @@ async def _probe_detail(source: Source, item: FeedItem, stats: dict[str, int]) -
 async def _run(only: Sequence[str]) -> int:
     known = {s.source_id for s in all_sources()}
     if unknown := [i for i in only if i not in known]:
-        print(f"未知源 id：{'、'.join(unknown)}（可选：{'、'.join(sorted(known))}）")
+        joiner = t("common.enum_comma")
+        print(
+            t("probe.unknown_ids", unknown=joiner.join(unknown), known=joiner.join(sorted(known)))
+        )
         return 2
     sample_dir = os.environ.setdefault(
         "FEEDSCOPE_SAMPLE_DIR", str(user_cache_path("feedscope") / "samples")
     )
-    print(f"FeedScope（观流）源巡检（原始样本存 {sample_dir}）")
+    print(t("probe.title", dir=sample_dir))
     print()
     stats = {"ok": 0, "fail": 0, "skip": 0}
     try:
@@ -113,9 +120,9 @@ async def _run(only: Sequence[str]) -> int:
         await http.close()
         await close_session()
     print()
-    print(f"{stats['ok']} 通过 / {stats['fail']} 失败 / {stats['skip']} 跳过")
+    print(t("probe.summary", ok=stats['ok'], fail=stats['fail'], skip=stats['skip']))
     if stats["fail"]:
-        print(f"失败源的原始样本在 {sample_dir}，可对着样本修 parse.py 并补 fixture")
+        print(t("probe.fail_hint", dir=sample_dir))
     return 1 if stats["fail"] else 0
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 
 from feedscope.core.media import html_to_md, mark
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.text import truncate_display
 from feedscope.core.timefmt import fmt_iso
@@ -78,9 +79,9 @@ def _media_marks(chunk: str, post_url: str) -> list[str]:
     """消息块里的媒体 -> 记号列表：图片取原图直链，视频没有直链指向帖子页。"""
     marks: list[str] = []
     if (m := _PHOTO_RE.search(chunk)) and (u := _BG_URL_RE.search(m.group(0))):
-        marks.append(mark("[图片]", u.group(1)))
+        marks.append(mark(t("media.image"), u.group(1)))
     if _VIDEO_RE.search(chunk):
-        marks.append(mark("[视频]", post_url))
+        marks.append(mark(t("media.video"), post_url))
     return marks
 
 
@@ -138,7 +139,7 @@ def parse_channel_html(
             continue  # 既无正文也无媒体：不可展示，跳条不跳流
         views = (m.group(1) if (m := _VIEWS_RE.search(chunk)) else "").strip()
         author = (m.group(1) if (m := _AUTHOR_RE.search(chunk)) else "").strip()
-        parts = ([label] if all_view else []) + ([f"{views} 观看"] if views else [])
+        parts = ([label] if all_view else []) + ([t("words.views", n=views)] if views else [])
         # 聚合视图频道名已前缀：署名与频道同名时不再重复占位
         if author and author != (label if all_view else ""):
             parts.append(author)

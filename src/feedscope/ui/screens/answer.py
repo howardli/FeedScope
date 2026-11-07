@@ -21,6 +21,7 @@ from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Comment, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
+from feedscope.core.i18n import t
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.reading import (
     PagedReadingScreen,
@@ -41,13 +42,13 @@ class AnswerScreen(PagedReadingScreen):
 
     BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
-        # 原生键，无需声明。标签是占位：__init__ 按源词汇表换成
+        # 原生键，无需声明。标签是占位（空串）：__init__ 按源词汇表换成
         # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）；
         # Esc 返回继承自 ReadingScreen
-        Binding("ctrl+n", "more", "更多评论"),
-        Binding("ctrl+o", "open_browser", "浏览器"),
-        Binding("right", "next_answer", "下一回答"),
-        Binding("left", "prev_answer", "上一回答"),
+        Binding("ctrl+n", "more", ""),
+        Binding("ctrl+o", "open_browser", "bindings.browser"),
+        Binding("right", "next_answer", ""),
+        Binding("left", "prev_answer", ""),
     ]
 
     # Markdown 标题规则必须 CSS 级（见 reading.READING_CSS 的说明），其余
@@ -71,12 +72,12 @@ class AnswerScreen(PagedReadingScreen):
         # 词汇表归源：本屏两层各有单位词——楼层（←/→ 切换的对象，知乎「回答」、
         # HN「评论」）与评论（Ctrl+N 翻的对象，知乎「评论」、HN「回复」）；键位
         # 文案随词换（类级 BINDINGS 是占位，知乎渲染与内置文案逐字相同）
-        self._floor_unit = source.detail_unit_label
+        self._floor_unit = source.detail_unit
         self._relabel_bindings(
             {
-                "ctrl+n": f"更多{self._unit}",
-                "right": f"下一{self._floor_unit}",
-                "left": f"上一{self._floor_unit}",
+                "ctrl+n": t("read.binding_more_unit", unit=self._unit),
+                "right": t("read.binding_next_unit", unit=self._floor_unit),
+                "left": t("read.binding_prev_unit", unit=self._floor_unit),
             }
         )
         self._floor_count = 0          # 评论楼层序号，跨 load_more 递增
@@ -89,7 +90,7 @@ class AnswerScreen(PagedReadingScreen):
     @property
     def _unit(self) -> str:
         """Ctrl+N 翻页对象的单位词（评论词，源词汇表直读，与问题屏对称）。"""
-        return self.source.comment_unit_label
+        return self.source.comment_unit
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -114,7 +115,7 @@ class AnswerScreen(PagedReadingScreen):
         # class 不用 id：hint 会随楼层增删反复挂载，id 会在摘除延迟时撞重。
         # 只留 Footer 没有的语义增量（加载什么）；换楼层/返回是 Footer 的键位职责
         return Static(
-            f"[dim]── Ctrl+N 加载更多{self._unit} ──[/dim]",
+            f"[dim]── {t('read.hint_more', unit=self._unit)} ──[/dim]",
             classes="tail-line tail-hint",
         )
 
@@ -125,7 +126,9 @@ class AnswerScreen(PagedReadingScreen):
         ans = self._answer
         body = self._body_scroll()
         title = Static(
-            escape(f"{ans.author} 的{self._floor_unit}"), id="answer-title", classes="read-title"
+            escape(t("read.answer_title", author=ans.author, unit=self._floor_unit)),
+            id="answer-title",
+            classes="read-title",
         )
         widgets: list[Widget] = [title]
         meta = " · ".join(x for x in (ans.votes, ans.comment_count, ans.time) if x)
@@ -145,10 +148,14 @@ class AnswerScreen(PagedReadingScreen):
             else:
                 # 首批已回来但为空：到没到头都显示空态，别退回「加载中」（resize 重排
                 # 走的是同一渲染路径，状态必须与首次上屏一致）
-                widgets.append(dim_line(f"（没有{self._unit}）", classes="tail-line tail-empty"))
+                widgets.append(
+                    dim_line(t("read.none", unit=self._unit), classes="tail-line tail-empty")
+                )
             if self._exhausted:
                 widgets.append(
-                    dim_line(f"（没有更多{self._unit}了）", classes="tail-line tail-eof")
+                    dim_line(
+                        t("read.no_more", unit=self._unit), classes="tail-line tail-eof"
+                    )
                 )
             else:
                 self._hint = self._hint_widget()
@@ -157,12 +164,12 @@ class AnswerScreen(PagedReadingScreen):
             # 首载失败：保留失败态与 Ctrl+N 重试入口（错误行本身已说明动线）
             widgets.append(
                 Static(
-                    f"[red]评论加载失败：{escape(self._comments_error)} · Ctrl+N 重试[/red]",
+                    f"[red]{t('read.comments_failed_retry', text=escape(self._comments_error))}[/red]",  # noqa: E501
                     id="cm-loading",
                 )
             )
         else:
-            widgets.append(Label(f"{self._unit}加载中…", id="cm-loading"))
+            widgets.append(Label(t("read.unit_loading", unit=self._unit), id="cm-loading"))
             self._hint = self._hint_widget()
             widgets.append(self._hint)
         await body.mount(*widgets)
@@ -173,7 +180,9 @@ class AnswerScreen(PagedReadingScreen):
         widgets = [
             divider(),
             floor_head(
-                f"{self._unit} {self._floor_count}", c.author, (c.votes, c.time),
+                t("read.floor_head", unit=self._unit, n=self._floor_count),
+                c.author,
+                (c.votes, c.time),
                 classes="floor-head",
             ),
             Markdown(wrap_markdown(c.content_md, self._md_width()), classes="floor-body"),
@@ -198,17 +207,19 @@ class AnswerScreen(PagedReadingScreen):
         sub_title 在这设而非 on_mount：worker 晚于 Header 挂载，同步设
         不会踩 HeaderTitle 未挂的时序坑。
         """
-        self.app.sub_title = f"{self._answer.author} 的{self._floor_unit}"[:50]
+        self.app.sub_title = t(
+            "read.answer_title", author=self._answer.author, unit=self._floor_unit
+        )[:50]
         self._comments_error = None
         try:
             self.loader = await self.qloader.open_comments(self.index)
         except Exception as exc:
             # 失败文案存下来：resize 重排也要还原成失败态，不能变回「加载中」
             self._comments_error = feedback.failure_text(self.source, exc)
-            feedback.fail(self.app, self.source, exc, action="评论加载失败")
+            feedback.fail(self.app, self.source, exc, action="feedback.action_comments_failed")
             self._swap_status(
                 "cm-loading",
-                f"[red]评论加载失败：{escape(self._comments_error)} · Ctrl+N 重试[/red]",
+                f"[red]{t('read.comments_failed_retry', text=escape(self._comments_error))}[/red]",
             )
             return
         # done 与有没有评论无关：最后一页即使非空也已到头，尾行该换 EOF 标记
@@ -224,9 +235,11 @@ class AnswerScreen(PagedReadingScreen):
     async def _mount_empty_tail(self) -> None:
         """首批为空的空态尾行：「（没有X）」+ EOF 标记或重试预告。"""
         self._remove_hint()
-        tail: list[Widget] = [dim_line(f"（没有{self._unit}）", classes="tail-line tail-empty")]
+        tail: list[Widget] = [
+            dim_line(t("read.none", unit=self._unit), classes="tail-line tail-empty")
+        ]
         if self._exhausted:
-            tail.append(dim_line(f"（没有更多{self._unit}了）", classes="tail-line tail-eof"))
+            tail.append(dim_line(t("read.no_more", unit=self._unit), classes="tail-line tail-eof"))
         else:
             # 首批拉空但没到头（网慢）：不判死，尾行保留 Ctrl+N 重试预告
             self._hint = self._hint_widget()
@@ -249,7 +262,7 @@ class AnswerScreen(PagedReadingScreen):
         """评论首载失败后的原地重试（与问题屏首载重试同动线）。"""
         for w in self.query("#cm-loading"):
             if isinstance(w, Static):
-                w.update(f"{self._unit}加载中…")
+                w.update(t("read.unit_loading", unit=self._unit))
         await self._load_comments()
 
     # ---- ←/→ 换楼层（机械件在 PagedReadingScreen._retarget）----
@@ -267,9 +280,9 @@ class AnswerScreen(PagedReadingScreen):
 
     def _no_target_text(self, delta: int) -> str:
         return (
-            f"后面没有已加载的{self._floor_unit}了"
+            t("read.no_next_loaded", unit=self._floor_unit)
             if delta > 0
-            else f"前面没有{self._floor_unit}了"
+            else t("read.no_prev_unit", unit=self._floor_unit)
         )
 
     async def _adopt_target(self, index: int) -> None:

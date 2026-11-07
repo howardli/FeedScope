@@ -34,9 +34,11 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Label, Static
 
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
 
 
@@ -97,7 +99,7 @@ class ReadingScreen(Screen[None]):
     子类自管 _rendered 的置位时机（首批渲染完成才吃 resize 重排）。
     """
 
-    BINDINGS: ClassVar[Bindings] = [Binding("escape", "back", "返回")]
+    BINDINGS: ClassVar[Bindings] = [Binding("escape", "back", "bindings.back")]
 
     # 家族共享样式挂 DEFAULT_CSS（沿 MRO 与子类 CSS 合并）：子类 CSS 只写
     # 增量，原先五对逐字相同的规则（#detail-title ↔ #answer-title 等）归位
@@ -154,6 +156,7 @@ class ReadingScreen(Screen[None]):
         self._body_scroll().focus()
 
     async def on_mount(self) -> None:
+        retranslate_bindings(self)  # 键式键位文案解析（bindings.*），见 ui/labels.py
         self._prev_sub_title = self.app.sub_title
         await self._mount_body()
 
@@ -263,7 +266,7 @@ class PagedReadingScreen(ReadingScreen):
             return
         if self._exhausted:
             # 常驻尾行之外再给瞬时反馈：按键不无声
-            feedback.info(self.app, f"没有更多{self._unit}了")
+            feedback.info(self.app, t("read.no_more_plain", unit=self._unit))
             return
         self.run_worker(self._load_more(), group=self._worker_group, exclusive=True)
 
@@ -273,13 +276,13 @@ class PagedReadingScreen(ReadingScreen):
         if loader is None:
             return
         self._remove_hint()
-        loading = Label("[dim]加载更多…[/dim]", classes="tail-line more-loading")
+        loading = Label(f"[dim]{t('read.loading_more')}[/dim]", classes="tail-line more-loading")
         await body.mount(loading)
         try:
             new = await loader.load_more()
         except Exception as exc:
             # 不再静默：失败要告诉用户（否则按 Ctrl+N 无反馈，误以为按键失灵）
-            feedback.fail(self.app, self.source, exc, action="加载更多失败")
+            feedback.fail(self.app, self.source, exc, action="feedback.action_more_failed")
             new = []
         if loader is not self.loader:
             return  # 期间换目标/关闭：旧 loader 的迟到结果直接丢弃
@@ -301,7 +304,7 @@ class PagedReadingScreen(ReadingScreen):
         if self._exhausted:
             self._remove_hint()
             await self._body_scroll().mount(
-                dim_line(f"（没有更多{self._unit}了）", classes="tail-line tail-eof")
+                dim_line(t("read.no_more", unit=self._unit), classes="tail-line tail-eof")
             )
         else:
             await self._mount_hint()

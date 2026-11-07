@@ -13,6 +13,7 @@ Access Token）与 v1 的 node_name 查询，本层不做。
 from __future__ import annotations
 
 from feedscope.core import http
+from feedscope.core.i18n import t
 
 _API = "https://www.v2ex.com/api"
 
@@ -34,10 +35,12 @@ async def fetch_topics(name: str, label: str) -> list[dict]:
     try:
         url = FEEDS[name]
     except KeyError:
-        raise ValueError(f"未知信息流：{name}") from None
-    return await _get_list(url, f"V2EX「{label}」")
+        raise ValueError(t("errors.unknown_feed", name=name)) from None
+    return await _get_list(url, t("sources.v2ex.with_label", label=label))
 
 
 async def fetch_replies(topic_id: str) -> list[dict]:
     """一条主题的全部回复（v1 端点一次给全量，page 参数形同虚设）。"""
-    return await _get_list(f"{_API}/replies/show.json", "V2EX 回复", params={"topic_id": topic_id})
+    return await _get_list(
+        f"{_API}/replies/show.json", t("sources.v2ex.replies"), params={"topic_id": topic_id}
+    )

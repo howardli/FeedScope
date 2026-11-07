@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Label
 
 from feedscope.ui.focus_nav import ArrowModalScreen
+from feedscope.core.i18n import t
 
 _DialogT = TypeVar("_DialogT")
 
@@ -42,7 +43,9 @@ class ConfirmScreen(DialogScreen[bool]):
     PROMPT_ID = "confirm-prompt"
     OK_ID = "confirm-ok"
 
-    def __init__(self, prompt: str, confirm_label: str = "确认") -> None:
+    def __init__(self, prompt: str, confirm_label: str = "") -> None:
+        # confirm_label 空串 = 默认键（构造时解析：类体默认值在 import 期，语言未定）
+        confirm_label = confirm_label or t("dialogs.confirm")
         super().__init__()
         self._prompt = prompt
         self._confirm_label = confirm_label
@@ -52,7 +55,7 @@ class ConfirmScreen(DialogScreen[bool]):
             yield Label(self._prompt, id=self.PROMPT_ID, classes="dialog-prompt")
             with Horizontal(classes="modal-actions"):
                 yield Button(self._confirm_label, id=self.OK_ID, variant="primary")
-                yield Button("取消", id="confirm-cancel")
+                yield Button(t("dialogs.cancel"), id="confirm-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == self.OK_ID)
@@ -71,8 +74,14 @@ class AccountScreen(ConfirmScreen):
     PROMPT_ID = "account-prompt"
     OK_ID = "account-go"
 
-    def __init__(self, label: str, action: str) -> None:
-        prompt = f"{label}需要登录" if action == "登录" else f"登出 {label}？"
+    def __init__(self, label: str, action_key: str) -> None:
+        # action_key 是文案键（dialogs.login / dialogs.logout）：动作词与提示语一次解析
+        action = t(action_key)
+        prompt = (
+            t("dialogs.login_prompt", label=label)
+            if action_key == "dialogs.login"
+            else t("dialogs.logout_prompt", label=label)
+        )
         super().__init__(prompt, confirm_label=action)
 
 
@@ -99,8 +108,8 @@ class InputScreen(DialogScreen[str | None]):
             yield Label(self._title, id="input-title", classes="dialog-prompt")
             yield Input(value=self._initial, placeholder=self._placeholder, id="input-line")
             with Horizontal(classes="modal-actions"):
-                yield Button("确定", id="input-ok", variant="primary")
-                yield Button("取消", id="input-cancel")
+                yield Button(t("dialogs.ok"), id="input-ok", variant="primary")
+                yield Button(t("dialogs.cancel"), id="input-cancel")
 
     def on_mount(self) -> None:
         self.query_one("#input-line", Input).focus()

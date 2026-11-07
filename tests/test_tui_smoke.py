@@ -31,6 +31,7 @@ from feedscope.ui.screens.main import MainScreen
 from feedscope.ui.layout import META_COL_MAX
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.language import LanguageScreen
 from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
 
 
@@ -562,8 +563,13 @@ async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen)), (
+            "配置缺失时先弹语言选择（首启第一步）"
+        )
+        await pilot.press("up")  # 恒选 zh-CN（预选随系统 locale，up 在首位被钳制）
+        await pilot.press("enter")
         assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen)), (
-            "配置缺失时先弹首启引导"
+            "语言选完弹首启引导"
         )
         sl = app.screen.query_one(SelectionList)
         assert set(sl.selected) == {"stub", "stub2"}, "引导默认全勾"
@@ -594,11 +600,13 @@ async def _run_onboarding_cancel_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen))
+        await pilot.press("escape")  # 跳过语言（沿用缺省英文）
         assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
         await pilot.press("escape")  # 引导取消 = 放弃使用，不默认全开
         assert await settle(pilot, lambda: not app.is_running), "App 退出"
         assert app.return_code == 0
-        assert not cfg.exists(), "取消不落盘（下次启动再次引导）"
+        assert not cfg.exists(), "取消不落盘（语言与源选择都不落）"
 
 
 def test_onboarding_cancel_exits(two_source_registry, monkeypatch, tmp_path) -> None:
@@ -659,7 +667,7 @@ def test_manage_sources_toggle(two_source_registry, monkeypatch, tmp_path) -> No
 async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
     cfg = tmp_path / "z0" / "sources.toml"
     cfg.parent.mkdir()
-    cfg.write_text("", encoding="utf-8")
+    cfg.write_text('language = "zh-CN"\n', encoding="utf-8")  # 钉 zh：断言中文空态文案
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
@@ -701,6 +709,9 @@ async def _run_check_order_flow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))  # 不存在 → 首启
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen))
+        await pilot.press("up")  # 恒选 zh-CN（同 onboarding 流的确定性选法）
+        await pilot.press("enter")
         assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
         # 取消再勾回第一项（stub）：勾上的排末尾 → 顺序 [stub2, stub]
         await pilot.press("space")
@@ -1144,7 +1155,7 @@ async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
     ↑ 回列表、←/→ 在按钮间平移、Enter 按下聚焦的按钮（等价点击）。"""
     cfg = tmp_path / "d1" / "sources.toml"
     cfg.parent.mkdir()
-    cfg.write_text("", encoding="utf-8")
+    cfg.write_text('language = "zh-CN"\n', encoding="utf-8")  # 钉 zh：断言中文键位提示
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     app = FeedScopeApp()
     async with app.run_test(size=(90, 36)) as pilot:

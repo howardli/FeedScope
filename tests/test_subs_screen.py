@@ -36,7 +36,7 @@ def rss_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
     monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     cfg = tmp_path / "sources.toml"
-    cfg.write_text("enabled = []\n", encoding="utf-8")
+    cfg.write_text('language = "zh-CN"\nenabled = []\n', encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
     return cfg
 
@@ -135,7 +135,7 @@ def test_input_dialog_keeps_card_style(rss_env) -> None:
 def reddit_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     """零订阅起步 + 版块页走假通道页签 + 假判登 cookie（不弹真 Chrome）。"""
     cfg = tmp_path / "sources.toml"
-    cfg.write_text("enabled = []\n", encoding="utf-8")
+    cfg.write_text('language = "zh-CN"\nenabled = []\n', encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
 
     from test_reddit_source import _mock
@@ -234,7 +234,8 @@ async def _run_delete_all_flow(monkeypatch, tmp_path) -> None:
     「停在原源」按过滤后名单找，不能 StopIteration 崩掉保存链路。"""
     cfg = tmp_path / "sources.toml"
     cfg.write_text(
-        'enabled = ["v2ex", "telegram"]\n[telegram.feeds]\ndurov = { url = "https://t.me/durov/" }\n',
+        'language = "zh-CN"\nenabled = ["v2ex", "telegram"]\n'
+        '[telegram.feeds]\ndurov = { url = "https://t.me/durov/" }\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))

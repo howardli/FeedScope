@@ -1,0 +1,444 @@
+# FeedScope message catalog · English
+#
+# - Dotted nested keys, looked up via core.i18n.t("domain.key", name=value)
+# - Placeholders {name} use str.format; literal braces are doubled {{ }}
+# - Every language file must keep an identical key tree (parity test in
+#   tests/test_i18n.py) — a missing translation turns the CI red
+# - New language: copy this file to <code>.toml, set [meta] name, translate
+
+[meta]
+name = "English"
+
+[common]
+enum_comma = ", "
+
+[app]
+exit_onboarding_cancel = "Setup not completed — run feedscope again to pick sources"
+exit_no_sources = "no sources registered"
+
+title = "FeedScope"
+
+[bindings]
+language = "Language"
+
+# The language picker is the meta-control ("choose a language" can't be said in a
+# language yet): title/hint are bilingual and identical in every catalog
+quit = "Quit"
+cancel = "Cancel"
+back = "Back"
+add = "Add"
+remove = "Remove"
+refresh = "Refresh"
+browser = "Browser"
+manage_sources = "Sources"
+account = "Account"
+more = "More"
+sidebar = "Sidebar"
+switch_source = "Switch"
+
+[language]
+title = "选择语言 / Choose Language"
+hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
+
+[main]
+language_saved_restart = "Saved — restart feedscope to apply"
+hint_no_subscriptions = "{label} is enabled but has no subscriptions yet — pick it under F2 and press → to add one"
+
+# Error exits of the source & request layers (SourceError messages, shown as-is)
+sidebar_no_sources = "(no sources enabled — F2 to manage)"
+sidebar_no_feeds = "(no feeds)"
+empty_no_sources = "no sources enabled · press F2 to manage"
+toast_no_sources = "no sources enabled · F2 to manage"
+empty_no_content = "nothing here · F5 to refresh · Tab or click a top tab to switch sites"
+empty_load_failed = "load failed: {text}"
+status_signed_out = "signed out"
+hint_login = "{error} · Ctrl+U to sign in"
+status_count = "{n} items"
+status_more_loading = "{n} items · loading more…"
+status_more_failed = "{n} items · load more failed"
+status_no_more = "{n} items · no more"
+status_no_new = "{n} items · nothing new this round"
+toast_no_more = "no more"
+toast_no_new_retry = "nothing new this round — press Ctrl+N again later to retry"
+toast_last_feed = "already on the last feed"
+toast_no_selection = "no item selected"
+toast_nothing_to_load = "nothing more to load in this list"
+toast_cjk_input = "CJK input detected: all shortcuts are non-printing keys and unaffected by the IME"
+hint_top_bar = "top bar: ←→ switch sites, ↓ into the sidebar"
+hint_sidebar = "left sidebar: ↑↓ switch feeds, → back to the list"
+saved_n_sources = "saved: {n} sources enabled"
+saved_zero_sources = "saved: no sources enabled right now (F2 to re-enable)"
+[errors]
+zero_items = "{label} parsed 0 items — the site may have changed (feedscope probe can re-check)"
+zero_items_with_feed = "{label} \"{feed}\": parsed 0 items — the site may have changed (feedscope probe can re-check)"
+merge_one_failed = "{label}: {error}"
+comments_unsupported = "{name} does not support the comment layer"
+comment_out_of_range = "{label}: that comment is not loaded yet — press Ctrl+N to load more floors first"
+login_required = "{label} requires login to view {what}"
+unknown_feed = "unknown feed: {name}"
+detail_unsupported = "{label} does not support in-terminal detail yet"
+no_subscriptions_hint = "{label} has no {sub}s yet — select {label} under F2 and press → to add one"
+all_feeds_failed = "{label} \"{feed}\": every subscription failed ({n} total): {errors}"
+http_timeout = "{source} request timed out ({seconds}s): {url}"
+http_status = "{source} request failed (HTTP {code}): {url}"
+http_failed = "{source} request failed: {error}"
+not_json = "{source} did not return JSON"
+bad_structure = "{source} returned an unexpected structure — the API may have changed"
+bad_structure_short = "{source} returned an unexpected structure"
+bad_structure_not_object = "{source} returned an unexpected structure (not a JSON object)"
+what_feed = "the \"{label}\" feed"
+what_post_detail = "post details"
+what_timeline = "the \"{label}\" timeline"
+what_tweet_detail = "tweet details"
+hn_no_hits = "HN \"{label}\": response has no hits — the API may have changed"
+hn_no_id = "HN detail response has no id — the API may have changed"
+reddit_status_login = "{source} request failed (HTTP {status}) — your login may have expired or hit risk control; Ctrl+U to sign in again"
+reddit_subreddit_gone = "r/{name} does not exist or is not accessible"
+reddit_home_empty = "Reddit \"Home\" aggregates the subreddits your account follows on reddit.com and it is currently empty — follow some subreddits on reddit.com, or add subreddit subscriptions via F2 → Reddit (each becomes its own feed)"
+rss_304_no_cache = "RSS \"{label}\" returned 304 but there is no cached copy to use"
+telegram_no_items = "Telegram @{key}: fetched nothing — the channel may not exist, be empty, or have its web preview disabled by the owner (the t.me/s/ page requires the owner to enable it)"
+v2ex_no_context = "V2EX detail is missing its list context — go back to the list and reopen the topic"
+x_no_shape = "{source}: no API request shape available (both harvest and seeds are missing) — please report this"
+x_login_expired = "X login is no longer valid (the server rejected the local session) — Ctrl+U to sign in again"
+x_403 = "{source} request failed (HTTP 403) — possibly risk control or an account restriction; signing in again won't help, retry later or switch networks"
+x_status_retry = "{source} request failed (HTTP {status}): API throttling or a hiccup — retry later"
+x_shape_stale = "{source} API error (the request shape may be stale and auto-harvest did not fix it — run scripts/x_probe.py to diagnose, or report this)"
+x_detail_empty = "X detail came back empty (the tweet may have been deleted or hidden)"
+zhihu_api_bad_data = "unexpected API payload: {kind}"
+zhihu_api_status = "API request failed (HTTP {status})"
+zhihu_api_failed = "API request failed: {error}"
+zhihu_login_wall = "{label} requires login to view this content"
+zhihu_session_expired = "{label} login has expired — sign in again"
+zhihu_api_structure = "{label} question API returned an unexpected structure"
+zhihu_question_gone = "{label}: the question may have been deleted or does not exist"
+zhihu_answer_out_of_range = "{label}: that answer is not loaded yet — press Ctrl+N in the question to load more first"
+zhihu_answer_no_id = "{label}: cannot get that answer's id, the comment layer is unavailable for now"
+zhihu_comments_failed = "{label}: failed to open comments: {error}"
+zhihu_no_question_id = "{label}: this item has no question id, cannot open detail"
+
+# Shared vocabulary (source ClassVars point here; per-source words live in sources.<id>.*)
+[units]
+all = "All"
+answer = "answer"
+comment = "comment"
+reply = "reply"
+body = "body"
+subscription = "subscription"
+channel = "channel"
+
+[source_setup]
+not_subscribable = "{label} has built-in feeds only — nothing to manage as subscriptions"
+
+onboarding_title = "Welcome to FeedScope"
+onboarding_prompt = "Pick the sources to enable (space toggles / Esc cancels); numbers set the tab order"
+onboarding_confirm = "Start"
+manage_title = "Sources"
+manage_prompt = "space/Enter toggles; numbers set the tab order, untick-then-tick = move to the end; → manage subscriptions"
+manage_confirm = "Save"
+n_feeds_more = " +{n} more feeds"
+no_subs = "no subscriptions · → to add"
+
+[media]
+image = "[image]"
+video = "[video]"
+gallery = "[gallery]"
+generic = "[media]"
+images_n = "[image {n}]"
+
+
+[display]
+wan = "wan"  # en 不走万折算（K/M 分支），键为奇偶校验而设
+votes = "{n} likes"
+comments_n = "{n} comments"
+replies_n = "{n} replies"
+replies_plain = "{n} replies"
+favorites = "{n} likes"
+visits = " · {n} views"
+visits_wan = " · {n} views"
+
+
+[config]
+file_header = """FeedScope source config: language = UI language; enabled = sources in use; per-source hide = feeds hidden
+feeds = subscriptions (key = {{ label, url }}): rss takes feeds, reddit subreddits,
+telegram channels; maintained by feedscope (first-run setup / F2 manager / rss command),
+but can also be edited by hand"""
+describe_not_created = "not created (all built-in defaults)"
+describe_unparsable = "unreadable ({error})"
+describe_language = "language {lang}"
+describe_enabled = "{n} sources enabled"
+describe_enabled_with_ids = "{n} sources enabled ({ids})"
+describe_overrides = "{n} sources overridden: {hidden} hidden"
+describe_feeds = "{n} subscriptions"
+
+[words]
+deleted_author = "[deleted]"
+deleted_body = "(deleted)"
+points = "{n} pts"
+comments_short = "{n} cmts"
+no_title = "(untitled)"
+no_body = "(no body)"
+anonymous = "anonymous"
+original = "[source]"
+views = "{n} views"
+zhihu_asked = "asked by {asker}"
+zhihu_n_answers = " · {n} answers"
+more_unexpanded = "{n} more collapsed"
+
+[sources.zhihu]
+label = "Zhihu"
+
+[sources.zhihu.feeds]
+hot = "Trending"
+recommend = "Recommended"
+follow = "Following"
+
+[sources.hn]
+detail = "HN detail"
+
+[sources.hn.feeds]
+front = "Front page"
+new = "Newest"
+ask = "Ask HN"
+show = "Show HN"
+
+[sources.v2ex]
+with_label = "V2EX \"{label}\""
+replies = "V2EX replies"
+
+[sources.v2ex.feeds]
+hot = "Popular"
+new = "Latest"
+
+[sources.x]
+timeline = "X timeline"
+detail = "X detail"
+
+[sources.x.feeds]
+foryou = "For you"
+following = "Following"
+
+[sources.reddit]
+post = "Reddit post"
+
+[sources.reddit.feeds]
+home = "Home"
+popular = "Popular"
+
+[sources.rss]
+with_label = "RSS \"{label}\""
+[x]
+translation_label = "**Translation** ({lang})"
+translation_plain = "**Translation**"
+translation_quote = "> {label}: {text}"
+quote_line = " ▸ quoting {who}: {body}"
+tweet_fallback = "tweet"
+parent_tweet = "original tweet"
+quoted_tweet = "quoted tweet"
+
+
+[x_langs]
+en = "English"
+ja = "Japanese"
+ko = "Korean"
+ru = "Russian"
+fr = "French"
+de = "German"
+es = "Spanish"
+pt = "Portuguese"
+it = "Italian"
+ar = "Arabic"
+tr = "Turkish"
+th = "Thai"
+vi = "Vietnamese"
+id = "Indonesian"
+hi = "Hindi"
+uk = "Ukrainian"
+nl = "Dutch"
+pl = "Polish"
+sv = "Swedish"
+da = "Danish"
+fi = "Finnish"
+no = "Norwegian"
+el = "Greek"
+he = "Hebrew"
+cs = "Czech"
+hu = "Hungarian"
+ro = "Romanian"
+ms = "Malay"
+fa = "Persian"
+ur = "Urdu"
+bn = "Bengali"
+tl = "Filipino"
+
+# Subscription management (SubsStore copy + SubscriptionError messages)
+[subs]
+dup_url = "this URL is already subscribed (key: {key})"
+reserved_key = "{key} is a reserved aggregate-feed name and cannot be used as a subscription key"
+key_taken = "key {key} is already taken (see feedscope rss list)"
+empty_input = "empty input"
+added_feed = "subscribed {key}: {label}"
+imported = "imported {n} subscriptions{detail}"
+imported_skip = ", skipped {n}"
+opml_unreadable = "cannot read the OPML file: {error}"
+opml_invalid = "not a valid OPML document: {error}"
+opml_dup = "{name}: URL already subscribed"
+opml_title = "FeedScope subscriptions export"
+subreddit_unrecognized = "could not recognize a subreddit name (accepted: rust, r/rust, /r/rust/, or a site URL)"
+subreddit_reserved = "{name} collides with a built-in feed (Home/Popular) and cannot be used as a subscription name"
+subreddit_dup = "r/{name} is already subscribed"
+subreddit_failed = "cannot add r/{name}: {error}"
+added_subreddit = "subscribed r/{key}: {label}"
+channel_unrecognized = "could not recognize a channel name (accepted: durov, @durov, t.me/durov, or a post link)"
+channel_reserved = "{name} is a reserved aggregate-feed name and cannot be used as a subscription name"
+channel_dup = "@{name} is already subscribed"
+channel_no_items = "@{name}: fetched no posts — the channel may not exist, be empty, or have web preview disabled"
+added_channel = "subscribed @{key}: {label}"
+rss_placeholder = "RSS/Atom URL, site homepage, or an OPML file path (drop from Finder into the terminal)"
+rss_hint = "↑↓ select · Enter rename · Insert add (URL / homepage / OPML path) · Delete remove"
+rss_empty = "no subscriptions yet · Insert to add (OPML path can be pasted)"
+reddit_placeholder = "subreddit name or URL (e.g. rust, r/rust, reddit.com/r/rust)"
+hint_basic = "↑↓ select · Enter rename · Insert add · Delete remove"
+reddit_empty = "no subscriptions yet · Insert to add (a subreddit name is enough)"
+telegram_placeholder = "channel name or link (e.g. durov, @durov, t.me/durov)"
+telegram_empty = "no subscriptions yet · Insert to add (channel name or link)"
+no_store = "{source} has no subscription-store adapter (subscribable and SubsStore must come together)"
+
+[doctor]
+title = "FeedScope {version} environment self-check"
+need_py = "requires 3.11+"
+chrome_missing = "not found (standard macOS location, or google-chrome on PATH); channel=\"chrome\" depends on it"
+deps_label = "dependencies textual / playwright"
+importable = "importable"
+import_failed = "import failed: {error} (run uv sync first)"
+profile_label = "browser profile (info)"
+profile_exists = "already exists"
+profile_will_create = "created automatically on first run"
+config_label = "user config sources.toml (info)"
+all_ok = "all checks passed"
+has_failures = "some checks failed — follow the hints and retry"
+
+[probe]
+unexpected = "unexpected exception: {exc}"
+detail_label = "{label} detail"
+n_items = "{n} items"
+detail_empty = "title/body/floors all empty — the detail page may have changed"
+detail_ok = "\"{title}\" {n} {unit}"
+unknown_ids = "unknown source ids: {unknown} (available: {known})"
+title = "FeedScope source probe (raw samples in {dir})"
+summary = "{ok} passed / {fail} failed / {skip} skipped"
+fail_hint = "raw samples of failed sources are in {dir} — fix parse.py against them and add fixtures"
+
+[login]
+unknown_source = "unknown source: {source} (registered: {ids})"
+not_needed = "{label} does not require login (accessible anonymously)"
+starting = "starting browser (profile: {dir})"
+prompt = "Sign in to {label} in the Chrome window that just opened; this command exits on its own when done."
+check_error = "login detection error: {error}"
+browser_failed = "failed to start the browser or open the login page: {error}"
+timeout = "timed out: no login detected within {seconds}s — run feedscope login again to retry."
+success_state = "login state written to profile"
+success_cookies = "{cookies} written to profile"
+success = "signed in: {how}; the headless session reuses it from now on."
+
+[cli]
+description = "FeedScope — a terminal feed aggregator & reader"
+help_tui = "start the TUI (default)"
+help_login = "open a browser window to sign in to a source"
+help_login_source = "source id (default zhihu)"
+help_probe = "probe all sources (breakage diagnosis + raw sample dumps)"
+help_probe_sources = "only probe these source ids (default all; signed-out sources report SKIP)"
+help_doctor = "environment self-check (Chrome / profile / user config)"
+help_rss = "RSS subscription management (list / add / remove / import / export)"
+help_rss_list = "list all subscriptions"
+help_rss_add = "add a subscription (display name defaults to the feed title)"
+help_rss_add_url = "RSS/Atom URL, site homepage (auto-discovers the feed), or an OPML file path"
+help_rss_add_key = "subscription key (default: derived from the domain)"
+help_rss_add_label = "display name (default: the feed's own title)"
+help_rss_remove = "remove a subscription"
+help_rss_remove_key = "key of the subscription to remove (see feedscope rss list)"
+help_rss_import = "bulk import from OPML (idempotent merge; already-subscribed are skipped)"
+help_rss_import_path = "OPML file path"
+help_rss_export = "export subscriptions as OPML 2.0"
+help_rss_export_path = "output file path (default: print to stdout, redirectable)"
+rss_list_empty = "no subscriptions yet: feedscope rss add <url> or import <OPML file>"
+rss_list_total = "{n} subscriptions in total"
+rss_added = "subscribed {key}: {label} <{url}>"
+not_added = "not added: {error}"
+restart_hint = " (restart the TUI to take effect)"
+no_such_key = "no subscription with key {key} (see feedscope rss list)"
+removed = "removed {key}: {label}"
+import_failed = "import failed: {error}"
+skipped_line = "skipped {line}"
+more_skipped = "…{n} more skipped"
+import_result = "imported {added}, skipped {skipped}"
+exported = "exported {n} subscriptions to {path}"
+
+[dialogs]
+confirm = "Confirm"
+cancel = "Cancel"
+ok = "OK"
+login = "Sign in"
+logout = "Sign out"
+login_prompt = "{label} requires sign-in"
+logout_prompt = "Sign out of {label}?"
+
+[account]
+login_refused = "Cancelled — not asked again this run; Ctrl+U to sign in"
+no_login_needed = "{label} does not require login"
+login_in_progress = "sign-in in progress, one moment"
+login_refresh_later = "sign-in in progress, refresh follows shortly"
+title_login = "Sign in"
+login_ok = "signed in to {label}"
+login_incomplete = "{label} sign-in not completed — try again"
+logged_out = "signed out of {label}"
+not_logged_in = "{label} was not signed in"
+
+[feedback]
+failure = "{action}: {error}"
+failure_with_source = "{source} {action}: {error}"
+title_fetch_failed = "Fetch failed"
+action_fetch = "request failed"
+action_add_failed = "add failed"
+action_logout_failed = "sign-out failed"
+action_comments_failed = "comments failed to load"
+action_more_failed = "load more failed"
+
+[subscriptions]
+title = "{label} subscriptions"
+add = "Add"
+rename = "Rename"
+remove = "Remove"
+add_title = "Add subscription"
+rename_title = "Rename"
+pick_first = "select a subscription first"
+remove_confirm = "remove \"{label}\"?"
+removed = "removed {label} (you can add it back anytime)"
+rename_noop = "name unchanged (empty or the subscription no longer exists)"
+renamed = "renamed to {name}"
+
+[read]
+loading = "Loading…"
+loading_more = "loading more…"
+status_failed = "load failed"
+eof = "(end)"
+no_more = "(no more {unit}s)"
+no_more_plain = "no more {unit}s"
+none = "(no {unit}s)"
+unit_loading = "loading {unit}s…"
+load_failed_retry = "load failed: {text} · Ctrl+N to retry"
+comments_failed_retry = "comments failed to load: {text} · Ctrl+N to retry"
+hint_more = "Ctrl+N loads more {unit}s"
+hint_comments = "Enter opens the {cunit} layer of this {unit}"
+floor_head = "{unit} {n}"
+answer_title = "{unit} by {author}"
+still_loading = "content is still loading"
+no_floors_yet = "none to open yet"
+single_floor_unsupported = "{label} does not support opening a single {unit} yet"
+no_next_readable = "nothing readable ahead"
+no_prev_readable = "nothing readable before this"
+no_next_loaded = "no more loaded {unit}s ahead"
+no_prev_unit = "no {unit}s before this"
+binding_more_unit = "More {unit}s"
+binding_next_unit = "Next {unit}"
+binding_prev_unit = "Prev {unit}"
+

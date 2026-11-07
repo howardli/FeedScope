@@ -5,40 +5,38 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from feedscope.core.i18n import t
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="feedscope", description="FeedScope（观流）- 终端信息流聚合阅读器"
+        prog="feedscope", description=t("cli.description")
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("tui", help="启动 TUI（默认）")
+    sub.add_parser("tui", help=t("cli.help_tui"))
 
-    login = sub.add_parser("login", help="打开浏览器窗口登录某个源")
-    login.add_argument("source", nargs="?", default="zhihu", help="源 id（默认 zhihu）")
+    login = sub.add_parser("login", help=t("cli.help_login"))
+    login.add_argument("source", nargs="?", default="zhihu", help=t("cli.help_login_source"))
 
-    probe = sub.add_parser("probe", help="巡检全部源（改版诊断 + 原始样本落盘）")
-    probe.add_argument(
-        "sources", nargs="*", help="只测这些源 id（缺省全部；未登录的源报 SKIP）"
-    )
+    probe = sub.add_parser("probe", help=t("cli.help_probe"))
+    probe.add_argument("sources", nargs="*", help=t("cli.help_probe_sources"))
 
-    sub.add_parser("doctor", help="环境自检（Chrome / profile / 用户配置）")
+    sub.add_parser("doctor", help=t("cli.help_doctor"))
 
-    rss = sub.add_parser("rss", help="RSS 订阅管理（list / add / remove / import / export）")
+    rss = sub.add_parser("rss", help=t("cli.help_rss"))
     rss_sub = rss.add_subparsers(dest="rss_command", required=True)
-    rss_sub.add_parser("list", help="列出全部订阅")
-    add_p = rss_sub.add_parser("add", help="添加订阅（显示名缺省拉一次 feed 标题）")
-    add_p.add_argument("url", help="RSS / Atom 地址、站点首页（自动发现 feed）或 OPML 文件路径")
-    add_p.add_argument("--key", help="订阅 key（缺省按域名生成）")
-    add_p.add_argument("--label", help="显示名（缺省用 feed 自述标题）")
-    remove_p = rss_sub.add_parser("remove", help="删除订阅")
-    remove_p.add_argument("key", help="要删的订阅 key（feedscope rss list 查看）")
-    import_p = rss_sub.add_parser("import", help="从 OPML 批量导入（幂等合并，已订阅的跳过）")
-    import_p.add_argument("path", help="OPML 文件路径")
-    export_p = rss_sub.add_parser("export", help="导出订阅为 OPML 2.0")
-    export_p.add_argument(
-        "path", nargs="?", help="写入的文件路径（缺省打印到 stdout，可重定向）"
-    )
+    rss_sub.add_parser("list", help=t("cli.help_rss_list"))
+    add_p = rss_sub.add_parser("add", help=t("cli.help_rss_add"))
+    add_p.add_argument("url", help=t("cli.help_rss_add_url"))
+    add_p.add_argument("--key", help=t("cli.help_rss_add_key"))
+    add_p.add_argument("--label", help=t("cli.help_rss_add_label"))
+    remove_p = rss_sub.add_parser("remove", help=t("cli.help_rss_remove"))
+    remove_p.add_argument("key", help=t("cli.help_rss_remove_key"))
+    import_p = rss_sub.add_parser("import", help=t("cli.help_rss_import"))
+    import_p.add_argument("path", help=t("cli.help_rss_import_path"))
+    export_p = rss_sub.add_parser("export", help=t("cli.help_rss_export"))
+    export_p.add_argument("path", nargs="?", help=t("cli.help_rss_export_path"))
 
     return parser
 
@@ -53,11 +51,11 @@ def _run_rss(args: argparse.Namespace) -> int:
     if args.rss_command == "list":
         feeds = config.rss_feeds()
         if not feeds:
-            print("还没有订阅：feedscope rss add <地址> 或 import <OPML 文件>")
+            print(t("cli.rss_list_empty"))
             return 0
         for f in feeds:
             print(f"{f.key:<16} {f.label}  <{f.url}>")
-        print(f"共 {len(feeds)} 条订阅")
+        print(t("cli.rss_list_total", n=len(feeds)))
         return 0
 
     if args.rss_command == "add":
@@ -66,55 +64,64 @@ def _run_rss(args: argparse.Namespace) -> int:
         try:
             if args.key or args.label:
                 feed = asyncio.run(subs.add_feed(args.url, key=args.key, label=args.label))
-                added, summary = [feed], f"已订阅 {feed.key}：{feed.label} <{feed.url}>"
+                summary = t("cli.rss_added", key=feed.key, label=feed.label, url=feed.url)
+                added = [feed]
             else:
                 added, summary = asyncio.run(subs.add_from_input(args.url))
         except subs.BadSubscriptionFile as exc:
-            print(f"未添加：{exc}")
+            print(t("cli.not_added", error=exc))
             return 2
         except subs.SubscriptionError as exc:
-            print(f"未添加：{exc}")
+            print(t("cli.not_added", error=exc))
             return 1
         if len(added) > 1:  # OPML 批量：逐条列出，方便核对
             for f in added:
                 print(f"  {f.key:<16} {f.label}  <{f.url}>")
-        print(f"{summary}（重启 TUI 生效）")
+        print(summary + t("cli.restart_hint"))
         return 0
 
     if args.rss_command == "remove":
         removed = subs.remove_feed(args.key)
         if removed is None:
-            print(f"没有 key 为 {args.key!r} 的订阅（feedscope rss list 查看）")
+            print(t("cli.no_such_key", key=repr(args.key)))
             return 1
-        print(f"已删除 {removed.key}：{removed.label}（重启 TUI 生效）")
+        print(t("cli.removed", key=removed.key, label=removed.label) + t("cli.restart_hint"))
         return 0
 
     if args.rss_command == "import":
         try:
             added, skipped = subs.import_opml(subs.read_opml_file(args.path))
         except subs.BadSubscriptionFile as exc:
-            print(f"导入失败：{exc}")
+            print(t("cli.import_failed", error=exc))
             return 2
         for f in added:
-            print(f"已订阅 {f.key}：{f.label} <{f.url}>")
+            print(t("cli.rss_added", key=f.key, label=f.label, url=f.url))
         for line in skipped[:5]:
-            print(f"跳过 {line}")
+            print(t("cli.skipped_line", line=line))
         if len(skipped) > 5:
-            print(f"…另有 {len(skipped) - 5} 条跳过")
-        print(f"导入 {len(added)} 条，跳过 {len(skipped)} 条（重启 TUI 生效）")
+            print(t("cli.more_skipped", n=len(skipped) - 5))
+        print(
+            t("cli.import_result", added=len(added), skipped=len(skipped))
+            + t("cli.restart_hint")
+        )
         return 0
 
     # export：给路径写文件，缺省 stdout（> 订阅.opml 重定向也行）
     opml = subs.export_opml(config.rss_feeds())
     if args.path:
         Path(args.path).write_text(opml, encoding="utf-8")
-        print(f"已导出 {len(config.rss_feeds())} 条订阅到 {args.path}")
+        print(t("cli.exported", n=len(config.rss_feeds()), path=args.path))
     else:
         print(opml, end="")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 进程语言按配置设定（未设置 = 缺省）：CLI 的 help/输出与 TUI 同语言；
+    # 必须在 build_parser 之前——argparse 的 help 在构造时就成型
+    from feedscope.core import config, i18n
+
+    i18n.set_language(config.get_language() or i18n.DEFAULT_LANGUAGE)
     args = build_parser().parse_args(argv)
 
     if args.command in (None, "tui"):

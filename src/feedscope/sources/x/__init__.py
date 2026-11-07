@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from feedscope.core.models import FeedItem
+from feedscope.core.i18n import t
 from feedscope.core.registry import register
 from feedscope.core.source import (
     DetailLoader,
@@ -45,20 +46,22 @@ class XSource(Source):
     label = "X"
     supports_detail = True
     feeds: list[str] = ["foryou", "following"]  # 与 X 主页页签同序：默认进「推荐」
-    feed_labels: dict[str, str] = {"foryou": "推荐", "following": "正在关注"}
+    feed_labels: dict[str, str] = {
+        "foryou": "sources.x.feeds.foryou", "following": "sources.x.feeds.following",
+    }
     detail_kinds = frozenset({"tweet"})  # Enter 进终端详情屏（正文 + 回复）
-    detail_unit_label = "回复"
+    detail_unit_label = "units.reply"
     login_url = "https://x.com/login"
     login_cookie = "auth_token"  # feedscope login 轮询的判登 cookie（手动输密码后写入）
     logout_cookies: ClassVar[list[str]] = ["auth_token", "ct0"]  # 登出清掉判登成对 cookie
 
     async def open_feed(self, name: str) -> FeedLoader:
         label = self.label_of(name)
-        await require_login(f"「{label}」时间线")
+        await require_login(t("errors.what_timeline", label=label))
         return await self.first_batch(XFeedLoader(name), label)
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
-        await require_login("推文详情")
+        await require_login(t("errors.what_tweet_detail"))
         # 转发（RT）的会话在原推那里：列表已把原推 id 放进 extra（见 parse._tweet_from_result）
         rest_id = str(item.extra.get("conversation_id") or item.id.rsplit("/", 1)[-1])
         entries, cursor = await fetch_conversation(rest_id, None)

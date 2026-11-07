@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from feedscope.core.browser import PROFILE_DIR, close_session, drop_stale_locks
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
+from feedscope.core.i18n import t
 
 LOGIN_TIMEOUT = 180  # 秒；3 分钟没扫上就退出
 POLL_INTERVAL = 2
@@ -36,16 +37,16 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
         source = get_source(source_id)
     except KeyError:
         ids = ", ".join(s.source_id for s in all_sources())
-        _say(quiet, f"未知源：{source_id}（已注册：{ids}）")
+        _say(quiet, t("login.unknown_source", source=source_id, ids=ids))
         return False
     if not source.login_url:
-        _say(quiet, f"{source.label} 无需登录（匿名可访问）")
+        _say(quiet, t("login.not_needed", label=source.label_text))
         return False
 
     from playwright.async_api import async_playwright
 
-    _say(quiet, f"启动浏览器（profile: {PROFILE_DIR}）")
-    _say(quiet, f"请在弹出的 Chrome 窗口里登录 {source.label}，完成后本命令自动退出。")
+    _say(quiet, t("login.starting", dir=PROFILE_DIR))
+    _say(quiet, t("login.prompt", label=source.label_text))
     drop_stale_locks()
     try:
         async with async_playwright() as pw:
@@ -65,14 +66,14 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
                     if await _await_login(context, source, quiet):
                         return True
                 except Exception as exc:
-                    _say(quiet, f"登录检测出错：{exc}")
+                    _say(quiet, t("login.check_error", error=exc))
                     return False
             finally:
                 await context.close()
     except Exception as exc:  # 浏览器没装/起不来/导航超时：给中文出口，不裸栈
-        _say(quiet, f"浏览器启动或打开登录页失败：{exc}")
+        _say(quiet, t("login.browser_failed", error=exc))
         return False
-    _say(quiet, f"超时：{LOGIN_TIMEOUT} 秒内未检测到登录，重新运行 feedscope login 再试。")
+    _say(quiet, t("login.timeout", seconds=LOGIN_TIMEOUT))
     return False
 
 
@@ -82,10 +83,11 @@ async def _await_login(context, source, quiet: bool) -> bool:
     while asyncio.get_running_loop().time() < deadline:
         if await _logged_in(context, source):
             if source.login_verify is not None:
-                how = "登录态已写入 profile"
+                how = t("login.success_state")
             else:
-                how = f"{'、'.join(source.judging_cookies)} 已写入 profile"
-            _say(quiet, f"登录成功：{how}，之后无头复用。")
+                joiner = t("common.enum_comma")
+                how = t("login.success_cookies", cookies=joiner.join(source.judging_cookies))
+            _say(quiet, t("login.success", how=how))
             return True
         await asyncio.sleep(POLL_INTERVAL)
     return False

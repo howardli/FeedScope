@@ -66,9 +66,10 @@ def test_feeds_composition_from_config(monkeypatch: pytest.MonkeyPatch, tmp_path
     use_config(monkeypatch, tmp_path, _CFG)
     src = get_source("telegram")
     assert src.feeds == ["all", "alpha", "beta"]  # 聚合流在前，订阅按书写序
-    assert src.feed_labels == {"all": "全部", "alpha": "频道甲", "beta": "beta"}
+    assert src.feed_labels == {"all": "units.all", "alpha": "频道甲", "beta": "beta"}
+    assert src.feed_label("all") == "全部" and src.feed_label("alpha") == "频道甲"
     assert src.subscribable and src.supports_detail and not src.supports_comments
-    assert src.detail_unit_label == "正文"
+    assert src.detail_unit == "正文"
     assert not src.login_url  # 免登录
 
 

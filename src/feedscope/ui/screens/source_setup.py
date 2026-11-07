@@ -22,6 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
+from feedscope.core.i18n import t
 from feedscope.core.registry import get_class
 from feedscope.core.source import Source
 from feedscope.subscriptions import store_for
@@ -37,24 +38,25 @@ def source_entry_text(source: Source) -> str:
     可订阅源空订阅也列出（→ 进订阅管理就地添加，否则零订阅的 rss 永远
     进不了这个列表，鸡生蛋）。
     """
-    labels = [source.feed_labels.get(f, f) for f in source.feeds]
+    labels = [source.feed_label(f) for f in source.feeds]
     if not labels and not source.subscribable:
         return ""
     if labels:
-        feeds = "、".join(labels[:3]) + (
-            f" 等 {len(labels)} 个流" if len(labels) > 3 else ""
+        feeds = t("common.enum_comma").join(labels[:3]) + (
+            t("source_setup.n_feeds_more", n=len(labels)) if len(labels) > 3 else ""
         )
     else:
-        feeds = "无订阅 · → 添加"
-    return f"{source.label} [dim]{feeds}[/dim]"
+        feeds = t("source_setup.no_subs")
+    return f"{source.label_text} [dim]{feeds}[/dim]"
 
 
 class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     """源勾选弹层基类：样式与交互共用，标题/文案/确认键由子类给出。"""
 
+    # 类级三件是文案键（import 期求值只能存键）；compose 时经 t() 解析
     title_text: ClassVar[str] = ""
     prompt_text: ClassVar[str] = ""
-    confirm_label: ClassVar[str] = "确认"
+    confirm_label: ClassVar[str] = "dialogs.confirm"
 
     # Esc 取消继承自 ArrowModalScreen（action_cancel → dismiss(None)）
     BINDINGS: ClassVar[Bindings] = [
@@ -90,15 +92,15 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="setup-dialog", classes="modal-card"):
-            yield Label(self.title_text, id="setup-title")
-            yield Label(self.prompt_text, id="setup-prompt")
+            yield Label(t(self.title_text), id="setup-title")
+            yield Label(t(self.prompt_text), id="setup-prompt")
             yield FocusNavSelectionList(
                 # option id = source id：改行文案（编号）时按 id 定位
                 *[Selection(text, sid, sid in self._initial, id=sid) for sid, text in self._entries]
             )
             with Horizontal(id="setup-actions"):
-                yield Button(self.confirm_label, id="setup-confirm", variant="primary")
-                yield Button("取消", id="setup-cancel")
+                yield Button(t(self.confirm_label), id="setup-confirm", variant="primary")
+                yield Button(t("dialogs.cancel"), id="setup-cancel")
 
     def on_mount(self) -> None:
         self._renumber()  # 初始勾选也要带序号
@@ -163,7 +165,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         cls = get_class(sid)
         if cls is None or not cls.subscribable:
             feedback.info(
-                self.app, f"{cls.label if cls else sid} 的信息流是内置的，没有可管理的订阅"
+                self.app, t("source_setup.not_subscribable", label=cls().label_text if cls else sid)
             )
             return
         self.run_worker(self._manage_feeds(sid))
@@ -202,14 +204,14 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
 class OnboardingScreen(SourceSetupScreen):
     """首启引导：勾选要启用的源，确认后进入主界面。"""
 
-    title_text = "欢迎使用观流（FeedScope）"
-    prompt_text = "选择要启用的信息源（空格勾选 / 取消）；序号即站点排列顺序"
-    confirm_label = "开始使用"
+    title_text = "source_setup.onboarding_title"
+    prompt_text = "source_setup.onboarding_prompt"
+    confirm_label = "source_setup.onboarding_confirm"
 
 
 class ManageSourcesScreen(SourceSetupScreen):
     """F2 源管理：勾选 = 启用、取消勾选 = 停用，保存后立即生效。"""
 
-    title_text = "源管理"
-    prompt_text = "空格/Enter 勾选；序号即站点顺序，取消再勾选 = 移到末尾；→ 管理订阅"
-    confirm_label = "保存"
+    title_text = "source_setup.manage_title"
+    prompt_text = "source_setup.manage_prompt"
+    confirm_label = "source_setup.manage_confirm"
