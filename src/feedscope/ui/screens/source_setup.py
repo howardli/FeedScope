@@ -82,7 +82,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         on_feeds_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
-        self._entries = list(entries)  # (source_id, 行文案)，注册顺序即列表顺序
+        self._entries = list(entries)  # (source_id, 行文案)，字母正序（见 sources/__init__）
         self._labels: dict[str, str] = dict(entries)  # sid -> 不带序号的基础文案
         self._initial = set(initial_ids)
         self._on_feeds_changed = on_feeds_changed  # 订阅管理屏改过东西：App 标脏
@@ -123,7 +123,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         """给勾选的行标序号（= 站点排列位置），未勾选的留空对齐。
 
         序号随切换重排（取消 1 号后，原 2 号自动变 1）；列表行本身不动
-        （注册顺序稳定，好找），只变文案。
+        （字母正序稳定，好找），只变文案。
         """
         sl = self.query_one(SelectionList)
         pos = {sid: i + 1 for i, sid in enumerate(self.selected_ids)}

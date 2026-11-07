@@ -55,7 +55,7 @@ class MainSetupScreen(Screen[None]):
     def _enabled_sources(self) -> list[Source]:
         """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
 
-        enabled 缺省 = 全部启用（注册顺序，老配置文件只有 hide 的不受影响）；
+        enabled 缺省 = 全部启用（注册序 = 字母正序，老配置文件只有 hide 的不受影响）；
         不在注册表的 id 静默略过——卸载 / 改名后的残留条目无害，doctor 会报告
         配置概况。
         """

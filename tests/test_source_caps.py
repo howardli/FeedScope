@@ -125,10 +125,11 @@ def test_telegram_source_declaration() -> None:
 
 
 def test_registry_order_is_tab_order() -> None:
-    # 注册顺序 = Tab 切换顺序 = 启动默认源（知乎在前，登录源聚堆，订阅型源殿后）
-    assert [s.source_id for s in all_sources()] == [
-        "zhihu", "x", "reddit", "hn", "v2ex", "rss", "telegram",
-    ]
+    """注册顺序 = source_id 字母正序 = 源选择列表与默认 Tab 序（2026-11 起
+    取代旧的「知乎在前」手工排序；钉住不变量：新增源的 import 插错位置这里
+    红，而不是列表顺序悄悄变）。"""
+    ids = [s.source_id for s in all_sources()]
+    assert ids == sorted(ids), f"sources/__init__ 的 import 要按字母序书写：{ids}"
 
 
 def test_subscribable_sources_have_store() -> None:

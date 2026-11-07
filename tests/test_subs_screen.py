@@ -41,6 +41,20 @@ def rss_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     return cfg
 
 
+async def _goto_row(pilot, screen, sid: str) -> None:
+    """F2 列表里把高亮移到 sid 行：行位按 option id 动态取（列表按 source_id
+    字母正序，测试不写死「第几行」——顺序调整不再连坐导航用例）。"""
+    sl = screen.query_one(SelectionList)
+    idx = next(i for i in range(sl.option_count) if str(sl.get_option_at_index(i).id) == sid)
+    for _ in range(idx):
+        await pilot.press("down")
+
+
+def _row_of(screen, sid: str) -> int:
+    sl = screen.query_one(SelectionList)
+    return next(i for i in range(sl.option_count) if str(sl.get_option_at_index(i).id) == sid)
+
+
 def _rows(app: FeedScopeApp) -> int:
     screen = app.screen
     return (
@@ -55,10 +69,10 @@ async def _run_flow(cfg, monkeypatch) -> None:
     async with app.run_test(size=(100, 40)) as pilot:
         assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
 
-        # F2 → 选中 rss 行（第六行：知乎、X、Reddit、HN、V2EX、RSS）→ → 进订阅管理
+        # F2 → 选中 rss 行（列表按 source_id 字母正序，动态定位）→ → 进订阅管理
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down", "down", "down", "down")
+        await _goto_row(pilot, app.screen, "rss")
         await pilot.press("right")
         assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         assert _rows(app) == 0, "零订阅起步"
@@ -96,7 +110,9 @@ async def _run_flow(cfg, monkeypatch) -> None:
         sl = app.screen.query_one(SelectionList)
         assert "rss" in sl.selected, "订阅管理返回后 rss 自动勾选"
         assert app.screen.selected_ids == ["rss"]
-        assert "全部" in str(sl.get_option_at_index(5).prompt), "行文案同步出新的信息流"
+        assert "全部" in str(sl.get_option_at_index(_row_of(app.screen, "rss")).prompt), (
+            "行文案同步出新的信息流"
+        )
 
         # 保存：rss 进 tab，侧栏出现「全部」+ 订阅流，列表加载出内容
         await pilot.click("#setup-confirm")
@@ -165,10 +181,10 @@ async def _run_reddit_flow(cfg, monkeypatch) -> None:
     async with app.run_test(size=(100, 40)) as pilot:
         assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
 
-        # F2 → reddit 行（第三行：知乎、X、Reddit）→ → 进订阅管理（store 分派）
+        # F2 → reddit 行（动态定位）→ → 进订阅管理（store 分派）
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down")
+        await _goto_row(pilot, app.screen, "reddit")
         await pilot.press("right")
         assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         assert _rows(app) == 0, "零订阅起步"
@@ -203,10 +219,10 @@ async def _run_empty_telegram_flow(cfg, monkeypatch) -> None:
     async with app.run_test(size=(100, 40)) as pilot:
         assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
 
-        # F2 → 第七行（Telegram，零订阅）→ 空格勾选 → 保存
+        # F2 → Telegram 行（零订阅）→ 空格勾选 → 保存
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down", "down", "down", "down", "down")
+        await _goto_row(pilot, app.screen, "telegram")
         await pilot.press("space")
         await pilot.click("#setup-confirm")
         assert await settle(pilot, lambda: not isinstance(app.screen, ManageSourcesScreen))
@@ -251,8 +267,8 @@ async def _run_delete_all_flow(monkeypatch, tmp_path) -> None:
         for _ in range(6):
             await pilot.pause()
 
-        await pilot.press("f2")  # → Telegram 行（第七行）→ → 进订阅管理 → Delete 删光
-        await pilot.press("down", "down", "down", "down", "down", "down")
+        await pilot.press("f2")  # → Telegram 行 → → 进订阅管理 → Delete 删光
+        await _goto_row(pilot, app.screen, "telegram")
         await pilot.press("right")
         assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         await pilot.press("delete")
@@ -304,7 +320,7 @@ async def _run_buttons_and_guards_flow(rss_env) -> None:
 
         await pilot.press("f2")
         assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
-        await pilot.press("down", "down", "down", "down", "down")
+        await _goto_row(pilot, app.screen, "rss")
         await pilot.press("right")
         assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
         assert _rows(app) == 0, "零订阅起步"
