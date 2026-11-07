@@ -1,0 +1,32 @@
+name: Feature request / 功能建议
+description: Suggest a new source, feed, or behavior / 新源、新流或行为建议
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve? / 它解决什么问题
+      description: Not the feature itself — the pain behind it. 不是功能本身，是它背后的痛点。
+      placeholder: I can't ... / 我没法……
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would it look like? / 你期望的形态
+      description: Command, key, feed, source — sketch it however is natural.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 领域
+      options:
+        - New source (a new site / 新站点)
+        - New feed in an existing source
+        - Reading / detail view
+        - Login & accounts
+        - RSS / subscriptions
+        - Config & source manager
+        - i18n
+        - Other

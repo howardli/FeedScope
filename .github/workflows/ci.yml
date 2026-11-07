@@ -16,11 +16,15 @@ jobs:
       - run: uv run mypy
 
   test:
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        # classifiers 声明支持的平台都在矩阵里被真跑过（macOS 的 Chrome 路径 /
+        # platformdirs 目录差异以前只有本机验证）；playwright 只装包不装浏览器，
+        # 测试基线全离线，hosted runner 直接可跑
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -28,6 +32,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --python ${{ matrix.python-version }}
       - run: uv run pytest tests/ --cov --cov-fail-under=80
-      # 测试基线全离线（解析 fixture / TUI 冒烟 / 登录流程），hosted runner 直接可跑；
-      # feedscope probe 巡检需要真实登录态与 Chrome，只能挂 self-hosted runner 定时跑（见 README）
-      # coverage 门槛在 pyproject（fail_under=80，当前实测 ~89%）：防倒退，新增模块应抬高它
+        # 测试基线全离线（解析 fixture / TUI 冒烟 / 登录流程），hosted runner 直接可跑；
+        # feedscope probe 巡检需要真实登录态与 Chrome，只能挂 self-hosted runner 定时跑（见 README）
+        # coverage 门槛在 pyproject（fail_under=80，当前实测 ~89%）：防倒退，新增模块应抬高它
+
+  build:
+    # 打包配置随时可构建：pyproject 的 packaging 回归在这里红，而不是发版当天才炸
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-preview
+          path: dist/
+          if-no-files-found: error

@@ -1,11 +1,19 @@
 # FeedScope
 
+[![PyPI](https://img.shields.io/pypi/v/feedscope.svg)](https://pypi.org/project/feedscope/)
+[![Python](https://img.shields.io/pypi/pyversions/feedscope.svg)](https://pypi.org/project/feedscope/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
 > Terminal-first feed reader — Zhihu, X (Twitter), Reddit, Hacker News, V2EX, RSS and Telegram channels, all in one terminal.
 
 **Language**: English · [中文](README.zh-CN.md)
+
+## Demo
+
+Zhihu Hot → X timeline → post detail (auto translation, quoted post) → Reddit → post detail → HN → story detail → reply tree → V2EX → topic detail — everything below is just `Tab` and `Enter`:
+
+![FeedScope demo](docs/demo.gif)
 
 ## Features
 
@@ -65,18 +73,24 @@ V2EX topic detail (markdown body + replies as floors; floor numbers match the si
 
 ## Install
 
-Requires Python 3.11+, a local Chrome (no `playwright install` needed), and [uv](https://docs.astral.sh/uv/) (or pip).
+Requires Python 3.11+ and a local Google Chrome (no `playwright install` needed). macOS and Linux; Windows is not supported yet.
+
+```bash
+pipx install feedscope        # or: uv tool install feedscope
+```
+
+From source (development):
 
 ```bash
 git clone https://github.com/howardli/FeedScope.git
 cd FeedScope
-uv tool install --editable .   # global `feedscope` command; code edits take effect immediately
+uv sync                            # dev / test environment
+uv tool install --editable .       # global `feedscope` command; code edits take effect immediately
 ```
 
-- Dev / test: `uv sync`, then `uv run feedscope` and `uv run pytest`
-- No uv: `pip install .` (non-editable; reinstall after code changes)
-- Slow PyPI? Use a mirror: `export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`
 - Run `feedscope doctor` after install to self-check the environment
+- Slow PyPI? Use a mirror: `export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`
+- Dev / test: `uv run feedscope` and `uv run pytest` — see [CONTRIBUTING](CONTRIBUTING.md)
 
 ## Usage
 
@@ -233,6 +247,16 @@ No login; data comes from each channel's public web preview (`t.me/s/<channel>`,
 - The "All" stream merges every channel by publish time (newest first), one dead channel only loses its own items; each channel is also its own feed (individually hideable)
 - Meta column "N views" is the channel-post heat radar; the "All" stream prefixes the channel name; inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
 - Details read list-carried content (zero requests); `Ctrl+N` in a single-channel feed pages back through history via the `?before=` cursor; no comment layer (channel discussion groups aren't in the preview)
+
+## Community
+
+- **Bugs & features** — [issues](https://github.com/howardli/FeedScope/issues): the bug template asks for `feedscope doctor` output, which carries version + environment in a few lines
+- **Questions & chat** — [discussions](https://github.com/howardli/FeedScope/discussions)
+- **Code** — [CONTRIBUTING](CONTRIBUTING.md): adding a new source is designed to be a one-package change, and a new UI language is one TOML file
+- **Security** — [SECURITY.md](SECURITY.md): where your login cookies live and how to report issues privately
+- **Changelog** — [CHANGELOG.md](CHANGELOG.md)
+
+Status: **0.x, active development.** Config may gain fields between minors; breaking changes wait for 1.0. A site redesign can break its source at any time — `feedscope probe` pinpoints it, patch releases ship updated parsers.
 
 ## Disclaimer
 

@@ -1,6 +1,6 @@
 [project]
 name = "feedscope"
-version = "0.1.0"
+dynamic = ["version"]   # 唯一出处 src/feedscope/__init__.py 的 __version__，防双处漂移
 description = "FeedScope (观流): a terminal feed reader — Zhihu / X / Reddit / HN / V2EX / RSS / Telegram, all in one terminal"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "howardli" }]
 keywords = ["tui", "textual", "cli", "reader", "zhihu", "twitter", "rss", "terminal"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
@@ -30,7 +31,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/howardli/FeedScope"
+Repository = "https://github.com/howardli/FeedScope"
 Issues = "https://github.com/howardli/FeedScope/issues"
+Changelog = "https://github.com/howardli/FeedScope/blob/main/CHANGELOG.md"
 
 [project.scripts]
 feedscope = "feedscope.cli:main"
@@ -41,6 +44,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/feedscope"]
+
+[tool.hatch.build.targets.sdist]
+# README 在 PyPI 上不渲染相对路径图片：截图 / GIF 留在 repo 即可，不进下载负担
+exclude = ["docs/*.png", "docs/*.gif"]
+
+[tool.hatch.version]
+path = "src/feedscope/__init__.py"
 
 [tool.ruff]
 line-length = 100

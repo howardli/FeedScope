@@ -1,0 +1,54 @@
+# Release pipeline: push a tag `v*` → build → publish to PyPI (OIDC trusted
+# publishing, no tokens) → GitHub Release with the artifacts.
+#
+# One-time setup lives in docs/release.md (PyPI pending publisher + the
+# `pypi` GitHub environment). After that, a release is: changelog entry,
+# version bump, `git tag vX.Y.Z && git push --tags`.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build    # sdist + wheel; version is read from src/feedscope/__init__.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi    # create this environment once; see docs/release.md
+    permissions:
+      id-token: write    # OIDC trusted publishing — no PyPI token stored anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

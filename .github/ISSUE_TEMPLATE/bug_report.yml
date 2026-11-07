@@ -1,0 +1,82 @@
+name: Bug report / 问题报告
+description: Something is broken, renders wrong, or fails to fetch / 抓取失败、显示异常
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report! 谢谢反馈！
+
+        Pasting `feedscope doctor` output up front (item 4) usually saves a
+        round trip — it carries the version, OS, Python and Chrome state in
+        four lines.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / 发生了什么
+      description: And what did you expect instead? 期望的行为是什么？
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Affected source / 受影响的源
+      multiple: true
+      options:
+        - Zhihu
+        - X (Twitter)
+        - Reddit
+        - Hacker News
+        - V2EX
+        - RSS
+        - Telegram
+        - TUI / app-wide (not source-specific)
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. `feedscope`
+        2. Tab to Reddit, wait for Popular
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`feedscope doctor` output / doctor 输出"
+      description: Run it in a terminal and paste the whole output — it includes version and environment in one shot.
+      placeholder: |
+        FeedScope doctor v0.1.0
+        OK  Python 3.12
+        ...
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Probe sample (if a site redesign is suspected) / probe 样本（怀疑改版时）
+      description: |
+        `feedscope probe <source>` saves raw samples to disk — paste the
+        relevant excerpt if the error says a source may have changed. Mind
+        that samples can contain your feed content.
+      render: text
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS / 操作系统
+      options:
+        - macOS
+        - Linux (Debian / Ubuntu)
+        - Linux (Arch)
+        - Linux (other)
+        - Windows (not supported yet — say more below)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context / 其他补充
+      description: Logs, screenshots, config excerpts (minus anything sensitive) — anything that helps.

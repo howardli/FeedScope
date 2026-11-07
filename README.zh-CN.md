@@ -1,11 +1,19 @@
 # FeedScope（观流）
 
+[![PyPI](https://img.shields.io/pypi/v/feedscope.svg)](https://pypi.org/project/feedscope/)
+[![Python](https://img.shields.io/pypi/pyversions/feedscope.svg)](https://pypi.org/project/feedscope/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/howardli/FeedScope/actions/workflows/ci.yml/badge.svg)](https://github.com/howardli/FeedScope/actions/workflows/ci.yml)
 
 > 终端里的信息流聚合阅读器——知乎、X（Twitter）、Reddit、Hacker News、V2EX、RSS 与 Telegram 频道，一个终端全看。
 
 **语言**：中文 · [English](README.md)
+
+## 动图演示
+
+知乎热榜 → X 时间线 → 推文详情（自动译文、引用块）→ Reddit → 帖子详情 → HN → story 详情 → 回复树 → V2EX → 主题详情——全程只是 `Tab` 与 `Enter`：
+
+![FeedScope 演示](docs/demo.gif)
 
 ## 特性
 
@@ -65,18 +73,24 @@ V2EX 主题详情（markdown 正文 + 回复平铺当楼层，楼层号对齐站
 
 ## 安装
 
-要求：Python 3.11+、本机已装 Chrome（无需 `playwright install`）、[uv](https://docs.astral.sh/uv/)（或 pip）。
+要求：Python 3.11+、本机已装 Google Chrome（无需 `playwright install`）。支持 macOS 与 Linux；Windows 暂不支持。
+
+```bash
+pipx install feedscope        # 或：uv tool install feedscope
+```
+
+从源码安装（开发）：
 
 ```bash
 git clone https://github.com/howardli/FeedScope.git
 cd FeedScope
-uv tool install --editable .   # 全局 feedscope 命令：任意目录可启动，改代码即生效
+uv sync                            # 开发 / 测试环境
+uv tool install --editable .       # 全局 feedscope 命令：任意目录可启动，改代码即生效
 ```
 
-- 开发 / 测试：`uv sync` 后 `uv run feedscope`、`uv run pytest`
-- 没有 uv：`pip install .`（非 editable，改代码需重装）
-- PyPI 慢可配镜像：`export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`
 - 装完跑 `feedscope doctor` 自检环境
+- PyPI 慢可配镜像：`export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple`
+- 开发 / 测试：`uv run feedscope`、`uv run pytest`——详见 [CONTRIBUTING](CONTRIBUTING.md)
 
 ## 使用
 
@@ -233,6 +247,16 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 「全部」流 = 全部频道按发布时间倒序合并，单频道失败只损失自己的条目；每频道也各自成流（可 `hide` 单藏）
 - 元信息列「N 观看」是频道帖的热度雷达；「全部」流里前缀频道名；正文行内 HTML 转 markdown、图片/视频换 `[图片]` / `[视频]` 记号（视频无直链，记号指向帖子页）
 - 详情读列表自带正文（零请求）；单频道流 `Ctrl+N` 走 `?before=` 游标往回翻历史帖；无评论层（频道讨论组在预览页拿不到）
+
+## 社区
+
+- **Bug 与功能**——[issues](https://github.com/howardli/FeedScope/issues)：bug 模板会请你贴 `feedscope doctor` 输出，几行带上版本与环境，省一个来回
+- **提问与交流**——[discussions](https://github.com/howardli/FeedScope/discussions)
+- **参与开发**——[CONTRIBUTING](CONTRIBUTING.md)：新增一个源被设计成只动一个包的活，新增一种界面语言只需一个 TOML 文件
+- **安全**——[SECURITY.md](SECURITY.md)：登录 cookie 存在哪里、漏洞如何私密上报
+- **更新日志**——[CHANGELOG.md](CHANGELOG.md)
+
+状态：**0.x，活跃开发中**。配置格式在小版本间只增不破，破坏性变更等 1.0；站点改版随时可能弄断对应源——`feedscope probe` 定位，补丁版本跟进新解析器。
 
 ## 免责声明
 

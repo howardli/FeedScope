@@ -251,7 +251,6 @@ wheels = [
 
 [[package]]
 name = "feedscope"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "feedparser" },

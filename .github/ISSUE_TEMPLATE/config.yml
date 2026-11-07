@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussions / 交流讨论
+    url: https://github.com/howardli/FeedScope/discussions
+    about: Usage questions, setups and ideas that aren't bugs or concrete features
+  - name: Security issues / 安全问题
+    url: https://github.com/howardli/FeedScope/security/policy
+    about: Please don't report vulnerabilities in public issues — see the security policy
