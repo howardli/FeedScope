@@ -184,6 +184,17 @@ async def _run_footer_shows_language_binding(monkeypatch, tmp_path: Path) -> Non
         assert binding.description == "语言"
         app_binding = app._bindings.key_to_bindings["ctrl+q"][0]
         assert app_binding.description == "退出"  # 非键描述直通（迁移过渡期语义）
+        # tab/shift+tab 切站声明在列表控件上（压过 Screen 焦点切换），页脚读它：
+        # 控件级键位也要随语言解析（否则页脚露原始键名）
+        from feedscope.ui.screens.main import FeedListView
+
+        feed = app.main.query_one("#feed", FeedListView)
+        assert [feed._bindings.key_to_bindings[k][0].description for k in ("tab", "shift+tab")] == [
+            "切站",
+            "切站",
+        ]
+        for key in ("f5", "f2", "ctrl+n"):
+            assert app.main._bindings.key_to_bindings[key][0].description != "", key
 
 
 def test_footer_shows_language_binding(lang_stub_registry, monkeypatch, tmp_path) -> None:
@@ -204,6 +215,10 @@ async def _run_en_smoke(monkeypatch, tmp_path: Path) -> None:
         assert app.main._bindings.key_to_bindings["ctrl+l"][0].description == "Language"
         assert app.main._bindings.key_to_bindings["f5"][0].description == "Refresh"
         assert app._bindings.key_to_bindings["ctrl+q"][0].description == "Quit"
+        from feedscope.ui.screens.main import FeedListView
+
+        feed = app.main.query_one("#feed", FeedListView)
+        assert feed._bindings.key_to_bindings["tab"][0].description == "Switch"
 
         await pilot.press("f5")  # 刷新走英文通道（失败出口也是英文模板）
         assert await settle(pilot, lambda: len(app.main.items) == 1)

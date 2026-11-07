@@ -263,7 +263,11 @@ class MainScreen(MainSetupScreen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        retranslate_bindings(self)  # 键式键位文案解析（bindings.*），见 ui/labels.py
+        # 键式键位文案解析（bindings.*，见 ui/labels.py）：主屏自己的键 + 列表
+        # 控件的键——tab/shift+tab 切站声明在 FeedListView 上（压过 Screen 焦点
+        # 切换），列表是页脚的数据源之一，控件不翻译页脚就露原始键名
+        retranslate_bindings(self)
+        retranslate_bindings(self.query_one("#feed", FeedListView))
         self.query_one("#feed", ListView).focus()
         self.run_worker(self._start())  # 启动序列（首启引导 + 初始渲染）在 MainSetupMixin
 

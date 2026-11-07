@@ -6,8 +6,9 @@ Footer 实时读 _bindings，替换即生效。这与 reading 系按源单位词
 （_relabel_bindings，传最终文案）是同一手法的两个用法：一个是静态键、
 一个是动态词。
 
-约定：App 与各 Screen 的 on_mount 调 retranslate_bindings(self)；漏调的
-屏 Footer 会显示原始键名（肉眼即见，en 冒烟测试兜底）。
+约定：App 与各 Screen 的 on_mount 调 retranslate_bindings(self)；带键位
+的 widget（主屏列表：tab/shift+tab 的真实归属）由所属屏一并翻译——漏调
+的地方 Footer 会显示原始键名（肉眼即见，en 冒烟测试兜底）。
 """
 
 from __future__ import annotations
@@ -16,12 +17,12 @@ import dataclasses
 from typing import Any
 
 from textual.app import App
-from textual.screen import Screen
+from textual.widget import Widget
 
 from feedscope.core.i18n import has, t
 
 
-def retranslate_bindings(holder: App[Any] | Screen[Any]) -> None:
+def retranslate_bindings(holder: App[Any] | Widget) -> None:
     """把 holder 键位表里以文案键书写的 description 换成当前语言文本。
 
     非键描述直通（has 判定）：relabel 后的源单位词等最终文案不是键，不能
