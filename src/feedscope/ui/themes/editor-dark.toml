@@ -1,0 +1,28 @@
+# FeedScope 主题 · 编辑器深色（默认）
+#
+# - name = 注册键 = 配置值 = 主题选择屏的行 id；新增主题 = 复制本文件改色即可
+#   被自动发现（零代码），键校验测试会钉住完整性（漏色槽 CI 红）
+# - 取向 VS Code Dark+：低饱和、灰阶层级，久读不累；全主题唯一强调色是
+#   编辑器蓝（选中/焦点/链接/未读圆点）
+
+[theme]
+name = "editor-dark"
+dark = true
+primary = "#569cd6"      # 编辑器蓝：选中/高亮/未读圆点
+secondary = "#5c6b7a"    # 次级钢蓝灰
+accent = "#569cd6"       # 焦点环
+warning = "#dcdcaa"      # 暗黄
+error = "#f48771"        # 暗珊瑚红
+success = "#6a9955"      # 暗绿
+foreground = "#d4d4d4"   # 编辑器前景
+background = "#1e1e1e"   # 编辑器背景
+surface = "#252526"      # 侧栏/面板
+panel = "#2d2d30"        # 边框/分隔
+boost = "#37373d"        # 悬浮
+
+[theme.variables]
+# 链接：缺省取前景灰认不出可点，编辑器蓝只留给链接（同主色策略）
+link-color = "#569cd6"
+footer-key-foreground = "#9aa0a6"
+# 侧栏未聚焦选中带（实底灰，$boost 是半透明层铺了看不见）
+nav-sel-background = "#37373d"

@@ -27,7 +27,7 @@ Zhihu Hot → X timeline → post detail (auto translation, quoted post) → Red
 - **Login loop**: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
 - **Enable sources on demand**: pick at first launch, `F2` anytime; site order = the order you tick
 - **Bilingual UI (中文 / English)**: pick the language at first launch (pre-selected from your system), change anytime with `Ctrl+L` (applies after restart); message catalogs live in one file per language, and a new language is just one new TOML file
-- **Editor-inspired theme**: VS Code Dark+ oriented dark palette, easy on the eyes for long reads
+- **Editor-inspired dual themes**: dark (VS Code Dark+ oriented, the default) and light (Light+ oriented), switched live with `Ctrl+T`; a new theme is one TOML file, auto-discovered; read items get a dimmed title so read/unread separates at a glance, and `Ctrl+Y` copies an item's link from any layer
 - **IME-friendly keys**: every binding is a non-printing key (Tab / arrows / function keys), works while a Chinese IME is active
 - **Layout-change self-check**: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources and drops raw samples
 
@@ -110,6 +110,7 @@ feedscope
 | `Enter` | Open detail; inside a detail, open the discussion layer of the floor you are reading; return to the list from the sidebar / source bar |
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
+| `Ctrl+Y` | Copy the current item's link (in details, copies the article you are reading; in reply layers, the floor-direct link) |
 | `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
 | `F4` | Unread-only view: the list shows unread items only (session toggle; read rows vanish instantly) |
 | `Ctrl+A` | Mark every item in the current feed as read (with confirmation) |
@@ -118,6 +119,7 @@ feedscope
 | `F5` | Refresh |
 | `Ctrl+U` | Account: login / logout |
 | `Ctrl+L` | UI language: pick and save; restart `feedscope` to apply |
+| `Ctrl+T` | UI theme: pick, applied instantly and saved (no restart needed) |
 | `F2` | Manage sources: toggle enable / disable, saved on confirm; `→` opens subscription manager (RSS / Reddit / Telegram) |
 | `Esc` | Go back one layer (from the sidebar / source bar, back to the list first) |
 | `Ctrl+Q` | Quit (double `Ctrl+C` as fallback) |
@@ -151,6 +153,10 @@ language = "zh-CN"   # or "en" (the default); delete the line to fall back to En
 ```
 
 Adding a language: copy `src/feedscope/core/i18n/en.toml` to `<code>.toml` (e.g. `ja.toml`), set its native name in `[meta]` (`name = "日本語"`) and translate the messages — the language picker discovers it automatically, no code changes. A parity test (`tests/test_i18n.py`) enforces identical key trees across catalogs, and an AST guard (`tests/test_i18n_no_hardcoded.py`) blocks hardcoded copy in `src`, so a missing translation turns the CI red.
+
+### UI theme
+
+`Ctrl+T` switches anytime — **applied instantly and saved** (unlike language's restart model: a theme is pure presentation). Built-ins are `editor-dark` (default) and `editor-light`; set it manually in the config with `theme = "editor-light"` (delete the line to fall back to the dark default). Adding a theme: copy `src/feedscope/ui/themes/editor-dark.toml` and recolor — it is auto-discovered with zero code changes; completeness is pinned by `tests/test_theme.py`.
 
 ### Login / Logout
 

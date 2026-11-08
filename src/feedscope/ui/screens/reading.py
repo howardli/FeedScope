@@ -258,15 +258,22 @@ class PagedReadingScreen(ReadingScreen):
     item: FeedItem  # 正在读的条目（Ctrl+O 与屏间传递）
 
     # 阅读中随手收藏是主场景：详情 / 评论两屏共用这一份（评论屏的 item 是
-    # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen
+    # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen。
+    # Ctrl+Y 复制链接与 Ctrl+O 同源（_browser_url——回答屏自动带楼层直达）
     BINDINGS: ClassVar[Bindings] = [
         Binding("ctrl+f", "favorite", "bindings.favorite"),
+        Binding("ctrl+y", "copy_link", "bindings.copy"),
     ]
 
     def action_favorite(self) -> None:
         """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。"""
         fav = cast("FeedScopeApp", self.app).state.toggle_fav(self.item)
         feedback.info(self.app, t("fav.toast_added" if fav else "fav.toast_removed"))
+
+    def action_copy_link(self) -> None:
+        """Ctrl+Y：复制正在读的条目链接（回答层带楼层直达，同 Ctrl+O 目标）。"""
+        self.app.copy_to_clipboard(self._browser_url())
+        feedback.info(self.app, t("main.toast_copied"))
 
     loader: DetailLoader | CommentLoader | None = None
     _exhausted: bool = False  # 翻页对象已到头，Ctrl+N 不再触发加载

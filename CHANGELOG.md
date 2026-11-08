@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Unread management: per-feed unread badges in the sidebar (recounted on refresh, decremented live as you read — reads from the favorites list decrement the home feed too), `F4` unread-only view (session toggle; read rows vanish instantly, newsboat-style), and `Ctrl+A` mark-all-read for the current feed with a light confirmation
+- UI themes: `Ctrl+T` switches instantly (pure presentation, no restart) between the built-in `editor-dark` (the existing VS Code Dark+ palette) and a new `editor-light`; a new theme is one TOML file in `ui/themes/`, auto-discovered, with completeness pinned by tests
+- `Ctrl+Y` copies the current item's link from the list, favorites, details or reply layers (reply layers copy the floor-direct link), and read items get a dimmed title so read/unread separates at a glance
 
 ## [0.2.0] - 2026-11-08
 

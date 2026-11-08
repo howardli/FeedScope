@@ -24,7 +24,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, ListView, Static
 
-from feedscope.core import feed_cache
+from feedscope.core import config, feed_cache
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.i18n import t
@@ -201,8 +201,12 @@ class MainScreen(MainSetupScreen):
         Binding("ctrl+a", "mark_all_read", "bindings.mark_all_read", show=False),
         Binding("ctrl+f", "favorite", "bindings.favorite"),
         Binding("f3", "favorites", "bindings.favorites", show=False),
+        # Ctrl+Y 复制当前条目链接（vim 的 yank 惯例）：高频但主屏页脚已满
+        # （7 键预算），提示进 README；详情/收藏屏页脚宽松处可见
+        Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
         Binding("ctrl+l", "language", "bindings.language", show=False),
+        Binding("ctrl+t", "theme", "bindings.theme", show=False),
         Binding("left", "nav_left", "bindings.sidebar", show=False),
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
@@ -650,9 +654,12 @@ class MainScreen(MainSetupScreen):
         view = self.query_one("#feed", ListView)
         if idx >= len(view.children):
             return  # 行还没画上（在途）：下批渲染自然对
-        view.children[idx].query_one(".item-mark", Label).update(self._row_mark(item))
+        row = view.children[idx]
+        mark = self._row_mark(item)
+        row.query_one(".item-mark", Label).update(mark)
+        row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
 
-    # ---- 只看未读（F4）与全部已读（Ctrl+Shift+R）----
+    # ---- 只看未读（F4）与全部已读（Ctrl+A）----
 
     def action_unread_only(self) -> None:
         """F4：只看未读开关（会话级，重启回全量；不影响 loader/Ctrl+N 的全量数据）。"""
@@ -713,6 +720,32 @@ class MainScreen(MainSetupScreen):
     def action_favorites(self) -> None:
         """F3：收藏列表（读本地快照零请求，见 ui/screens/favorites.py）。"""
         self.app.push_screen(FavoritesScreen())
+
+    def action_theme(self) -> None:
+        """Ctrl+T：主题选择。纯显示层即时生效（对照 Ctrl+L 语言的重启模型），
+        选完当场换肤 + 落盘；wait_for_dismiss 要在 worker 里（语言屏同款）。"""
+        self.app.run_worker(self._theme_flow(), group="theme")
+
+    async def _theme_flow(self) -> None:
+        from feedscope.ui.screens.theme import ThemeScreen
+
+        name = await self.app.push_screen(
+            ThemeScreen(highlight=self.app.theme), wait_for_dismiss=True
+        )
+        if not name or name == self.app.theme:
+            return
+        self.app.theme = name  # Textual 即时应用全屏换肤
+        config.save_theme(name)
+        feedback.info(self, t("theme.toast_applied", name=name))
+
+    def action_copy_link(self) -> None:
+        """Ctrl+Y：复制当前条目链接（详情/回答层的 Ctrl+Y 复制的是正在读的）。"""
+        item = self.current_item()
+        if item is None:
+            feedback.info(self, t("main.toast_no_selection"))
+            return
+        self.app.copy_to_clipboard(item.url)
+        feedback.info(self, t("main.toast_copied"))
 
     # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
 

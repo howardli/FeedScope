@@ -310,7 +310,7 @@ def no_comments_registry():
 
 async def _run_flow(opened: list[str]) -> None:
     app = FeedScopeApp()
-    assert app.theme == "feedscope-editor", "克制的编辑器风主题已启用"
+    assert app.theme == "editor-dark", "克制的编辑器风主题已启用（ui/themes/editor-dark.toml）"
     async with app.run_test(size=(90, 36)) as pilot:
         assert await settle(pilot, lambda: len(app.main.items) == 3), "列表加载"
 

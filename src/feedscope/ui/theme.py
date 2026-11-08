@@ -1,45 +1,98 @@
-"""克制的编辑器风深色主题：低饱和、灰阶层级，长时间阅读不刺眼。
+"""主题加载器：ui/themes/ 下一个 TOML 一个主题，自动发现（镜像 core/i18n）。
 
-色板对齐 VS Code Dark+ 的克制取向：
-- 背景近黑灰（#1e1e1e）、前景浅灰（#d4d4d4），层级用 #252526/#2d2d30 的灰阶
-- 全主题唯一强调色是低饱和编辑器蓝 #569cd6（选中/焦点/链接），选中态由
-  Textual 从 primary 派生暗化色，贴近 VS Code 列表选中背景 #264f78
-- 语义色全部用暗色版：错误 #f48771、警告 #dcdcaa、成功 #6a9955
-- 不引入任何高饱和/荧光色
-
-Textual 8 的 Theme 是数据类：这些色直接喂给 ColorSystem，
-Header/Footer/Markdown/ListView 自动取色，无需逐组件写 CSS。两处派生
-不合意、经 variables/CSS 覆写（后者见 ui/screens/reading.py 的 READING_CSS）：
-- Markdown 标题取 primary 会整行变蓝（H5/H6 甚至 ansi_cyan）——抹平成
-  段落样式，所有源的正文同一种格式；
-- 链接缺省取前景灰，灰底灰字认不出可点——编辑器蓝只留给链接。
+- 新增主题 = 复制一份 TOML 改色，零代码改动；键校验测试（tests/test_theme.py）
+  钉住完整性——缺色槽/缺变量名 CI 红，坏文件运行时跳过 + 警告（i18n 同款容错）
+- 主题与语言同为「一文件一资源」，但生效模型不同：语言烙进抓取数据需重启
+  （Ctrl+L 落盘后重启生效），主题纯显示层——App.theme = name 即时生效
+  （Ctrl+T 当场换肤）
+- Textual 8 的 Theme 是数据类：TOML 的 [theme] 表直接喂字段，
+  [theme.variables] 进 CSS 变量（$link-color 等三处消费点见各屏 CSS）
 """
 
 from __future__ import annotations
 
+import logging
+import tomllib
+from pathlib import Path
+
 from textual.theme import Theme
 
-FEEDSCOPE_THEME = Theme(
-    name="feedscope-editor",
-    primary="#569cd6",  # 编辑器蓝：选中/高亮
-    secondary="#5c6b7a",  # 次级钢蓝灰
-    accent="#569cd6",  # 焦点环
-    warning="#dcdcaa",  # 暗黄（VS Code 警告色）
-    error="#f48771",  # 暗珊瑚红（VS Code 错误色）
-    success="#6a9955",  # 暗绿（VS Code 注释绿）
-    foreground="#d4d4d4",  # 编辑器前景
-    background="#1e1e1e",  # 编辑器背景
-    surface="#252526",  # 侧栏/面板
-    panel="#2d2d30",  # 边框/分隔
-    boost="#37373d",  # 悬浮
-    dark=True,
-    variables={
-        "footer-key-foreground": "#9aa0a6",
-        # 链接：缺省取前景灰（灰底灰字认不出可点），编辑器蓝只留给这里
-        # （Markdown 标题的统一格式见 reading.py 的 READING_CSS，不占强调色）
-        "link-color": "#569cd6",
-        # 侧栏未聚焦选中带（VS Code 未聚焦选中同款灰）：boost 字段在 CSS 变量
-        # $boost 里是 4% 半透明悬浮层（铺了看不见），实底只能走 variables
-        "nav-sel-background": "#37373d",
-    },
+logger = logging.getLogger(__name__)
+
+_DIR = Path(__file__).parent / "themes"
+DEFAULT = "editor-dark"
+
+# 必填色槽（键校验的钉子）：漏一个 = 整文件跳过，不部分上色
+_SLOTS = (
+    "name",
+    "dark",
+    "primary",
+    "secondary",
+    "accent",
+    "warning",
+    "error",
+    "success",
+    "foreground",
+    "background",
+    "surface",
+    "panel",
+    "boost",
 )
+# CSS 变量消费点（main/reading 的 CSS 里 $xxx 引用），缺了对应样式静默回退
+_VARIABLES = ("link-color", "footer-key-foreground", "nav-sel-background")
+
+_cache: list[Theme] | None = None
+
+
+def available() -> list[Theme]:
+    """全部可用主题（按 name 排序；坏文件跳过 + 警告，绝不挡启动）。"""
+    global _cache
+    if _cache is None:
+        themes: list[Theme] = []
+        for path in sorted(_DIR.glob("*.toml")):
+            try:
+                data = tomllib.loads(path.read_text(encoding="utf-8"))["theme"]
+                variables = data["variables"]
+                missing = [k for k in (*_SLOTS, *_VARIABLES) if k not in ({**data, **variables})]
+                if missing:
+                    logger.warning("主题 %s 缺字段 %s，已跳过", path.name, missing)
+                    continue
+                themes.append(_build(data))
+            except (OSError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
+                logger.warning("主题 %s 无法解析，已跳过：%s", path.name, exc)
+        if not themes:  # 内置主题全坏 = 安装损坏，退 Textual 缺省而不是黑屏
+            logger.warning("ui/themes/ 下没有可用主题，回退 Textual 内置主题")
+            return []
+        _cache = themes
+    return list(_cache)
+
+
+def _build(data: dict) -> Theme:
+    return Theme(
+        name=str(data["name"]),
+        dark=bool(data["dark"]),
+        primary=str(data["primary"]),
+        secondary=str(data["secondary"]),
+        accent=str(data["accent"]),
+        warning=str(data["warning"]),
+        error=str(data["error"]),
+        success=str(data["success"]),
+        foreground=str(data["foreground"]),
+        background=str(data["background"]),
+        surface=str(data["surface"]),
+        panel=str(data["panel"]),
+        boost=str(data["boost"]),
+        variables={k: str(v) for k, v in data["variables"].items()},
+    )
+
+
+def resolve(name: str | None) -> str:
+    """配置值 -> 可用主题名；缺失/非法回退 DEFAULT（配置坏不该黑屏）。"""
+    if name and any(t.name == name for t in available()):
+        return name
+    return DEFAULT
+
+
+def register_all(app) -> None:  # noqa: ANN001 - Textual App（避免运行时导入成环）
+    for theme in available():
+        app.register_theme(theme)

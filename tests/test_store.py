@@ -261,6 +261,43 @@ def test_toggle_adjusts_count_both_ways() -> None:
     assert st.unread_count("v2ex", "hot") == 3
 
 
+def test_overlap_across_sibling_feeds() -> None:
+    """兄弟流重叠（知乎热榜↔推荐 / HN front↔new / X 推荐↔关注：同一 id 同时
+    出现在两个流）与 RSS 聚合同类：成员模型统一覆盖，两边角标都减。"""
+    st = ReadState()
+    q = _item("zhihu", "question/9")
+    st.note_fetched([q], "hot", recount=True)
+    st.note_fetched([q], "recommend", recount=True)
+    assert st.unread_count("zhihu", "hot") == 1
+    assert st.unread_count("zhihu", "recommend") == 1, "兄弟流各自计它"
+    st.mark_read("zhihu", "question/9")
+    assert st.unread_count("zhihu", "hot") == 0
+    assert st.unread_count("zhihu", "recommend") == 0, "读它两边同步减"
+
+
+def test_membership_decrements_both_feeds() -> None:
+    """RSS 条目同时活在「全部」与单订阅流：两边角标都计它，读它两边同步减
+    （曾只记首见流——在单订阅流里读它、聚合流角标不动，反之亦然）。"""
+    st = ReadState()
+    item = _item("rss", "k/1")
+    st.note_fetched([item], "all", recount=True)  # 启动默认停聚合流：首见在 all
+    st.note_fetched([item], "k", recount=True)  # 再进单订阅流：成员并入
+    assert st.unread_count("rss", "all") == 1
+    assert st.unread_count("rss", "k") == 1, "两边角标都计它"
+    st.mark_read("rss", "k/1")
+    assert st.unread_count("rss", "k") == 0, "在读的这个流减了"
+    assert st.unread_count("rss", "all") == 0, "另一个成员流同步减"
+
+    # Ctrl+A 清仓同理：单订阅流清零，「全部」的角标一起塌
+    st2 = ReadState()
+    a, b = _item("rss", "k/1"), _item("rss", "k/2")
+    st2.note_fetched([a, b], "all", recount=True)
+    st2.note_fetched([a, b], "k", recount=True)
+    st2.mark_all_read([a, b], "k")
+    assert st2.unread_count("rss", "k") == 0
+    assert st2.unread_count("rss", "all") == 0, "成员流随清仓同步塌"
+
+
 def test_mark_all_read_zeroes_feed_count() -> None:
     st = ReadState()
     items = [_item("hn", str(i)) for i in range(4)]
@@ -269,6 +306,45 @@ def test_mark_all_read_zeroes_feed_count() -> None:
     assert st.unread_count("hn", "front") == 0
     assert all(st.is_read("hn", str(i)) for i in range(4))
     assert ReadState().unread_count("hn", "front") == 0  # 跨实例（重启）持久
+
+
+def test_old_entries_without_feed_get_backfilled() -> None:
+    """角标功能之前建的条目没有 feed 字段：刷新时回填，读它才能递减。
+
+    真实场景即「知乎热榜读了一条角标不减」——存量条目递减无路由。
+    """
+    # 造旧形状数据：条目存在但无 feed（模拟 0.2.x 时代的 state.json）
+    state_path().write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "items": {"zhihu": {"question/1": {"seen": 1.0, "read": 0.0}}},
+                "feeds": {"zhihu/hot": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    st = ReadState()
+    st.mark_read("zhihu", "question/1")
+    assert st.unread_count("zhihu", "hot") == 1, "旧病：无路由，读了不减"
+
+    # 重造干净的旧形状（上面的 mark_read 已把 q1 落盘成已读）
+    state_path().write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "items": {"zhihu": {"question/1": {"seen": 1.0, "read": 0.0}}},
+                "feeds": {"zhihu/hot": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    st2 = ReadState()
+    items = [_item("zhihu", "question/1"), _item("zhihu", "question/2")]
+    st2.note_fetched(items, "hot", recount=True)  # 刷新：q1 是无 feed 的旧条目 → 回填
+    assert st2.unread_count("zhihu", "hot") == 2
+    st2.mark_read("zhihu", "question/1")
+    assert st2.unread_count("zhihu", "hot") == 1, "回填后递减有路由"
 
 
 def test_write_failure_keeps_memory_state(

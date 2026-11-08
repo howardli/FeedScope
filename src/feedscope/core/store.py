@@ -12,9 +12,12 @@
   state.json：{"version": 1, "items": {<source>: {<id>: {"seen", "read", "fav"?}}}}
   （read 为 0 = 未读；seen 兼作淘汰序；fav 见下）
 - 每流未读计数：顶层 "feeds": {"<source>/<feed>": n}。**以刷新为准**——每次
-  note_fetched 整流重数（本批未读条数），mark_read/toggle 按条目首见时记的
-  feed 名增减（从收藏屏读也减对家）。已知近似：同一 RSS 条目同时在「全部」
-  与单订阅流时，另一流的计数到它下次刷新才纠偏——误差有界自愈
+  note_fetched 整流重数（本批未读条数）。递减按条目的**成员流集合**
+  （entry["feeds"]，每次抓取把所在流并入；旧数据只有单数 feed 字段的读取时
+  并入集合）——RSS/Telegram 的条目同时活在「全部」与单订阅两个流里、两边
+  角标都计它，读它必须两边同步减（只记首见流会在另一个流里纹丝不动）。
+  已知近似：成员集与各流计数在两次刷新之间可能漂移（钳 0 防负），刷新重数
+  自愈
 - 收藏存**全量快照**（收藏那一刻的完整 FeedItem，含 extra 正文）于
   favorites.json：{"version": 1, "items": {<source>: {<id>: {"fav": ts,
   "item": {...}}}}}——条目会从列表流走、回答/推文会被删，按 id 回源重取
@@ -67,8 +70,19 @@ def _valid_entry(e: object) -> bool:
     return isinstance(e, dict) and isinstance(e.get("seen"), (int, float))
 
 
-# 条目值：时间戳们（float）+ 可选首见流名（str，计数递减的路由键）
-Entry = dict[str, float | str]
+def _member_feeds(entry: Entry) -> list[str]:
+    """条目的成员流集合：entry["feeds"]（新）+ 单数 feed（旧数据）并入去重。"""
+    raw = entry.get("feeds")
+    feeds = [f for f in raw if isinstance(f, str)] if isinstance(raw, list) else []
+    legacy = entry.get("feed")
+    if isinstance(legacy, str) and legacy and legacy not in feeds:
+        feeds.append(legacy)  # 角标功能之前/初版的首见字段，读取时并入成员集
+    return feeds
+
+
+# 条目值：时间戳们（float）+ 成员流集合（list[str]，计数递减的路由键；
+# 旧数据的单数 feed 字段是 str，读取时经 _member_feeds 并入集合）
+Entry = dict[str, float | str | list[str]]
 SourceEntries = dict[str, Entry]
 
 
@@ -171,8 +185,15 @@ class ReadState:
                 fresh.add(item_key(it))
                 entry: Entry = {"seen": now, "read": 0.0}
                 if feed:
-                    entry["feed"] = feed  # 首见流：mark_read 按它路由计数递减
+                    entry["feeds"] = [feed]  # 成员流集合：聚合/单订阅双成员由此积累
                 ids[it.id] = entry
+            elif feed:
+                members = _member_feeds(ids[it.id])
+                if feed not in members:
+                    # 旧条目回填（无任何流字段）+ 多流成员并入（同一 RSS 条目
+                    # 先后在「全部」与单订阅流被抓到）：读它时两边角标同步减
+                    members.append(feed)
+                    ids[it.id]["feeds"] = members
         if items and feed:
             key = f"{items[0].source}/{feed}"
             feeds = self._feeds_data()
@@ -186,13 +207,12 @@ class ReadState:
         return fresh
 
     def _bump(self, source: str, entry: Entry, delta: int) -> None:
-        """按条目首见流名增减角标计数（下限 0；没有流名的条目无处可减）。"""
-        feed = entry.get("feed")
-        if not isinstance(feed, str) or not feed:
-            return
-        key = f"{source}/{feed}"
-        if key in self._feeds_data():
-            self._feeds[key] = max(0, self._feeds[key] + delta)
+        """按条目的成员流集合增减角标（逐流钳 0；没有成员的条目无处可减）。"""
+        feeds = self._feeds_data()
+        for feed in _member_feeds(entry):
+            key = f"{source}/{feed}"
+            if key in feeds:
+                feeds[key] = max(0, feeds[key] + delta)
 
     def mark_read(self, source: str, id: str) -> None:
         """打开条目（进详情 / 浏览器兜底）即已读；未见过的条目也能标（直接开链接）。"""
@@ -216,14 +236,23 @@ class ReadState:
         return True
 
     def mark_all_read(self, items: list[FeedItem], feed: str) -> None:
-        """一键清仓（Ctrl+Shift+R）：整批置已读 + 该流角标清零，单次落盘。"""
+        """一键清仓（Ctrl+A）：整批置已读 + 该流角标清零，单次落盘。
+
+        成员流（如「全部」也计着这些条目）逐条递减、目标流直接清零——
+        两边角标一起塌，不用等对方下次刷新。
+        """
         data = self._data()
         now = time.time()
+        feeds = self._feeds_data()
         for it in items:
             entry = data.setdefault(it.source, {}).setdefault(it.id, {"seen": now, "read": 0.0})
             entry["read"] = now
+            for member in _member_feeds(entry):
+                key = f"{it.source}/{member}"
+                if key in feeds:
+                    feeds[key] = max(0, feeds[key] - 1)
         if items and feed:
-            self._feeds_data()[f"{items[0].source}/{feed}"] = 0
+            feeds[f"{items[0].source}/{feed}"] = 0
         self._flush()
 
     # ---- 收藏（快照在 favorites.json，判据在 state.json 的 fav 字段）----
@@ -272,10 +301,11 @@ class ReadState:
 def _prune(items: dict[str, SourceEntries]) -> None:
     """超过 _MAX_ITEMS 条按 seen 最旧淘汰（清空的源一起消失）；收藏条目豁免。"""
     evictable = [
-        (float(e["seen"]), src, i)
+        (seen, src, i)
         for src, ids in items.items()
         for i, e in ids.items()
         if not e.get("fav")
+        and isinstance(seen := e.get("seen"), (int, float))  # _load 已滤形，这里收窄类型
     ]
     excess = len(evictable) - _MAX_ITEMS
     if excess <= 0:

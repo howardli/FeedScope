@@ -78,6 +78,7 @@ class FavoritesScreen(Screen[None]):
         Binding("escape", "back", "bindings.back"),
         Binding("ctrl+f", "unfavorite", "bindings.favorite"),
         Binding("ctrl+o", "open_browser", "bindings.browser"),
+        Binding("ctrl+y", "copy_link", "bindings.copy"),
     ]
 
     # 行样式与主屏同源（见 list_render.LIST_ROW_CSS 的说明）；本屏只留私有规则
@@ -222,7 +223,10 @@ class FavoritesScreen(Screen[None]):
         view = self.query_one("#fav-list", ListView)
         if idx >= len(view.children):
             return
-        view.children[idx].query_one(".item-mark", Label).update(self._row_mark(item))
+        row = view.children[idx]
+        mark = self._row_mark(item)
+        row.query_one(".item-mark", Label).update(mark)
+        row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
 
     # ---- 键位动作 ----
 
@@ -248,6 +252,15 @@ class FavoritesScreen(Screen[None]):
         self._tui.state.toggle_fav(item)
         feedback.info(self, t("fav.toast_removed"))
         self.run_worker(self._rebuild(), exclusive=True)
+
+    def action_copy_link(self) -> None:
+        """Ctrl+Y：复制当前收藏的链接（快照里的 url，不依赖源在线）。"""
+        item = self._current()
+        if item is None:
+            feedback.info(self, t("main.toast_no_selection"))
+            return
+        self.app.copy_to_clipboard(item.url)
+        feedback.info(self, t("main.toast_copied"))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id != "fav-list":

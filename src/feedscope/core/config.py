@@ -192,6 +192,19 @@ def save_language(code: str) -> None:
     _write_config(_render_config(_enabled_from_data(data), data))
 
 
+def get_theme() -> str | None:
+    """配置的主题名（ui/theme.py 的注册键）；缺省 None = 加载器回退默认深色。"""
+    theme = _read()[0].get("theme")
+    return theme if isinstance(theme, str) and theme else None
+
+
+def save_theme(name: str) -> None:
+    """保存主题设置（Ctrl+T 即时生效 + 这里落盘）；其余键原样保留。"""
+    data = _read()[0]
+    data["theme"] = name
+    _write_config(_render_config(_enabled_from_data(data), data))
+
+
 def _toml_str(s: str) -> str:
     # json 字符串即合法 TOML 基本串（转义规则同源），不为此引入写库
     return json.dumps(s, ensure_ascii=False)
@@ -240,20 +253,23 @@ def _enabled_from_data(data: dict) -> list[str] | None:
 def _render_config(ids: list[str] | None, data: dict) -> list[str]:
     """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
 
-    只写本工具认识的键：language + enabled + 各源非空 hide 段 + feeds 订阅表
-    （其余丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消彼长，
-    注释头已说明归属）。feeds 是用户数据（不是工具生成的状态），必须原样
-    保留——丢段等于丢订阅；language 同理（i18n 的落盘键，漏写 = 丢语言设置）。
+    只写本工具认识的键：language + theme + enabled + 各源非空 hide 段 + feeds
+    订阅表（其余丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消
+    彼长，注释头已说明归属）。feeds 是用户数据（不是工具生成的状态），必须
+    原样保留——丢段等于丢订阅；language / theme 同理（落盘键，漏写 = 丢设置）。
     """
     lines = [f"# {line}" for line in t("config.file_header").splitlines()]
     language = data.get("language")
     if isinstance(language, str) and language:
         lines += ["", f"language = {_toml_str(language)}"]
+    theme = data.get("theme")
+    if isinstance(theme, str) and theme:
+        lines += ["", f"theme = {_toml_str(theme)}"]
     if ids is not None:
         lines += ["", f"enabled = {_toml_array(ids)}"]
     for sid, section in data.items():
-        if sid in ("enabled", "language"):
-            continue  # 已由参数 ids / language 行统一重写，不是「无法识别的顶层键」
+        if sid in ("enabled", "language", "theme"):
+            continue  # 已由参数 ids / language / theme 行统一重写，不是「无法识别的顶层键」
         if not isinstance(section, dict):
             logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)
             continue

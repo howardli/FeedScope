@@ -42,10 +42,17 @@ unread_only = "Unread only"
 mark_all_read = "Mark all read"
 favorite = "Favorite"
 favorites = "Favorites"
+theme = "Theme"
+copy = "Copy link"
 
 [language]
 title = "选择语言 / Choose Language"
 hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
+
+[theme]
+title = "UI theme"
+hint = "Enter to apply · Esc to cancel"
+toast_applied = "theme switched: {name}"
 
 [main]
 # Bilingual by design (same value in zh-CN.toml): the reader may not read the
@@ -75,6 +82,7 @@ toast_no_more = "no more"
 toast_no_new_retry = "nothing new this round — press Ctrl+N again later to retry"
 toast_marked_read = "marked as read"
 toast_marked_unread = "marked as unread"
+toast_copied = "link copied"
 toast_unread_on = "Unread only: on"
 toast_unread_off = "Unread only: off"
 confirm_mark_all = "Mark all {n} items as read?"

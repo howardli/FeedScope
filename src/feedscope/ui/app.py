@@ -26,7 +26,7 @@ from feedscope.ui import Bindings
 from feedscope.ui.account import AccountFlow
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.screens.main import MainScreen
-from feedscope.ui.theme import FEEDSCOPE_THEME
+from feedscope.ui.theme import register_all, resolve
 
 
 def _no_prewarm() -> bool:
@@ -46,8 +46,8 @@ class FeedScopeApp(App[None]):
         return MainScreen()
 
     # 关闭 Textual 自带命令面板（页脚 palette 链接 + Ctrl+P）：里面只有框架默认的
-    # Theme/Quit/Keys/Screenshot 系统命令，对本应用全是冗余——主题定死编辑器风、
-    # 退出有 q，其余是调试入口，不该暴露给用户。
+    # Theme/Quit/Keys/Screenshot 系统命令，对本应用全是冗余——主题有自己的
+    # Ctrl+T 选择屏（一文件一主题，见 ui/themes/）、退出有 q，其余是调试入口。
     ENABLE_COMMAND_PALETTE = False
 
     # 键位全部非打印键：字母/数字会被中文输入法拦进候选框，一个动作只留
@@ -64,9 +64,10 @@ class FeedScopeApp(App[None]):
         # 首启语言屏的预选高亮；这里保证直构 App 的路径（截图脚本 / 测试）
         # 与 cli.main 组装的一致）。语言随进程固定：改语言走 Ctrl+L 落盘 + 重启
         i18n.set_language(config.get_language() or i18n.DEFAULT_LANGUAGE)
-        # 克制的编辑器风配色（见 ui/theme.py），产品需求而非保守
-        self.register_theme(FEEDSCOPE_THEME)
-        self.theme = FEEDSCOPE_THEME.name
+        # 主题：ui/themes/ 一文件一主题自动发现（见 ui/theme.py）；配置缺失/
+        # 非法回退默认深色。纯显示层，Ctrl+T 运行时可实时切换（无需重启）
+        register_all(self)
+        self.theme = resolve(config.get_theme())
         # 账号动线（撞墙自动询问 / Ctrl+U 登录登出）：状态与编排都在 ui/account.py
         self.accounts = AccountFlow(self)
         # 已读/已见状态（● 新 / ○ 未读 / 空已读 的判据）：惰性加载，见 core/store.py

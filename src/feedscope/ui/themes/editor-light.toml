@@ -1,0 +1,24 @@
+# FeedScope 主题 · 编辑器浅色（VS Code Light+ 取向）
+#
+# 深色版的同族翻译：同样的克制取向换到白底——灰阶层级用浅灰阶，唯一
+# 强调色换成 VS Code Light 的交互蓝；语义色全部用浅底可读的暗版。
+
+[theme]
+name = "editor-light"
+dark = false
+primary = "#007acc"      # 交互蓝：选中/高亮/未读圆点
+secondary = "#6c7a89"    # 次级灰蓝
+accent = "#007acc"       # 焦点环
+warning = "#8a6a00"      # 暗金黄（白底可读）
+error = "#cd3131"        # 暗红
+success = "#388a34"      # 暗绿
+foreground = "#3b3b3b"   # 正文深灰（纯黑刺眼）
+background = "#ffffff"
+surface = "#f3f3f3"      # 侧栏/面板
+panel = "#e5e5e5"        # 边框/分隔
+boost = "#e8e8e8"        # 悬浮
+
+[theme.variables]
+link-color = "#007acc"
+footer-key-foreground = "#6e6e6e"
+nav-sel-background = "#e4e6f1"

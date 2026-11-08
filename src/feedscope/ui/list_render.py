@@ -32,6 +32,9 @@ ListItem { padding: 0 1; height: auto; }
 .item-row { height: auto; }
 .item-mark { width: 2; color: $primary; }
 ListItem.-highlight .item-mark { color: $block-cursor-foreground; }
+/* read rows: title dimmed one level (meta is already dim) so read/unread is
+   legible at a glance even where the dot column is subtle (light theme) */
+ListItem.row-read .item-title { color: $text-muted; }
 /* source tag column (favorites only; width set per-batch inline): left-aligned
    and muted so cross-source rows stay visually uniform */
 .item-tag { text-wrap: nowrap; color: $text-muted; }
@@ -77,4 +80,8 @@ def build_item(
         cells.append(tag_label)
     cells.append(score)
     cells.append(Label(title, classes="item-title"))
-    return ListItem(Horizontal(*cells, classes="item-row"))
+    # 二态圆点语义下 mark 为空 = 已读：行加 row-read 类（标题置灰，CSS 见上）
+    item = ListItem(Horizontal(*cells, classes="item-row"))
+    if not mark:
+        item.add_class("row-read")
+    return item

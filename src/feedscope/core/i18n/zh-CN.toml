@@ -40,10 +40,17 @@ unread_only = "只看未读"
 mark_all_read = "全部已读"
 favorite = "收藏/取消"
 favorites = "收藏列表"
+theme = "主题"
+copy = "复制链接"
 
 [language]
 title = "选择语言 / Choose Language"
 hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
+
+[theme]
+title = "界面主题"
+hint = "Enter 应用 · Esc 取消"
+toast_applied = "主题已切换：{name}"
 
 [main]
 # 双语同值（en.toml 同）：切换方未必读得懂当前语言的提示，两个方向都要看懂
@@ -72,6 +79,7 @@ toast_no_more = "没有更多了"
 toast_no_new_retry = "这轮没拉到新内容，稍后再按 Ctrl+N 重试"
 toast_marked_read = "已标记已读"
 toast_marked_unread = "已标记未读"
+toast_copied = "链接已复制"
 toast_unread_on = "只看未读：开"
 toast_unread_off = "只看未读：关"
 confirm_mark_all = "把 {n} 条全部标为已读？"
