@@ -138,7 +138,8 @@ def test_open_feed_all_merges_by_time(monkeypatch: pytest.MonkeyPatch, tmp_path)
     loader = asyncio.run(get_source("telegram").open_feed("all"))
     asyncio.run(loader.close())
     assert [it.id for it in loader.items] == ["alpha/15", "beta/14"]
-    assert loader.items[0].meta.startswith("频道甲 · ")  # 聚合视图前缀频道名
+    assert loader.items[0].tag == "频道甲"  # 聚合视图频道名走源名列
+    assert loader.items[0].meta == "15K 观看"  # 元信息不带频道名前缀
     assert loader.done  # 聚合流是一次性快照（同 RSS）
 
 

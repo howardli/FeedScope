@@ -38,6 +38,7 @@ def _isolated_user_env(
     # （state.json 的已读标记 / feeds/ 缓存），断言也会被本机历史污染
     monkeypatch.setenv("FEEDSCOPE_STATE", str(env_dir / "state.json"))
     monkeypatch.setenv("FEEDSCOPE_FEED_CACHE", str(env_dir / "feeds"))
+    monkeypatch.setenv("FEEDSCOPE_FAVORITES", str(env_dir / "favorites.json"))
 
 
 @pytest.fixture(autouse=True)

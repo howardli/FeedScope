@@ -11,7 +11,7 @@ import json
 import pytest
 
 from feedscope.core.models import FeedItem
-from feedscope.core.store import ReadState, item_key, state_path
+from feedscope.core.store import ReadState, favorites_path, item_key, state_path
 
 
 def _item(source: str, id: str, title: str = "标题") -> FeedItem:
@@ -161,6 +161,56 @@ def test_mark_read_idempotent_skips_write(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(ReadState, "_flush", boom)
     st.mark_read("hn", "1")  # 不炸 = 没写
     assert st.is_read("hn", "1")
+
+
+# ---- 收藏（fav 字段 + favorites.json 快照）----
+
+
+def test_toggle_fav_and_favorites_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """收藏往返与排序（新→旧）：快照完整可回，取消时两处同删。"""
+    import itertools
+
+    # time.time 平局会让排序不稳定（同秒收藏的顺序漂移），钉成单调递增
+    counter = itertools.count(1000)
+    monkeypatch.setattr("feedscope.core.store.time.time", lambda: next(counter))
+
+    st = ReadState()
+    a = _item("zhihu", "question/1", "甲")
+    b = _item("hn", "5", "乙")
+    assert st.toggle_fav(a) is True
+    assert st.toggle_fav(b) is True
+    assert st.is_fav("zhihu", "question/1") and st.is_fav("hn", "5")
+
+    favs = st.favorites()
+    assert [it.title for _, it in favs] == ["乙", "甲"]  # 后收藏的在前
+    assert favs[1][1] == a  # 快照完整可回（含 url/meta）
+
+    # 跨实例（重启）仍在
+    assert [it.title for _, it in ReadState().favorites()] == ["乙", "甲"]
+
+    assert st.toggle_fav(a) is False  # 取消：state.json + favorites.json 同删
+    assert not st.is_fav("zhihu", "question/1")
+    assert [it.title for _, it in ReadState().favorites()] == ["乙"]
+
+
+def test_prune_never_evicts_favorites() -> None:
+    """淘汰只在非收藏条目里进行：收藏条目无论多旧都豁免。"""
+    st = ReadState()
+    items = [_item("hn", str(i)) for i in range(5)]
+    st.note_fetched(items)
+    st.toggle_fav(_item("hn", "2", "收藏的"))
+    _prune_with_cap(st._data(), cap=4)
+    assert st.is_fav("hn", "2"), "收藏条目不被淘汰"
+    assert sum(len(ids) for ids in st._data().values()) == 5  # 4 普通 + 1 收藏
+
+
+def test_favorites_bad_file_tolerated() -> None:
+    """favorites.json 坏 = 警告 + 空态，下一次收藏写回即修好。"""
+    favorites_path().write_text("{ 坏 JSON", encoding="utf-8")
+    st = ReadState()
+    assert st.favorites() == []
+    st.toggle_fav(_item("x", "1"))
+    assert len(ReadState().favorites()) == 1
 
 
 def test_write_failure_keeps_memory_state(

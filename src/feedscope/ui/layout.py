@@ -37,9 +37,12 @@ MD_OVERHEAD = 8
 RESIZE_DEBOUNCE = 0.15  # 秒
 
 
-def list_title_width(container_width: int, meta_col_width: int) -> int:
-    """列表标题列的折行可用宽；meta_col_width = 当前批的元信息列宽。"""
-    return max(10, container_width - LIST_ROW_OVERHEAD - MARK_COL_WIDTH - meta_col_width)
+def list_title_width(container_width: int, meta_col_width: int, tag_width: int = 0) -> int:
+    """列表标题列的折行可用宽；meta_col_width = 当前批的元信息列宽，
+    tag_width = 源名列宽（收藏屏跨源列表用，主列表为 0）。"""
+    return max(
+        10, container_width - LIST_ROW_OVERHEAD - MARK_COL_WIDTH - tag_width - meta_col_width
+    )
 
 
 def md_body_width(container_width: int) -> int:
@@ -68,3 +71,13 @@ def score_col_width(source: Source, items: list[FeedItem]) -> int:
     """
     longest = max((display_width(meta_col_text(source, it)) for it in items), default=1)
     return min(longest, META_COL_MAX) + META_COL_SPARE
+
+
+def tag_col_width(items: list[FeedItem]) -> int:
+    """源名列宽：批内最长 tag + 1（列内左对齐成列）；批内无 tag 为 0（不占列）。
+
+    主列表的聚合流（RSS/Telegram「全部」）与收藏屏跨源列表共用；单源流
+    整屏同源，tag 全空 → 列宽 0，行式与从前一致。
+    """
+    longest = max((display_width(it.tag) for it in items), default=0)
+    return longest + 1 if longest else 0

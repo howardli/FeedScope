@@ -1,4 +1,4 @@
-"""命令行入口：`feedscope` 启动 TUI；子命令 login / probe / doctor / rss。"""
+"""命令行入口：`feedscope` 启动 TUI；子命令 login / probe / doctor / rss / favorites。"""
 
 from __future__ import annotations
 
@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_p.add_argument("path", help=t("cli.help_rss_import_path"))
     export_p = rss_sub.add_parser("export", help=t("cli.help_rss_export"))
     export_p.add_argument("path", nargs="?", help=t("cli.help_rss_export_path"))
+
+    fav = sub.add_parser("favorites", help=t("cli.help_favorites"))
+    fav_sub = fav.add_subparsers(dest="fav_command")
+    fav_export = fav_sub.add_parser("export", help=t("cli.help_favorites_export"))
+    fav_export.add_argument("path", nargs="?", help=t("cli.help_favorites_export_path"))
 
     return parser
 
@@ -116,6 +121,39 @@ def _run_rss(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_favorites(args: argparse.Namespace) -> int:
+    """favorites 子命令：无子命令 = 明文列表；export = Markdown（防锁定，同 rss export）。"""
+    import time
+
+    from feedscope.core.store import ReadState
+
+    pairs = ReadState().favorites()
+    if args.fav_command != "export":
+        if not pairs:
+            print(t("cli.favorites_empty"))
+            return 0
+        for ts, it in pairs:
+            date = time.strftime("%Y-%m-%d", time.localtime(ts))
+            print(f"{it.source:<10} {date}  {it.title}  <{it.url}>")
+        print(t("fav.status_count", n=len(pairs)))
+        return 0
+
+    # Markdown 链接的方括号/圆括号会破坏语法，标题与 URL 做最小转义
+    lines = [
+        f"- [{it.title.replace('[', '(').replace(']', ')')}]"
+        f"({it.url.replace('(', '%28').replace(')', '%29')}) — {it.source}，"
+        f"{time.strftime('%Y-%m-%d', time.localtime(ts))}"
+        for ts, it in pairs
+    ]
+    md = "\n".join(lines) + "\n" if lines else ""
+    if args.path:
+        Path(args.path).write_text(md, encoding="utf-8")
+        print(t("cli.favorites_exported", n=len(pairs), path=args.path))
+    else:
+        print(md, end="")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # 进程语言按配置设定（未设置 = 缺省）：CLI 的 help/输出与 TUI 同语言；
     # 必须在 build_parser 之前——argparse 的 help 在构造时就成型
@@ -150,5 +188,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rss":
         return _run_rss(args)
+
+    if args.command == "favorites":
+        return _run_favorites(args)
 
     return 0

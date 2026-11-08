@@ -21,6 +21,7 @@ Zhihu Hot → X timeline → post detail (auto translation, quoted post) → Red
 - **RSS subscriptions**: any RSS / Atom feed; the "All" stream merges by publish time (cross-feed dedup, a dead feed never drags others down); read feed-provided full text in-terminal; conditional requests keep refreshes polite to sources
 - **Full in-terminal reading**: feed → question → answers → comments, loaded per layer on demand
 - **Read state & offline**: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back) — refreshes and restarts never touch it; the "N new" count lives in the status line; lists are cached locally, so restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
+- **Favorites / read-later**: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; a full snapshot is stored — items stay readable after they scroll off hot lists or get deleted, and `feedscope favorites export` takes them with you (no lock-in)
 - **HN discussion tree**: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads are flattened to two levels with `@parent` prefixes preserving who-replies-to-whom
 - **Auto Grok translation for foreign posts on X**; media markers `[图片]` / `[视频]` are clickable links to the original image / video
 - **Login loop**: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
@@ -110,6 +111,8 @@ feedscope
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
 | `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
+| `Ctrl+F` | Favorite / unfavorite the current item (works while reading too) |
+| `F3` | Favorites list: cross-source, newest first; Enter opens detail, Ctrl+F unfavorites |
 | `F5` | Refresh |
 | `Ctrl+U` | Account: login / logout |
 | `Ctrl+L` | UI language: pick and save; restart `feedscope` to apply |
@@ -123,11 +126,14 @@ All keys are non-printing — they work while a Chinese IME is active; typing pr
 
 The dot column on each row tracks reading state: `●` unread (editor blue), blank = read. Unread is persistent — refreshes, feed switches and restarts never touch it; the dot only clears when you open the item (`Enter` into detail, `Ctrl+O` to the browser, or `←`/`→` article-stepping inside a detail). `Ctrl+R` toggles the current item — mark it unread to revisit. How many items arrived with this refresh shows as a count in the status line ("N items · M new"), not as row-level marks.
 
+Favorites (`Ctrl+F`) store a **full snapshot at the moment of starring** (title/link/meta, and the body for RSS / Telegram) — items stay readable after they scroll off hot lists or get deleted. The `F3` list reads snapshots with zero requests (works offline); Enter fetches the latest comments from the original source. Favorited entries are exempt from the read-state cap; `feedscope favorites` lists them in the terminal and `feedscope favorites export [file.md]` exports Markdown to take them anywhere.
+
 Both live in plain local files (delete to reset; no credentials involved):
 
 | File | Contents |
 | --- | --- |
-| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen item ids with timestamps (capped at 10k entries, oldest evicted first) |
+| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids with timestamps (capped at 10k entries, oldest evicted first; favorites exempt) |
+| `favorites.json` (same state dir) | full snapshots of favorited items (user-curated data, never pruned) |
 | `feeds/` (platform cache dir, `~/.cache/feedscope/feeds/` on Linux) | one JSON list cache per feed (200 items per feed, 60 most recent feeds kept) |
 
 Startup and refresh paint the cache before fetching: restarts show the list instantly; offline or a broken site keeps the old content readable, and RSS / Telegram detail bodies travel with the cached list. `feedscope doctor` reports the state-file location.
@@ -170,6 +176,7 @@ feedscope doctor          # environment self-check (Chrome / profile / config)
 feedscope rss add <url> [--key k --label name]  # add: feed URL / site homepage (auto-discovered) / OPML path
 feedscope rss list | remove <key>               # list / remove subscriptions
 feedscope rss import <x.opml> | export [x.opml] # bulk import (idempotent merge) / export
+feedscope favorites [export [x.md]]             # list favorites / export as Markdown (no lock-in)
 ```
 
 ### Source & Feed Config
@@ -260,7 +267,7 @@ No login; data comes from each channel's public web preview (`t.me/s/<channel>`,
 
 - Pure subscription source shaped exactly like RSS: `F2` → Telegram row → `→` opens the manager; type a channel name or link (`durov`, `@durov`, `t.me/durov`, even a post link); label defaults to the channel's own name
 - The "All" stream merges every channel by publish time (newest first), one dead channel only loses its own items; each channel is also its own feed (individually hideable)
-- Meta column "N views" is the channel-post heat radar; the "All" stream prefixes the channel name; inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
+- Meta column "N views" is the channel-post heat radar; the "All" stream labels each row's origin in a dedicated source-tag column (same as the favorites list); inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
 - Details read list-carried content (zero requests); `Ctrl+N` in a single-channel feed pages back through history via the `?before=` cursor; no comment layer (channel discussion groups aren't in the preview)
 
 ## Community

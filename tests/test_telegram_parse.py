@@ -96,9 +96,11 @@ def test_parse_channel_html_media_posts() -> None:
 
 def test_parse_channel_html_all_view_label_prefix() -> None:
     items = parse_channel_html(HTML, channel="durov", label="Pavel Durov", all_view=True)
-    # 聚合视图前缀频道名；署名与频道名同名时不再重复占位
-    assert items[0].meta == "Pavel Durov · 5.87M 观看"
-    assert items[1].meta == "Pavel Durov · 6.58M 观看"
+    # 聚合视图频道名走源名列 tag；署名与频道名同名时不再重复占位
+    assert items[0].meta == "5.87M 观看"
+    assert items[0].tag == "Pavel Durov"
+    assert items[1].meta == "6.58M 观看"
+    assert items[1].tag == "Pavel Durov"
 
 
 def test_parse_channel_html_empty_and_title() -> None:

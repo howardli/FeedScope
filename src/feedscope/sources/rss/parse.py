@@ -94,14 +94,16 @@ def parse_feed(
         if not guid and not link:
             continue  # 双缺无法寻址
         author = _clean(entry.get("author"))
-        meta_parts = ([feed_label] if all_view else []) + ([author] if author else [])
         items.append(
             FeedItem(
                 source=SOURCE_ID,
                 id=f"{feed_key}/{guid or link}",
                 title=_clean(entry.get("title")) or t("words.no_title"),
                 url=link,
-                meta=" · ".join(meta_parts),
+                meta=author,
+                # 聚合流的订阅名走源名列（拼进元信息列会让右对齐列左缘参差），
+                # 单订阅流整屏同名不占列
+                tag=feed_label if all_view else "",
                 extra={
                     "feed_key": feed_key,
                     "feed_label": feed_label,

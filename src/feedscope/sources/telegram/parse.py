@@ -121,8 +121,8 @@ def parse_channel_html(
 ) -> list[FeedItem]:
     """一页预览 HTML -> FeedItem 列表（时间正序，调用方自行倒排/合并）。
 
-    all_view=True 是「全部」聚合视图：元信息列前缀频道名（单频道流里频道
-    名已在侧栏，不重复占位）。
+    all_view=True 是「全部」聚合视图：频道名走源名列 tag（单频道流里频道名
+    已在侧栏，不重复占位）——拼进元信息列会让右对齐列左缘参差。
     """
     items: list[FeedItem] = []
     for chunk in _CHUNK_SPLIT.split(html):
@@ -139,8 +139,9 @@ def parse_channel_html(
             continue  # 既无正文也无媒体：不可展示，跳条不跳流
         views = (m.group(1) if (m := _VIEWS_RE.search(chunk)) else "").strip()
         author = (m.group(1) if (m := _AUTHOR_RE.search(chunk)) else "").strip()
-        parts = ([label] if all_view else []) + ([t("words.views", n=views)] if views else [])
-        # 聚合视图频道名已前缀：署名与频道同名时不再重复占位
+        parts = [t("words.views", n=views)] if views else []
+        # 聚合视图频道名在源名列：署名与频道同名时不再重复占位；单频道流
+        # 频道名只在侧栏，署名照常显示
         if author and author != (label if all_view else ""):
             parts.append(author)
         items.append(
@@ -150,6 +151,7 @@ def parse_channel_html(
                 title=title,
                 url=url,
                 meta=" · ".join(parts),
+                tag=label if all_view else "",
                 extra={
                     "content_md": md,
                     "published": m.group(1) if (m := _TIME_RE.search(chunk)) else "",

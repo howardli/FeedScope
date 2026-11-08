@@ -36,9 +36,10 @@ _ALLOWED: tuple[tuple[str, str], ...] = (
     ("core/browser.py", "\nasync ([url"),
     # 知乎开题并行拉取脚本（同上）
     ("sources/zhihu/fetch.py", "\nasync (roots"),
-    # Textual CSS 常量（样式注释，不上面屏）
+    # Textual CSS 常量（样式注释，不上面屏）；main.py 的前缀随 DEFAULT_CSS
+    # 拼接点走（行样式已抽到 list_render.LIST_ROW_CSS，字面量从这里开始）
     ("ui/dialogs.py", "\n    .dialog-fixed"),
-    ("ui/screens/main.py", "\n    ListItem"),
+    ("ui/screens/main.py", "\n    #feed.pane-aside"),
     ("ui/screens/reading.py", "\n    /* 楼层"),
 )
 

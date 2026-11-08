@@ -25,6 +25,8 @@ class FeedItem:
     url: str
     kind: str = ""                     # 内容类型；语义由源定义（Source.kind_labels / detail_kinds）
     meta: str = ""                     # 列表元信息列语义文本（热度/作者/节点名…），UI 统一截断对齐
+    tag: str = ""                      # 源名列：跨流混排（聚合流/收藏屏）标出处（订阅名/频道名）；
+                                       # 单源流为空。显示数据由解析层产出——UI 不读 extra 的约定不变
     extra: dict[str, Any] = field(default_factory=dict)  # 传给 detail 抓取的补充字段
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +42,7 @@ class FeedItem:
             "url": self.url,
             "kind": self.kind,
             "meta": self.meta,
+            "tag": self.tag,
             "extra": self.extra,
         }
 
@@ -56,6 +59,7 @@ class FeedItem:
             url=str(data.get("url", "")),
             kind=str(data.get("kind", "")),
             meta=str(data.get("meta", "")),
+            tag=str(data.get("tag", "")),
             extra=dict(data.get("extra") or {}),
         )
 

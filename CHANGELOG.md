@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Read/unread state: the row-leading `●` marks an item unread and clears when you open it (Enter into detail, `Ctrl+O` to the browser, `←`/`→` article stepping in a detail); `Ctrl+R` toggles the current item; unread persists across refreshes and restarts in a plain-text `state.json` (item ids and timestamps only, no credentials, 10k-entry FIFO cap), while the "N new" count of first-seen items shows in the status line
+- Favorites / read-later: `Ctrl+F` stars the current item from the list or while reading, `F3` opens the cross-source favorites list (newest first, Enter fetches latest comments from the original source); a full snapshot is stored in `favorites.json` so items stay readable after they leave the feeds, favorited entries are exempt from the read-state cap, and `feedscope favorites [export [file.md]]` lists / exports them as Markdown
+- Source-tag column for mixed lists: the RSS / Telegram "All" aggregate streams label each row's origin (feed / channel name) in a dedicated left-aligned column instead of prefixing it into the right-aligned meta column, which made column edges ragged; the favorites list shows the item's source the same way (a favorited aggregate item shows its feed/channel name)
 - Offline list cache: each feed is cached to its own JSON file (200 items per feed, 60 most recent feeds kept); startup and refresh paint the cache first (instant restarts), and a failed refresh keeps the old list on screen instead of clearing it — RSS / Telegram detail bodies travel with the cached list and read offline
 
 ### Fixed

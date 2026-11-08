@@ -122,7 +122,8 @@ def test_open_all_merges_and_isolates_failures(monkeypatch: pytest.MonkeyPatch, 
         ids = [it.id for it in loader.items]
         # 最新在前：RSS 第一篇(11-02) > Atom(11-01) > RSS 第二篇(10-27)；死链条目缺席但不炸
         assert ids == ["one/post-1", "two/tag:example.com,2026:1", "one/https://example.com/2"]
-        assert loader.items[0].meta == "源一 · 张三"  # 聚合视图：订阅名打头
+        assert loader.items[0].meta == "张三"  # 聚合视图：元信息只剩作者
+        assert loader.items[0].tag == "源一"  # 订阅名走源名列
     finally:
         asyncio.run(loader.close())
 

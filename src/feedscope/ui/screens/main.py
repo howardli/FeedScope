@@ -35,10 +35,12 @@ from feedscope.ui.layout import (
     RESIZE_DEBOUNCE,
     list_title_width,
     score_col_width,
+    tag_col_width,
 )
 from feedscope.ui.labels import retranslate_bindings
-from feedscope.ui.list_render import MARK_UNREAD, build_item
+from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
@@ -186,6 +188,8 @@ class MainScreen(MainSetupScreen):
         Binding("ctrl+u", "account", "bindings.account", show=False),
         Binding("ctrl+n", "more", "bindings.more"),
         Binding("ctrl+r", "toggle_read", "bindings.toggle_read"),
+        Binding("ctrl+f", "favorite", "bindings.favorite"),
+        Binding("f3", "favorites", "bindings.favorites"),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
         Binding("ctrl+l", "language", "bindings.language"),
         Binding("left", "nav_left", "bindings.sidebar"),
@@ -198,23 +202,10 @@ class MainScreen(MainSetupScreen):
 
     # 用 DEFAULT_CSS 而非 CSS：Textual 8.x 的默认屏创建路径不装载 Screen.CSS
     # （只有 push/switch 路径装载），自定义默认屏的 CSS 会被静默丢弃；DEFAULT_CSS
-    # 随挂件类注册、不依赖装载路径。本屏选择器与 App/其他屏零冲突，低优先级无害
-    DEFAULT_CSS = """
-    ListItem { padding: 0 1; height: auto; }
-
-    .item-row { height: auto; }
-    /* 行首圆点列（未读二态，宽 2 固定见 layout.MARK_COL_WIDTH）：● 未读上
-       编辑器蓝（全主题唯一强调色的既有用法），已读为空串不占色 */
-    .item-mark { width: 2; color: $primary; }
-    /* 选中行的高亮底就是编辑器蓝——蓝点叠蓝底不可见，高亮态改用选中文字
-       的前景变量（与行内文字同源同变）；pane-aside（高亮被抑制、无蓝底）
-       恢复编辑器蓝 */
-    ListItem.-highlight .item-mark { color: $block-cursor-foreground; }
+    # 随挂件类注册、不依赖装载路径。本屏选择器与 App/其他屏零冲突，低优先级无害。
+    # 列表行的样式与收藏屏共享（见 list_render.LIST_ROW_CSS），这里只留本屏私有
+    DEFAULT_CSS = LIST_ROW_CSS + """
     #feed.pane-aside > ListItem.-highlight .item-mark { color: $primary; }
-    /* 宽度不写死：逐行 inline 设为批内最长元信息（见 score_col_width）；
-       右对齐列，超上限的长署名折行而非缩略（名字与账号必须完整可见） */
-    .item-score { text-align: right; text-wrap: wrap; }
-    .item-title { width: 1fr; text-wrap: wrap; padding-left: 1; }
 
     /* 顶部站点 tab 条：active 仿编辑器打开中的文件 tab（加粗下划线），其余降灰 */
     #source-tabs { height: 1; background: $surface; padding: 0 1; }
@@ -264,6 +255,7 @@ class MainScreen(MainSetupScreen):
         self._new_count = 0
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
+        self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
 
@@ -429,10 +421,19 @@ class MainScreen(MainSetupScreen):
         view.clear()
         self.items = items
         self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
+        self._tag_width = tag_col_width(self.items)  # 聚合流的源名列（单源流 0）
         width = self._wrap_width()
         await view.extend(
             [
-                build_item(it, width, self._score_width, source, self._row_mark(it))
+                build_item(
+                    it,
+                    width,
+                    self._score_width,
+                    source,
+                    self._row_mark(it),
+                    tag=it.tag,
+                    tag_width=self._tag_width,
+                )
                 for it in self.items
             ]
         )  # 单次挂载 = 单次布局
@@ -491,17 +492,25 @@ class MainScreen(MainSetupScreen):
         feed_cache.save(self.current_source.source_id, self.current_feed, self.items)
         view = self.query_one("#feed", ListView)
         new_width = score_col_width(self.current_source, self.items)
-        if new_width > self._score_width:
-            # 新批次带来更长的元信息（更长的署名）：列变宽，旧条目的列宽与
-            # 标题折行全都要重排——全量重建，不只是追加新行
+        new_tag = tag_col_width(self.items)
+        if new_width > self._score_width or new_tag > self._tag_width:
+            # 新批次带来更长的元信息/源名（更长的署名、聚合流翻出新订阅）：
+            # 列变宽，旧条目的列宽与标题折行全都要重排——全量重建，不只是追加新行
             self._score_width = new_width
+            self._tag_width = new_tag
             await self.rebuild_items()
         else:
             width = self._wrap_width()
             await view.extend(
                 [
                     build_item(
-                        it, width, self._score_width, self.current_source, self._row_mark(it)
+                        it,
+                        width,
+                        self._score_width,
+                        self.current_source,
+                        self._row_mark(it),
+                        tag=it.tag,
+                        tag_width=self._tag_width,
                     )
                     for it in new
                 ]
@@ -513,7 +522,9 @@ class MainScreen(MainSetupScreen):
 
     def _wrap_width(self) -> int:
         """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
-        return list_title_width(self.query_one("#feed", ListView).region.width, self._score_width)
+        return list_title_width(
+            self.query_one("#feed", ListView).region.width, self._score_width, self._tag_width
+        )
 
     async def rebuild_items(self) -> None:
         """终端宽度变化后按新宽度重新折行（只重排版，不重新抓取）。"""
@@ -525,7 +536,18 @@ class MainScreen(MainSetupScreen):
         width = self._wrap_width()
         src = self.current_source
         await view.extend(
-            [build_item(it, width, self._score_width, src, self._row_mark(it)) for it in self.items]
+            [
+                build_item(
+                    it,
+                    width,
+                    self._score_width,
+                    src,
+                    self._row_mark(it),
+                    tag=it.tag,
+                    tag_width=self._tag_width,
+                )
+                for it in self.items
+            ]
         )
         view.index = 0 if idx is None else min(idx, len(self.items) - 1)
 
@@ -546,10 +568,16 @@ class MainScreen(MainSetupScreen):
         self._update_row_mark(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
-        """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。"""
-        try:
-            idx = self.items.index(item)
-        except ValueError:
+        """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。
+
+        按 (source, id) 定位而不是对象相等：收藏屏回写主屏时传的是快照
+        副本（meta 已加源名前缀），等值比对会失配；行身份本来就是键。
+        """
+        idx = next(
+            (i for i, it in enumerate(self.items) if it.source == item.source and it.id == item.id),
+            None,
+        )
+        if idx is None:
             return
         view = self.query_one("#feed", ListView)
         if idx >= len(view.children):
@@ -565,6 +593,24 @@ class MainScreen(MainSetupScreen):
         read = self._tui.state.toggle_read(item.source, item.id)
         self._update_row_mark(item)
         feedback.info(self, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
+
+    # ---- 收藏：Ctrl+F 标记 / F3 列表（屏在 ui/screens/favorites.py）----
+
+    def action_favorite(self) -> None:
+        """Ctrl+F：收藏/取消当前条目（全量快照防失效，F3 查看列表）。
+
+        主列表不加收藏列——toast 即反馈，收藏态的去处是 F3 那张跨源列表。
+        """
+        item = self.current_item()
+        if item is None:
+            feedback.info(self, t("main.toast_no_selection"))
+            return
+        fav = self._tui.state.toggle_fav(item)
+        feedback.info(self, t("fav.toast_added" if fav else "fav.toast_removed"))
+
+    def action_favorites(self) -> None:
+        """F3：收藏列表（读本地快照零请求，见 ui/screens/favorites.py）。"""
+        self.app.push_screen(FavoritesScreen())
 
     # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
 

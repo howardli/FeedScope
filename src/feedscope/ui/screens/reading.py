@@ -24,7 +24,7 @@ import dataclasses
 import webbrowser
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from rich.markup import escape
 from textual.binding import Binding
@@ -40,6 +40,9 @@ from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
+
+if TYPE_CHECKING:
+    from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
 
 
 def divider() -> Static:
@@ -253,6 +256,17 @@ class PagedReadingScreen(ReadingScreen):
     _worker_group: ClassVar[str] = "page"
     source: Source  # 源实例（失败文案与能力判定）
     item: FeedItem  # 正在读的条目（Ctrl+O 与屏间传递）
+
+    # 阅读中随手收藏是主场景：详情 / 评论两屏共用这一份（评论屏的 item 是
+    # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen
+    BINDINGS: ClassVar[Bindings] = [
+        Binding("ctrl+f", "favorite", "bindings.favorite"),
+    ]
+
+    def action_favorite(self) -> None:
+        """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。"""
+        fav = cast("FeedScopeApp", self.app).state.toggle_fav(self.item)
+        feedback.info(self.app, t("fav.toast_added" if fav else "fav.toast_removed"))
 
     loader: DetailLoader | CommentLoader | None = None
     _exhausted: bool = False  # 翻页对象已到头，Ctrl+N 不再触发加载

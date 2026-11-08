@@ -64,13 +64,17 @@ def test_rss2_fields_mapped() -> None:
 
 
 def test_meta_by_view() -> None:
-    """聚合视图订阅名打头（认出处），单订阅视图只留作者（订阅名是噪音）。"""
+    """聚合视图订阅名走源名列（认出处且不成噪音），单订阅视图不占列。"""
     merged = parse_feed(RSS_XML, feed_key="k", feed_label="测试源", all_view=True)
     single = parse_feed(RSS_XML, feed_key="k", feed_label="测试源", all_view=False)
-    assert merged[0].meta == "测试源 · 张三"
+    # 订阅名进 tag（源名列），元信息只剩作者——拼进元信息列会让右对齐列左缘参差
+    assert merged[0].meta == "张三"
+    assert merged[0].tag == "测试源"
     assert single[0].meta == "张三"
-    assert merged[1].meta == "测试源"  # 无作者的条目只剩订阅名
-    assert single[1].meta == ""  # 单订阅视图无作者 = 空元信息
+    assert single[0].tag == ""  # 单订阅视图整屏同名，不占列
+    assert merged[1].meta == ""  # 无作者的条目：空元信息（订阅名不垫底）
+    assert merged[1].tag == "测试源"
+    assert single[1].meta == ""
 
 
 def test_atom_and_guid_fallback() -> None:

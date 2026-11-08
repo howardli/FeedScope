@@ -36,6 +36,8 @@ more = "More"
 sidebar = "Sidebar"
 switch_source = "Switch"
 toggle_read = "Read/unread"
+favorite = "Favorite"
+favorites = "Favorites"
 
 [language]
 title = "选择语言 / Choose Language"
@@ -76,6 +78,12 @@ hint_top_bar = "top bar: ←→ switch sites, ↓ into the sidebar"
 hint_sidebar = "left sidebar: ↑↓ switch feeds, → back to the list"
 saved_n_sources = "saved: {n} sources enabled"
 saved_zero_sources = "saved: no sources enabled right now (F2 to re-enable)"
+[fav]
+toast_added = "Favorited (F3 to browse)"
+toast_removed = "Unfavorited"
+status_count = "{n} favorites"
+empty = "No favorites yet · press Ctrl+F on a list item or while reading"
+
 [errors]
 zero_items = "{label} parsed 0 items — the site may have changed (feedscope probe can re-check)"
 zero_items_with_feed = "{label} \"{feed}\": parsed 0 items — the site may have changed (feedscope probe can re-check)"
@@ -369,6 +377,11 @@ help_rss_import = "bulk import from OPML (idempotent merge; already-subscribed a
 help_rss_import_path = "OPML file path"
 help_rss_export = "export subscriptions as OPML 2.0"
 help_rss_export_path = "output file path (default: print to stdout, redirectable)"
+help_favorites = "favorites management (list / export)"
+help_favorites_export = "export favorites as Markdown"
+help_favorites_export_path = "output file path (default: print to stdout, redirectable)"
+favorites_empty = "no favorites yet"
+favorites_exported = "exported {n} favorites → {path}"
 rss_list_empty = "no subscriptions yet: feedscope rss add <url> or import <OPML file>"
 rss_list_total = "{n} subscriptions in total"
 rss_added = "subscribed {key}: {label} <{url}>"

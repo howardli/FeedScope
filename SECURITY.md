@@ -14,6 +14,7 @@ where the sensitive bits live, so you can audit that claim:
 | User config | `sources.toml` in your platform config dir (`~/.config/feedscope/` on Linux, `~/Library/Application Support/feedscope/` on macOS) | No — language, enabled sources, subscriptions only |
 | Browser profile | `chromium-profile/` in your platform cache dir (`~/.cache/feedscope/` on Linux, `~/Library/Caches/feedscope/` on macOS) | **Yes** — Chrome profile with your Zhihu / X / Reddit session cookies |
 | Read state | `state.json` in your platform state dir (`~/.local/state/feedscope/` on Linux) | No — item ids and timestamps only |
+| Favorites | `favorites.json` next to `state.json` | No — snapshots (title/link/body) of public items you starred |
 | List cache | `feeds/` next to the browser profile in your platform cache dir | No — titles, links and bodies of the public feeds you subscribe to |
 
 Guarantees:
