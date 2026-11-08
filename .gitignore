@@ -8,6 +8,8 @@ dist/
 .DS_Store
 .zcode/
 .screenshot-sources.toml
+.screenshot-state.json
+.screenshot-feeds/
 .coverage
 coverage*.xml
 cmp/

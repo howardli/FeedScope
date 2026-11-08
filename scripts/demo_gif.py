@@ -93,10 +93,20 @@ def main() -> None:
     from feedscope.core.registry import install_sources, source_classes
     from feedscope.ui import app as app_mod
 
-    # 隔离本机用户配置（与 screenshot.main 同一套路：避开首启引导 / 隐藏流漂移 / 真 Chrome 预热）
+    # 隔离本机用户配置（与 screenshot.main 同一套路：避开首启引导 / 隐藏流漂移 / 真 Chrome 预热）。
+    # 状态/缓存同样钉住并先清：GIF 想要「首跑全 ● → Enter 逐条清点」的叙事，
+    # 上一次运行的残留已读会让首帧就带空点
     cfg = DOCS.parent / ".screenshot-sources.toml"
     cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
+    state = DOCS.parent / ".screenshot-state.json"
+    state.unlink(missing_ok=True)
+    cache = DOCS.parent / ".screenshot-feeds"
+    if cache.exists():
+        for p in cache.iterdir():
+            p.unlink()
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
+    os.environ["FEEDSCOPE_STATE"] = str(state)
+    os.environ["FEEDSCOPE_FEED_CACHE"] = str(cache)
     os.environ["FEEDSCOPE_NO_PREWARM"] = "1"
 
     frames: list[Path] = []

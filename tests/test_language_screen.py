@@ -210,8 +210,9 @@ async def _run_en_smoke(monkeypatch, tmp_path: Path) -> None:
     async with app.run_test(size=(100, 36)) as pilot:
         assert await settle(pilot, lambda: len(app.main.items) == 1)
         assert app.title == "FeedScope"
-        # en 计数模板统一复数形（"{n} items"）：单复数分支不在本次范围
-        assert app.sub_title == "1 items", f"状态行英文：{app.sub_title!r}"
+        # en 计数模板统一复数形（"{n} items"）：单复数分支不在本次范围。
+        # 全新状态文件首跑必带「新」计数（每条都是首见）——顺带钉住 en 新计数模板
+        assert app.sub_title == "1 items · 1 new", f"状态行英文：{app.sub_title!r}"
         assert app.main._bindings.key_to_bindings["ctrl+l"][0].description == "Language"
         assert app.main._bindings.key_to_bindings["f5"][0].description == "Refresh"
         assert app._bindings.key_to_bindings["ctrl+q"][0].description == "Quit"
@@ -238,7 +239,8 @@ async def _run_unset_language_defaults_to_english(monkeypatch, tmp_path: Path) -
     async with app.run_test(size=(100, 36)) as pilot:
         assert await settle(pilot, lambda: len(app.main.items) == 1)
         assert i18n.language() == i18n.DEFAULT_LANGUAGE == "en"
-        assert app.sub_title == "1 items", "缺省英文状态行"
+        # 首跑全「新」：状态行带新计数（见 _run_en_smoke 的同款说明）
+        assert app.sub_title == "1 items · 1 new", "缺省英文状态行"
 
 
 def test_unset_language_defaults_to_english(lang_stub_registry, monkeypatch, tmp_path) -> None:

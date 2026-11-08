@@ -21,6 +21,7 @@ from feedscope.core import i18n
 from feedscope.core.i18n import t
 from feedscope.core.browser import close_session, get_session
 from feedscope.core.registry import source_classes
+from feedscope.core.store import ReadState
 from feedscope.ui import Bindings
 from feedscope.ui.account import AccountFlow
 from feedscope.ui.labels import retranslate_bindings
@@ -68,6 +69,8 @@ class FeedScopeApp(App[None]):
         self.theme = FEEDSCOPE_THEME.name
         # 账号动线（撞墙自动询问 / Ctrl+U 登录登出）：状态与编排都在 ui/account.py
         self.accounts = AccountFlow(self)
+        # 已读/已见状态（● 新 / ○ 未读 / 空已读 的判据）：惰性加载，见 core/store.py
+        self.state = ReadState()
 
     @property
     def main(self) -> MainScreen | None:

@@ -27,6 +27,38 @@ class FeedItem:
     meta: str = ""                     # 列表元信息列语义文本（热度/作者/节点名…），UI 统一截断对齐
     extra: dict[str, Any] = field(default_factory=dict)  # 传给 detail 抓取的补充字段
 
+    def to_dict(self) -> dict[str, Any]:
+        """列表缓存的序列化形态（core.feed_cache 落盘用）：字段平铺，extra 原样。
+
+        extra 的值约定全是 JSON 类型（各源 parse 产自 JSON/HTML 解析结果），
+        不做逐值清洗——坏类型让缓存文件的 load 侧整体丢弃，不值得逐键防御。
+        """
+        return {
+            "source": self.source,
+            "id": self.id,
+            "title": self.title,
+            "url": self.url,
+            "kind": self.kind,
+            "meta": self.meta,
+            "extra": self.extra,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeedItem:
+        """to_dict 的逆（core.feed_cache 读回用）；缺字段 = 缺省值，未知键忽略。
+
+        旧版缓存少字段/手编多字段都不炸：缓存是派生数据，宽容读回优于版本迁移。
+        """
+        return cls(
+            source=str(data.get("source", "")),
+            id=str(data.get("id", "")),
+            title=str(data.get("title", "")),
+            url=str(data.get("url", "")),
+            kind=str(data.get("kind", "")),
+            meta=str(data.get("meta", "")),
+            extra=dict(data.get("extra") or {}),
+        )
+
 
 @dataclass
 class Comment:

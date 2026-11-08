@@ -49,6 +49,11 @@ def run_checks() -> int:
 
     _check(t("doctor.config_label"), True, f"{config_path()} - {describe()}")
 
+    from feedscope.core.store import state_path
+
+    state = t("doctor.profile_exists") if state_path().exists() else t("doctor.profile_will_create")
+    _check(t("doctor.state_label"), True, f"{state_path()}（{state}）")
+
     print()
     print(t("doctor.all_ok") if ok else t("doctor.has_failures"))
     return 0 if ok else 1

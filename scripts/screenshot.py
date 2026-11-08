@@ -746,6 +746,7 @@ async def _shots() -> None:
         for _ in range(6):
             await pilot.pause()
         DOCS.mkdir(exist_ok=True)
+        await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-zhihu")
         await pilot.press("tab")  # Tab 切到 X
         for _ in range(6):
@@ -753,6 +754,7 @@ async def _shots() -> None:
         await pilot.press("enter")  # 切站落边栏：Enter 回列表
         for _ in range(2):
             await pilot.pause()
+        await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-x")
         await pilot.press("enter")  # 进首条推文详情（外文 + 译文 + 引用块）
         for _ in range(8):
@@ -765,6 +767,7 @@ async def _shots() -> None:
         await pilot.press("enter")  # 切站落边栏：Enter 回列表
         for _ in range(2):
             await pilot.pause()
+        await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-reddit")
         await pilot.press("enter")  # 进帖子详情（markdown 自述 + 置顶/赞数评论楼层）
         for _ in range(8):
@@ -777,6 +780,7 @@ async def _shots() -> None:
         await pilot.press("enter")  # 切站落边栏：Enter 回列表
         for _ in range(2):
             await pilot.pause()
+        await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-hn")
         await pilot.press("enter")  # 进 story 详情（原文一行 + 评论楼层）
         for _ in range(8):
@@ -794,11 +798,28 @@ async def _shots() -> None:
         await pilot.press("enter")  # 切站落边栏：Enter 回列表
         for _ in range(2):
             await pilot.pause()
+        await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-v2ex")
         await pilot.press("enter")  # 进主题详情（markdown 正文 + 回复楼层）
         for _ in range(8):
             await pilot.pause()
         _emit(app, "screenshot-v2ex-detail")
+
+
+async def _demo_read_mix(app: app_mod.FeedScopeApp, pilot) -> None:
+    """列表截图的已读混合态：每隔三条标一条已读再重排。
+
+    截图要同时展示圆点三态（● 新 / ○ 未读 / 空 已读）——全新状态全屏 ●
+    看不出「已读会变空」，全已读又看不出特性；隔条混合最像真实使用痕迹。
+    """
+    main = app.main
+    if main is None or not main.items:
+        return
+    for it in main.items[::3]:
+        app.state.mark_read(it.source, it.id)
+    await main.rebuild_items()
+    for _ in range(2):
+        await pilot.pause()
 
 
 def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
@@ -811,10 +832,20 @@ def _emit(app: app_mod.FeedScopeApp, name: str) -> None:
 
 def main() -> None:
     # 隔离本机用户配置（隐藏流会让侧栏条目数漂移）；预写 enabled 跳过首启引导
-    # （引导是交互弹层，自动化流程过不去）；FEEDSCOPE_NO_PREWARM 关掉不拉真 Chrome
+    # （引导是交互弹层，自动化流程过不去）；FEEDSCOPE_NO_PREWARM 关掉不拉真 Chrome。
+    # 已读状态/列表缓存同样钉在仓库根（gitignore），先清再跑：读/缓存都会让截图
+    # 漂移（混合已读态由 _demo_read_mix 脚本化生成，不靠上一次运行的残留）
     cfg = DOCS.parent / ".screenshot-sources.toml"
     cfg.write_text('enabled = ["zhihu", "x", "reddit", "hn", "v2ex"]\n', encoding="utf-8")
+    state = DOCS.parent / ".screenshot-state.json"
+    state.unlink(missing_ok=True)
+    cache = DOCS.parent / ".screenshot-feeds"
+    if cache.exists():
+        for p in cache.iterdir():
+            p.unlink()
     os.environ["FEEDSCOPE_CONFIG"] = str(cfg)
+    os.environ["FEEDSCOPE_STATE"] = str(state)
+    os.environ["FEEDSCOPE_FEED_CACHE"] = str(cache)
     os.environ["FEEDSCOPE_NO_PREWARM"] = "1"
     saved = source_classes()
     install_sources([DemoZhihu, DemoX, DemoReddit, DemoHn, DemoV2ex])

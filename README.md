@@ -20,6 +20,7 @@ Zhihu Hot → X timeline → post detail (auto translation, quoted post) → Red
 - **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, Reddit Home / Popular / custom subreddits, HN Front / New / Ask / Show, V2EX Hot / Latest, Telegram channel subscriptions — one UI, `Tab` to switch
 - **RSS subscriptions**: any RSS / Atom feed; the "All" stream merges by publish time (cross-feed dedup, a dead feed never drags others down); read feed-provided full text in-terminal; conditional requests keep refreshes polite to sources
 - **Full in-terminal reading**: feed → question → answers → comments, loaded per layer on demand
+- **Read state & offline**: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back) — refreshes and restarts never touch it; the "N new" count lives in the status line; lists are cached locally, so restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
 - **HN discussion tree**: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads are flattened to two levels with `@parent` prefixes preserving who-replies-to-whom
 - **Auto Grok translation for foreign posts on X**; media markers `[图片]` / `[视频]` are clickable links to the original image / video
 - **Login loop**: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
@@ -108,6 +109,7 @@ feedscope
 | `Enter` | Open detail; inside a detail, open the discussion layer of the floor you are reading; return to the list from the sidebar / source bar |
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
+| `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
 | `F5` | Refresh |
 | `Ctrl+U` | Account: login / logout |
 | `Ctrl+L` | UI language: pick and save; restart `feedscope` to apply |
@@ -116,6 +118,19 @@ feedscope
 | `Ctrl+Q` | Quit (double `Ctrl+C` as fallback) |
 
 All keys are non-printing — they work while a Chinese IME is active; typing printable characters by mistake shows a hint. The top tab bar and the left sidebar are clickable and drive the same code path as the keyboard. Arrow keys follow CLI conventions: `↑`/`↓` move the selection within the current list; `↑` on the first row of any region climbs to the source bar (the top region sits above everything), and `↓` from the source bar descends to the sidebar (inverse of the sidebar's first-feed `↑`); other region moves are horizontal — in the source bar `←`/`→` switches site in place; in the sidebar `↑`/`↓` switches feed in place, `→` returns to the list and `←` goes to the source bar; in the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; `Enter` / `Esc` return to the list at any time. Dialogs (source manager / subscriptions / input / confirm / account) support the same arrow-key focus movement: `↓` past the bottom of the list enters the button row, `↑` returns to the list, `←`/`→` move between buttons, and `Enter` presses the focused button.
+
+### Read state & offline
+
+The dot column on each row tracks reading state: `●` unread (editor blue), blank = read. Unread is persistent — refreshes, feed switches and restarts never touch it; the dot only clears when you open the item (`Enter` into detail, `Ctrl+O` to the browser, or `←`/`→` article-stepping inside a detail). `Ctrl+R` toggles the current item — mark it unread to revisit. How many items arrived with this refresh shows as a count in the status line ("N items · M new"), not as row-level marks.
+
+Both live in plain local files (delete to reset; no credentials involved):
+
+| File | Contents |
+| --- | --- |
+| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen item ids with timestamps (capped at 10k entries, oldest evicted first) |
+| `feeds/` (platform cache dir, `~/.cache/feedscope/feeds/` on Linux) | one JSON list cache per feed (200 items per feed, 60 most recent feeds kept) |
+
+Startup and refresh paint the cache before fetching: restarts show the list instantly; offline or a broken site keeps the old content readable, and RSS / Telegram detail bodies travel with the cached list. `feedscope doctor` reports the state-file location.
 
 ### UI Language
 

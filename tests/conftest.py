@@ -34,6 +34,10 @@ def _isolated_user_env(
     config.write_text('language = "zh-CN"\n# 测试预创建：跳过首启引导，全默认全启用\n', encoding="utf-8")
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(config))
     monkeypatch.setenv("FEEDSCOPE_SAMPLE_DIR", str(env_dir / "samples"))
+    # 已读状态与列表缓存同样指进临时目录：不隔离会读写真实用户状态
+    # （state.json 的已读标记 / feeds/ 缓存），断言也会被本机历史污染
+    monkeypatch.setenv("FEEDSCOPE_STATE", str(env_dir / "state.json"))
+    monkeypatch.setenv("FEEDSCOPE_FEED_CACHE", str(env_dir / "feeds"))
 
 
 @pytest.fixture(autouse=True)

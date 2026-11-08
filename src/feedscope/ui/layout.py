@@ -25,6 +25,10 @@ LIST_ROW_OVERHEAD = 5
 META_COL_SPARE = 2
 META_COL_MAX = 18
 
+# 行首圆点列（.item-mark）：未读二态（● 未读 / 空 已读），固定 2 列、不折行；
+# 折行算术在 list_title_width 一并扣除，标题可用宽不含它
+MARK_COL_WIDTH = 2
+
 # 正文 markdown 可用宽 = 容器宽 - 8：
 # 滚动条(2) + 左右 padding 0 2(4) + 2 列余量防 Rich 二次折行
 MD_OVERHEAD = 8
@@ -35,7 +39,7 @@ RESIZE_DEBOUNCE = 0.15  # 秒
 
 def list_title_width(container_width: int, meta_col_width: int) -> int:
     """列表标题列的折行可用宽；meta_col_width = 当前批的元信息列宽。"""
-    return max(10, container_width - LIST_ROW_OVERHEAD - meta_col_width)
+    return max(10, container_width - LIST_ROW_OVERHEAD - MARK_COL_WIDTH - meta_col_width)
 
 
 def md_body_width(container_width: int) -> int:

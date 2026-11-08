@@ -24,6 +24,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, ListView, Static
 
+from feedscope.core import feed_cache
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.i18n import t
@@ -36,7 +37,7 @@ from feedscope.ui.layout import (
     score_col_width,
 )
 from feedscope.ui.labels import retranslate_bindings
-from feedscope.ui.list_render import build_item
+from feedscope.ui.list_render import MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
@@ -184,6 +185,7 @@ class MainScreen(MainSetupScreen):
         Binding("f2", "manage_sources", "bindings.manage_sources"),
         Binding("ctrl+u", "account", "bindings.account", show=False),
         Binding("ctrl+n", "more", "bindings.more"),
+        Binding("ctrl+r", "toggle_read", "bindings.toggle_read"),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
         Binding("ctrl+l", "language", "bindings.language"),
         Binding("left", "nav_left", "bindings.sidebar"),
@@ -201,6 +203,9 @@ class MainScreen(MainSetupScreen):
     ListItem { padding: 0 1; height: auto; }
 
     .item-row { height: auto; }
+    /* 行首圆点列（未读二态，宽 2 固定见 layout.MARK_COL_WIDTH）：● 未读上
+       编辑器蓝（全主题唯一强调色的既有用法），已读为空串不占色 */
+    .item-mark { width: 2; color: $primary; }
     /* 宽度不写死：逐行 inline 设为批内最长元信息（见 score_col_width）；
        右对齐列，超上限的长署名折行而非缩略（名字与账号必须完整可见） */
     .item-score { text-align: right; text-wrap: wrap; }
@@ -248,6 +253,10 @@ class MainScreen(MainSetupScreen):
         self._feed_memory: dict[str, int] = {}
         self.items: list[FeedItem] = []
         self.feed_loader: FeedLoader | None = None  # 持有活页签，切流/退出前要 close
+        # 本批「新抓到」的条目数（note_fetched 返回集的长度）：只喂顶部状态行
+        # 的「N 新」计数。行首圆点不看它——未读是持久态，直到打开才消失
+        # （传统阅读器语义；「新」是瞬态信息，归状态行）
+        self._new_count = 0
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
@@ -363,40 +372,79 @@ class MainScreen(MainSetupScreen):
         view = self.query_one("#feed", ListView)
         view.clear()
         self.items = []
+        # 离线兜底先画缓存：重启秒开、断网可翻（详情自带正文的 RSS/Telegram
+        # 离线也能读）；刷新成功整批替换，失败/未登录保留缓存不清屏。缓存
+        # 内容在抓取时已登记过已见，不是「新」——快照清空
+        cached = feed_cache.load(source.source_id, self.current_feed)
+        if cached:
+            self._new_count = 0
+            await self._paint_items(cached, source, t("main.status_cached", n=len(cached)))
         try:
             loader = await open_coro
         except LoginRequired as exc:
-            self.app.sub_title = t("main.status_signed_out")
+            if not self.items:
+                self.app.sub_title = t("main.status_signed_out")
             hint = t("main.hint_login", error=exc)
             if source.source_id in self._tui.accounts.refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
-                self.show_empty(hint)
+                if not self.items:
+                    self.show_empty(hint)
                 return
-            self.show_empty(str(exc))
+            if not self.items:
+                self.show_empty(str(exc))
             # 撞墙即给入口：弹登录框与后续动线在 AccountFlow（_refresh 本就
             # 在 worker 里，其 wait_for_dismiss 合法）
             await self._tui.accounts.on_login_wall(source, hint)
             return
         except Exception as exc:
+            # 缓存行保留（有内容时不清屏不亮空态）：断网/改版时旧内容仍可翻
             self.app.sub_title = t("read.status_failed")
             feedback.fail(self, source, exc)
-            self.show_empty(t("main.empty_load_failed", text=feedback.failure_text(source, exc)))
+            if not self.items:
+                self.show_empty(
+                    t("main.empty_load_failed", text=feedback.failure_text(source, exc))
+                )
             return
 
         self.feed_loader = loader
-        self.items = loader.items
+        # 先定格「新」计数（渲染不依赖它，但状态行要），再重写缓存
+        self._new_count = len(self._tui.state.note_fetched(loader.items))
+        feed_cache.save(source.source_id, self.current_feed, loader.items)
+        await self._paint_items(loader.items, source)  # 状态行走 _count_sub（含新计数）
+
+    async def _paint_items(
+        self, items: list[FeedItem], source: Source, sub: str | None = None
+    ) -> None:
+        """整批渲染列表行（缓存先画与刷新成功共用一条路径）：清-置-画-选中-收空态。
+
+        sub 缺省在置完 self.items 后自算（_count_sub 读它）——调用方传进来的
+        实参会在赋值前求值，缓存态的「刷新中」文案走显式入参。
+        """
+        view = self.query_one("#feed", ListView)
+        view.clear()
+        self.items = items
         self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
         width = self._wrap_width()
-        src = source
         await view.extend(
-            [build_item(it, width, self._score_width, src) for it in self.items]
+            [
+                build_item(it, width, self._score_width, source, self._row_mark(it))
+                for it in self.items
+            ]
         )  # 单次挂载 = 单次布局
         if self.items:
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
         else:
             self.show_empty(t("main.empty_no_content"))
-        self.app.sub_title = t("main.status_count", n=len(self.items))
+        self.app.sub_title = sub if sub is not None else self._count_sub()
+
+    def _count_sub(self) -> str:
+        """状态行计数文案：本批有「新」带新计数（刷新与 Ctrl+N 共用）。"""
+        return (
+            t("main.status_with_new", n=len(self.items), new=self._new_count)
+            if self._new_count
+            else t("main.status_count", n=len(self.items))
+        )
 
     def show_empty(self, text: str) -> None:
         """空态/失败态：列表区无内容时的常驻屏内提示（notify 是瞬时反馈，这是常驻状态）。"""
@@ -433,6 +481,9 @@ class MainScreen(MainSetupScreen):
                 feedback.info(self, t("main.toast_no_new_retry"))
             return
         self.items = loader.items
+        # 新批次的首见数累进「新」计数，缓存整流重写（列表变长了）
+        self._new_count += len(self._tui.state.note_fetched(new))
+        feed_cache.save(self.current_source.source_id, self.current_feed, self.items)
         view = self.query_one("#feed", ListView)
         new_width = score_col_width(self.current_source, self.items)
         if new_width > self._score_width:
@@ -443,10 +494,15 @@ class MainScreen(MainSetupScreen):
         else:
             width = self._wrap_width()
             await view.extend(
-                [build_item(it, width, self._score_width, self.current_source) for it in new]
+                [
+                    build_item(
+                        it, width, self._score_width, self.current_source, self._row_mark(it)
+                    )
+                    for it in new
+                ]
             )  # 单次挂载 = 单次布局
         self._hide_empty()
-        self.app.sub_title = t("main.status_count", n=len(self.items))
+        self.app.sub_title = self._count_sub()
 
     # ---- 列表项构建与折行 ----
 
@@ -464,9 +520,46 @@ class MainScreen(MainSetupScreen):
         width = self._wrap_width()
         src = self.current_source
         await view.extend(
-            [build_item(it, width, self._score_width, src) for it in self.items]
+            [build_item(it, width, self._score_width, src, self._row_mark(it)) for it in self.items]
         )
         view.index = 0 if idx is None else min(idx, len(self.items) - 1)
+
+    # ---- 已读/未读（状态在 core/store.py，行首圆点见 ui/list_render.py）----
+
+    def _row_mark(self, it: FeedItem) -> str:
+        """行首圆点二态：未读 ●（编辑器蓝）、已读空。
+
+        未读是持久态——刷新/重启/缓存先画共用同一条规则，圆点只随「打开」
+        消失（传统阅读器语义）；「本批新了几条」不进行标记，归状态行计数。
+        """
+        return "" if self._tui.state.is_read(it.source, it.id) else MARK_UNREAD
+
+    def _mark_read(self, item: FeedItem) -> None:
+        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）：
+        状态落库 + 该行圆点就地清掉。"""
+        self._tui.state.mark_read(item.source, item.id)
+        self._update_row_mark(item)
+
+    def _update_row_mark(self, item: FeedItem) -> None:
+        """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。"""
+        try:
+            idx = self.items.index(item)
+        except ValueError:
+            return
+        view = self.query_one("#feed", ListView)
+        if idx >= len(view.children):
+            return  # 行还没画上（在途）：下批渲染自然对
+        view.children[idx].query_one(".item-mark", Label).update(self._row_mark(item))
+
+    def action_toggle_read(self) -> None:
+        """Ctrl+R：当前条目手动切换已读/未读（想重看的标回未读）。"""
+        item = self.current_item()
+        if item is None:
+            feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按键不无声
+            return
+        read = self._tui.state.toggle_read(item.source, item.id)
+        self._update_row_mark(item)
+        feedback.info(self, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
 
     # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
 
@@ -644,6 +737,7 @@ class MainScreen(MainSetupScreen):
         if item is None:
             feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按 Ctrl+O 也绝不无声
             return
+        self._mark_read(item)  # Ctrl+O 也是「打开了这条」：与 Enter 的浏览器兜底同语义
         webbrowser.open(item.url)
 
     def action_more(self) -> None:
@@ -696,6 +790,9 @@ class MainScreen(MainSetupScreen):
             it = self.items[idx]
             if self._opens_detail(it):
                 view.index = idx
+                # ←/→ 换篇的静默推进同样计已读：详情屏拿目标必经这里，主屏
+                # 上下文里就地清圆点，不必跨屏回写
+                self._mark_read(it)
                 return it
         return None
 
@@ -705,6 +802,7 @@ class MainScreen(MainSetupScreen):
         item = self.current_item()
         if item is None:
             return
+        self._mark_read(item)  # 打开即已读：进详情与浏览器兜底都是「打开」
         if self._opens_detail(item):
             self.app.push_screen(DetailScreen(item, self.current_source, self.step_readable_item))
         else:

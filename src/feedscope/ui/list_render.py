@@ -16,6 +16,11 @@ from feedscope.core.source import Source
 from feedscope.ui.layout import meta_col_text
 from feedscope.ui.wrap import wrap_display
 
+# 行首圆点的二态字符（列宽与折行算术见 layout.MARK_COL_WIDTH）：● 未读
+# （编辑器蓝，直到打开才消失——传统阅读器语义，刷新不动它）、空 = 已读。
+# 「本批新抓到几条」是瞬态信息，归顶部状态行（main.status_with_new）
+MARK_UNREAD = "●"
+
 
 def meta_col(source: Source, it: FeedItem) -> str:
     """元信息列的 markup 文本（规则见 layout.meta_col_text）；空元信息占一格空位。"""
@@ -23,18 +28,22 @@ def meta_col(source: Source, it: FeedItem) -> str:
     return f"[dim]{escape(text)}[/dim]" if text else " "
 
 
-def build_item(it: FeedItem, width: int, score_width: int, source: Source) -> ListItem:
-    """一条 FeedItem -> 列表行部件（元信息列 + 折行标题）。
+def build_item(
+    it: FeedItem, width: int, score_width: int, source: Source, mark: str = ""
+) -> ListItem:
+    """一条 FeedItem -> 列表行部件（圆点列 + 元信息列 + 折行标题）。
 
     标题按 width 折行（规范版：避头尾 + 词不拆），逐行转义；元信息列宽
     逐行 inline 设置（列宽随批内容自适应，见 layout.score_col_width），
-    右对齐与超宽折行走 CSS（.item-score / .item-title）。
+    右对齐与超宽折行走 CSS（.item-score / .item-title）。mark 是未读圆点
+    （MainScreen._row_mark 的产物，缓存先画与刷新共用同一规则；已读为空串）。
     """
     title = "\n".join(escape(line) for line in wrap_display(it.title, width))
     score = Label(meta_col(source, it), classes="item-score")
     score.styles.width = score_width
     return ListItem(
         Horizontal(
+            Label(mark, classes="item-mark"),
             score,
             Label(title, classes="item-title"),
             classes="item-row",
