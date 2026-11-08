@@ -260,10 +260,25 @@ class PagedReadingScreen(ReadingScreen):
     # 阅读中随手收藏是主场景：详情 / 评论两屏共用这一份（评论屏的 item 是
     # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen。
     # Ctrl+Y 复制链接与 Ctrl+O 同源（_browser_url——回答屏自动带楼层直达）
+    # 页脚只留 Esc 返回 + F1 帮助（其余键提示退入 F1，绑定照常）
     BINDINGS: ClassVar[Bindings] = [
-        Binding("ctrl+f", "favorite", "bindings.favorite"),
-        Binding("ctrl+y", "copy_link", "bindings.copy"),
+        Binding("ctrl+f", "favorite", "bindings.favorite", show=False),
+        Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
+        Binding("f1", "help", "bindings.help"),
     ]
+
+    def action_help(self) -> None:
+        """F1：键位帮助（全局 + 本屏，从声明自动生成）。"""
+        from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
+
+        self.app.push_screen(
+            HelpScreen(
+                [
+                    (t("help.global_section"), global_rows()),
+                    *group_rows(screen_rows(self, skip={"f1"})),
+                ]
+            )
+        )
 
     def action_favorite(self) -> None:
         """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。"""

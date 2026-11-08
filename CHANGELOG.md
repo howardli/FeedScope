@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
 ### Added
 
 - Unread management: per-feed unread badges in the sidebar (recounted on refresh, decremented live as you read — reads from the favorites list decrement the home feed too), `F4` unread-only view (session toggle; read rows vanish instantly, newsboat-style), and `Ctrl+A` mark-all-read for the current feed with a light confirmation
 - UI themes: `Ctrl+T` switches instantly (pure presentation, no restart) between the built-in `editor-dark` (the existing VS Code Dark+ palette) and a new `editor-light`; a new theme is one TOML file in `ui/themes/`, auto-discovered, with completeness pinned by tests
 - `Ctrl+Y` copies the current item's link from the list, favorites, details or reply layers (reply layers copy the floor-direct link), and read items get a dimmed title so read/unread separates at a glance
+- `F1` opens a keybinding help overlay — global section plus the current screen's keys grouped by task (navigation / content / read state / favorites / settings), auto-derived from the binding declarations so it never goes stale, with Textual's inherited dead bindings filtered out; with it in place the footer slimmed to just `F1` (plus `Esc` on reading/favorites screens), freeing a line of content on every screen
+
+### Fixed
+
+- Rapid back-to-back sidebar refreshes could crash with `DuplicateIds` (two rebuilds interleaving on Textual's async child removal); sidebar refreshes now coalesce — at most one rebuild runs, with at most one queued rerun
+- All modal dialogs (language / theme / help / confirm / subscriptions) hugged the left edge: `ModalScreen` ships no default centering; fixed once in the shared modal base class
+- Unread counts failed to decrement for entries recorded before the badge feature (no feed routing key), and for items living in two feeds at once (RSS/Telegram "All" plus the member feed — decrement only hit the first-seen feed): entries now carry a membership set and reads decrement every member feed
 
 ## [0.2.0] - 2026-11-08
 
@@ -43,5 +52,6 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.3.0]: https://github.com/howardli/FeedScope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/howardli/FeedScope/releases/tag/v0.2.0
 [0.1.0]: https://github.com/howardli/FeedScope/releases/tag/v0.1.0

@@ -39,12 +39,12 @@ class DetailScreen(PagedReadingScreen):
     BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明；Esc 返回继承自 ReadingScreen
-        Binding("ctrl+n", "more", "bindings.more"),
+        Binding("ctrl+n", "more", "bindings.more", show=False),
         # Enter 的标签是占位（空串）：__init__ 换源词汇表；无评论层的源隐藏该键位
-        Binding("enter", "pick_answer", ""),
-        Binding("ctrl+o", "open_browser", "bindings.browser"),
-        Binding("right", "next_article", "bindings.next"),
-        Binding("left", "prev_article", "bindings.prev"),
+        Binding("enter", "pick_answer", "", show=False),
+        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        Binding("right", "next_article", "bindings.next", show=False),
+        Binding("left", "prev_article", "bindings.prev", show=False),
     ]
 
     # Markdown 标题规则必须 CSS 级（见 reading.READING_CSS 的说明），其余

@@ -34,6 +34,9 @@ more = "更多"
 next = "下一篇"
 prev = "上一篇"
 sidebar = "边栏"
+right_edge = "抵右缘"
+move = "移动选中 / 滚动"
+open = "进详情 / 进楼层 / 回列表"
 switch_source = "切站"
 toggle_read = "已读/未读"
 unread_only = "只看未读"
@@ -42,6 +45,7 @@ favorite = "收藏/取消"
 favorites = "收藏列表"
 theme = "主题"
 copy = "复制链接"
+help = "帮助"
 
 [language]
 title = "选择语言 / Choose Language"
@@ -51,6 +55,17 @@ hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
 title = "界面主题"
 hint = "Enter 应用 · Esc 取消"
 toast_applied = "主题已切换：{name}"
+
+[help]
+title = "键位帮助"
+global_section = "全局"
+group_nav = "导航"
+group_content = "内容"
+group_read = "已读与未读"
+group_fav = "收藏"
+group_settings = "配置"
+ctrl_c_fallback = "连按两次退出（Ctrl+Q 失效时兜底）"
+close_hint = "Esc / F1 关闭"
 
 [main]
 # 双语同值（en.toml 同）：切换方未必读得懂当前语言的提示，两个方向都要看懂

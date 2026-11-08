@@ -36,6 +36,9 @@ more = "More"
 next = "Next"
 prev = "Previous"
 sidebar = "Sidebar"
+right_edge = "hit the right edge"
+move = "move selection / scroll"
+open = "open detail / floor; return to list"
 switch_source = "Switch"
 toggle_read = "Read/unread"
 unread_only = "Unread only"
@@ -44,6 +47,7 @@ favorite = "Favorite"
 favorites = "Favorites"
 theme = "Theme"
 copy = "Copy link"
+help = "Help"
 
 [language]
 title = "选择语言 / Choose Language"
@@ -53,6 +57,17 @@ hint = "Enter 确认 · Esc 取消 / Enter to confirm · Esc to cancel"
 title = "UI theme"
 hint = "Enter to apply · Esc to cancel"
 toast_applied = "theme switched: {name}"
+
+[help]
+title = "Keybindings"
+global_section = "Global"
+group_nav = "Navigation"
+group_content = "Content"
+group_read = "Read state"
+group_fav = "Favorites"
+group_settings = "Settings"
+ctrl_c_fallback = "press twice to quit (fallback when Ctrl+Q fails)"
+close_hint = "Esc / F1 to close"
 
 [main]
 # Bilingual by design (same value in zh-CN.toml): the reader may not read the

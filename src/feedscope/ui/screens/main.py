@@ -41,6 +41,7 @@ from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
+from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
 from feedscope.ui.dialogs import ConfirmScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
@@ -117,9 +118,10 @@ class FeedListView(ListView):
     """
 
     BINDINGS: ClassVar[Bindings] = [
-        # 切站进页脚（与 ←/→ 切流同款）：Tab 是切站唯一键位，页脚要给出来路
-        Binding("tab", "screen.next_source", "bindings.switch_source"),
-        Binding("shift+tab", "screen.prev_source", "bindings.switch_source"),
+        # 切站键位页脚不亮（极简页脚只留 f1/^q，提示全在 F1 帮助页）：
+        # Tab 是切站唯一键位，来路在帮助页与 README 键位表
+        Binding("tab", "screen.next_source", "bindings.switch_source", show=False),
+        Binding("shift+tab", "screen.prev_source", "bindings.switch_source", show=False),
         # ↑/↓/Enter 同键改派主屏导航动作（压过 ListView 原生选中/移动）：
         # 焦点在列表上是主屏常态，区域焦点 _pane 决定这组键到哪——
         # 逻辑集中在主屏，这里只负责把键活着送过去
@@ -184,35 +186,35 @@ class MainScreen(MainSetupScreen):
     # （顶部区域在所有内容之上；源栏 ↓ 下探边栏，与边栏首流 ↑ 互逆）；
     # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
     # 列表 → 抵屏幕右缘无事。详情/评论屏的 ←/→ 换篇在各屏自己的绑定。
-    # 页脚预算：80 列终端放不下全部键位提示（11 个 ≈ 150 列，裁尾会丢中段），
-    # 只亮日常循环的 7 键；低频键（语言/全部已读/收藏列表/←）绑定照常、
-    # 提示进 README 键位表——show=False 不影响命中，只不占页脚
+    # 页脚只亮 F1（帮助入口自身必须可见可发现，其余键全在 F1/README）：
+    # 日常键绑定照常命中，提示退入帮助页——换来每屏一行正文与干净的视觉。
+    # show=False 只是不占页脚，不影响命中
     BINDINGS: ClassVar[Bindings] = [
-        Binding("f5", "refresh", "bindings.refresh"),
-        Binding("ctrl+o", "open_browser", "bindings.browser"),
-        Binding("f2", "manage_sources", "bindings.manage_sources"),
+        Binding("f1", "help", "bindings.help"),
+        Binding("f5", "refresh", "bindings.refresh", show=False),
+        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        Binding("f2", "manage_sources", "bindings.manage_sources", show=False),
         Binding("ctrl+u", "account", "bindings.account", show=False),
-        Binding("ctrl+n", "more", "bindings.more"),
-        Binding("ctrl+r", "toggle_read", "bindings.toggle_read"),
-        Binding("f4", "unread_only", "bindings.unread_only"),
+        Binding("ctrl+n", "more", "bindings.more", show=False),
+        Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
+        Binding("f4", "unread_only", "bindings.unread_only", show=False),
         # 全部已读用 Ctrl+A 而不是 Ctrl+Shift+R：终端没启用键盘增强协议时
         # Shift 不可区分（发的是同一个字节）——真终端按 Ctrl+Shift+R 会落成
         # Ctrl+R 单条切换，Pilot 直注事件测不出来；Ctrl+A 各终端都可靠送达
         Binding("ctrl+a", "mark_all_read", "bindings.mark_all_read", show=False),
-        Binding("ctrl+f", "favorite", "bindings.favorite"),
+        Binding("ctrl+f", "favorite", "bindings.favorite", show=False),
         Binding("f3", "favorites", "bindings.favorites", show=False),
-        # Ctrl+Y 复制当前条目链接（vim 的 yank 惯例）：高频但主屏页脚已满
-        # （7 键预算），提示进 README；详情/收藏屏页脚宽松处可见
+        # Ctrl+Y 复制当前条目链接（vim 的 yank 惯例），提示在 F1/README
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
         Binding("ctrl+l", "language", "bindings.language", show=False),
         Binding("ctrl+t", "theme", "bindings.theme", show=False),
         Binding("left", "nav_left", "bindings.sidebar", show=False),
-        Binding("right", "nav_right", show=False),
-        Binding("up", "nav_up", show=False),
-        Binding("down", "nav_down", show=False),
-        Binding("enter", "nav_enter", show=False),
-        Binding("escape", "nav_back", show=False),
+        Binding("right", "nav_right", "bindings.right_edge", show=False),
+        Binding("up", "nav_up", "bindings.move", show=False),
+        Binding("down", "nav_down", "bindings.move", show=False),
+        Binding("enter", "nav_enter", "bindings.open", show=False),
+        Binding("escape", "nav_back", "bindings.back", show=False),
     ]
 
     # 用 DEFAULT_CSS 而非 CSS：Textual 8.x 的默认屏创建路径不装载 Screen.CSS
@@ -271,6 +273,9 @@ class MainScreen(MainSetupScreen):
         # F4 只看未读：会话级开关不落盘（重启回全量）；只影响渲染层，
         # self.items 始终是全量（loader 契约 / Ctrl+N / 收藏快照都不受影响）
         self._unread_only = False
+        # 边栏刷新的合并式调度状态（见 _refresh_sidebar）：在途 + 期间有人再要
+        self._sidebar_busy = False
+        self._sidebar_dirty = False
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
         self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
@@ -334,13 +339,28 @@ class MainScreen(MainSetupScreen):
     def _refresh_sidebar(self) -> None:
         """边栏角标随未读数变化重建（抓取后/读到一条/清仓后调用；几项重建无压力）。
 
-        独立 worker 组：列表重画走 default 组的 exclusive（互斥取消在途），
-        边栏刷新不能被它连带取消（否则角标停在旧值）；收尾期不再排程，
-        免一个 never-awaited 警告。
+        合并式调度：在途时只标脏不并跑——remove_children 的删除异步落地，
+        两个重建交错挂载会撞 DuplicateIds（真机快操作可复现）；跑完那份见
+        脏标志自动再来一轮，最新计数最终生效。exclusive 取消也能防并发，
+        但被取代的协程从未启动会留 never-awaited 警告。收尾期不排程同理。
         """
         if not self.is_running:
             return
-        self.run_worker(self._render_feed_sidebar(), group="sidebar")
+        if self._sidebar_busy:
+            self._sidebar_dirty = True
+            return
+        self._sidebar_busy = True
+        self.run_worker(self._sidebar_cycle(), group="sidebar")
+
+    async def _sidebar_cycle(self) -> None:
+        try:
+            while True:
+                await self._render_feed_sidebar()
+                if not self._sidebar_dirty:
+                    return
+                self._sidebar_dirty = False  # 在途期间又有人要刷新：再来一轮
+        finally:
+            self._sidebar_busy = False
 
     async def on_source_tab_pressed(self, event: SourceTabPressed) -> None:
         await self._goto_source(event.idx)
@@ -746,6 +766,18 @@ class MainScreen(MainSetupScreen):
             return
         self.app.copy_to_clipboard(item.url)
         feedback.info(self, t("main.toast_copied"))
+
+    def action_help(self) -> None:
+        """F1：键位帮助（页脚装不下的键都在这里，从本屏声明自动生成、按任务分组）。"""
+        feed_widget = self.query_one("#feed", FeedListView)  # tab 切站声明在控件上
+        self.app.push_screen(
+            HelpScreen(
+                [
+                    (t("help.global_section"), global_rows()),
+                    *group_rows(screen_rows(feed_widget, self, skip={"f1", "ctrl+q"})),
+                ]
+            )
+        )
 
     # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
 

@@ -182,6 +182,25 @@ async def _run_load_more_badge() -> None:
         assert await settle(pilot, lambda: _badge_num(app) == 5), "角标随增量批更新"
 
 
+def test_back_to_back_sidebar_refreshes(stub_registry) -> None:
+    """背靠背两次边栏刷新不得撞重复 id（sidebar worker 组曾无 exclusive：
+    两个 _render_feed_sidebar 并发，A 挂完 B 再挂 → DuplicateIds 崩溃面板；
+    测试里 settle 的等待天然串行，只有真机快操作才撞上——这里显式背靠背）。"""
+    asyncio.run(_run_rapid_refresh())
+
+
+async def _run_rapid_refresh() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        app.main._refresh_sidebar()
+        app.main._refresh_sidebar()  # 不等第一份完成再排第二份
+        app.main._refresh_sidebar()
+        assert await settle(pilot, lambda: _badge_num(app) == 3)
+        ids = [w.id for w in app.main.query_one("#feed-nav").children if w.id]
+        assert len(ids) == len(set(ids)), f"边栏出现重复 id：{ids}"
+
+
 def test_footer_labels_are_translated(stub_registry) -> None:
     """zh 页脚两键是文案而非键名（retranslate 的既有纪律）。"""
 
@@ -196,10 +215,8 @@ def test_footer_labels_are_translated(stub_registry) -> None:
             visible = {
                 key for key, bs in app.main._bindings.key_to_bindings.items() if bs[0].show
             }
-            assert visible == {
-                "f5", "f2", "f4", "ctrl+n", "ctrl+o", "ctrl+r", "ctrl+f",
-            }, "页脚预算：只亮日常循环 7 键"
-            assert not app.main._bindings.key_to_bindings["ctrl+a"][0].show  # 低频键照常命中
+            assert visible == {"f1"}, "页脚只亮 F1（帮助入口自身必须可发现，其余全在 F1）"
+            assert not app.main._bindings.key_to_bindings["ctrl+a"][0].show  # 隐藏键照常命中
 
             await pilot.press("enter")
             assert await settle(pilot, lambda: isinstance(app.screen, DetailScreen))

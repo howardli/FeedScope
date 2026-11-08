@@ -38,6 +38,7 @@ from feedscope.ui.layout import (
 )
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
@@ -74,11 +75,13 @@ _FALLBACK = _FallbackSource()
 class FavoritesScreen(Screen[None]):
     """收藏列表：Esc 返回，Enter 进详情/开浏览器，Ctrl+F 取消收藏。"""
 
+    # 页脚只留 Esc 返回 + F1 帮助（其余键提示退入 F1，绑定照常）
     BINDINGS: ClassVar[Bindings] = [
         Binding("escape", "back", "bindings.back"),
-        Binding("ctrl+f", "unfavorite", "bindings.favorite"),
-        Binding("ctrl+o", "open_browser", "bindings.browser"),
-        Binding("ctrl+y", "copy_link", "bindings.copy"),
+        Binding("ctrl+f", "unfavorite", "bindings.favorite", show=False),
+        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
+        Binding("f1", "help", "bindings.help"),
     ]
 
     # 行样式与主屏同源（见 list_render.LIST_ROW_CSS 的说明）；本屏只留私有规则
@@ -261,6 +264,17 @@ class FavoritesScreen(Screen[None]):
             return
         self.app.copy_to_clipboard(item.url)
         feedback.info(self, t("main.toast_copied"))
+
+    def action_help(self) -> None:
+        """F1：键位帮助（全局 + 本屏，从声明自动生成）。"""
+        self.app.push_screen(
+            HelpScreen(
+                [
+                    (t("help.global_section"), global_rows()),
+                    *group_rows(screen_rows(self, skip={"f1"})),
+                ]
+            )
+        )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id != "fav-list":

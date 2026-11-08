@@ -44,11 +44,11 @@ class AnswerScreen(PagedReadingScreen):
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明。标签是占位（空串）：__init__ 按源词汇表换成
         # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）；
-        # Esc 返回继承自 ReadingScreen
-        Binding("ctrl+n", "more", ""),
-        Binding("ctrl+o", "open_browser", "bindings.browser"),
-        Binding("right", "next_answer", ""),
-        Binding("left", "prev_answer", ""),
+        # Esc 返回继承自 ReadingScreen。页脚只留 Esc + F1（其余提示退入 F1）
+        Binding("ctrl+n", "more", "", show=False),
+        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        Binding("right", "next_answer", "", show=False),
+        Binding("left", "prev_answer", "", show=False),
     ]
 
     # Markdown 标题规则必须 CSS 级（见 reading.READING_CSS 的说明），其余

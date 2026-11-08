@@ -47,8 +47,10 @@ class ArrowModalScreen(ModalScreen[T]):
     ]
 
     # 弹层卡片三件套的唯一实现（所有弹层同形）：宽度约束（min/max-width）
-    # 是各弹层差异，写在各屏自己的 CSS 里
+    # 是各弹层差异，写在各屏自己的 CSS 里。ModalScreen 的默认样式不含
+    # 居中对齐——不补这行所有弹层都会顶在左缘（屏宽余量全在右侧）
     DEFAULT_CSS = """
+    ArrowModalScreen { align: center middle; }
     .modal-card {
         width: auto; height: auto;
         background: $surface; border: ascii $primary; padding: 1 2;
