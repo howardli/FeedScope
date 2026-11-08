@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read/unread state: the row-leading `●` marks an item unread and clears when you open it (Enter into detail, `Ctrl+O` to the browser, `←`/`→` article stepping in a detail); `Ctrl+R` toggles the current item; unread persists across refreshes and restarts in a plain-text `state.json` (item ids and timestamps only, no credentials, 10k-entry FIFO cap), while the "N new" count of first-seen items shows in the status line
 - Offline list cache: each feed is cached to its own JSON file (200 items per feed, 60 most recent feeds kept); startup and refresh paint the cache first (instant restarts), and a failed refresh keeps the old list on screen instead of clearing it — RSS / Telegram detail bodies travel with the cached list and read offline
 
+### Fixed
+
+- The unread dot was invisible on the selected row: the highlight background and the dot both use the editor blue (blue-on-blue). On a highlighted row the dot now follows the selection text color; in the sidebar-focused state (highlight suppressed, no blue band) it keeps the editor blue
+
 ## [0.1.0] - 2026-11-07
 
 Initial release.

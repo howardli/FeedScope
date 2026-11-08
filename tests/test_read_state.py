@@ -149,5 +149,24 @@ def test_ctrl_r_footer_label_is_translated(stub_registry) -> None:
     asyncio.run(flow())
 
 
+def test_selected_row_mark_stays_visible(stub_registry) -> None:
+    """选中行圆点不得被高亮底吃掉：高亮底=编辑器蓝=圆点本色，蓝叠蓝不可见——
+    高亮态圆点改走选中文字的同源变量（rgb 与行文字一致、与高亮底不同）。"""
+
+    async def flow() -> None:
+        app = FeedScopeApp()
+        async with app.run_test(size=(90, 36)) as pilot:
+            await _wait_items(pilot, app, 3)
+            view = app.main.query_one("#feed", ListView)
+            sel = view.children[view.index or 0]
+            assert sel.has_class("-highlight"), "首行自动选中"
+            mark = sel.query_one(".item-mark", Label)
+            title = sel.query_one(".item-title", Label)
+            assert mark.styles.color.rgb == title.styles.color.rgb, "与选中行文字同色源"
+            assert mark.styles.color.rgb != sel.styles.background.rgb, "不再蓝叠蓝"
+
+    asyncio.run(flow())
+
+
 async def _wait_items(pilot, app: FeedScopeApp, n: int) -> None:
     assert await settle(pilot, lambda: len(app.main.items) == n), f"等 {n} 条超时"

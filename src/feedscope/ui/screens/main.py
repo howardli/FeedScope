@@ -206,6 +206,11 @@ class MainScreen(MainSetupScreen):
     /* 行首圆点列（未读二态，宽 2 固定见 layout.MARK_COL_WIDTH）：● 未读上
        编辑器蓝（全主题唯一强调色的既有用法），已读为空串不占色 */
     .item-mark { width: 2; color: $primary; }
+    /* 选中行的高亮底就是编辑器蓝——蓝点叠蓝底不可见，高亮态改用选中文字
+       的前景变量（与行内文字同源同变）；pane-aside（高亮被抑制、无蓝底）
+       恢复编辑器蓝 */
+    ListItem.-highlight .item-mark { color: $block-cursor-foreground; }
+    #feed.pane-aside > ListItem.-highlight .item-mark { color: $primary; }
     /* 宽度不写死：逐行 inline 设为批内最长元信息（见 score_col_width）；
        右对齐列，超上限的长署名折行而非缩略（名字与账号必须完整可见） */
     .item-score { text-align: right; text-wrap: wrap; }
