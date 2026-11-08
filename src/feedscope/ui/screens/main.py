@@ -41,6 +41,7 @@ from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
+from feedscope.ui.dialogs import ConfirmScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
@@ -92,11 +93,13 @@ class SourceTab(Static):
 
 
 class FeedNavItem(Static):
-    """左侧信息流项：流名，点击切流（键盘走 ←/→）；高亮由 CSS class 决定。"""
+    """左侧信息流项：流名 + 未读角标，点击切流（键盘走 ←/→）；高亮由 CSS class 决定。"""
 
-    def __init__(self, idx: int, label: str, active: bool) -> None:
+    def __init__(self, idx: int, label: str, active: bool, unread: int = 0) -> None:
+        # 角标是纯数字不进 i18n；≥1000 显示 999+ 防撑爆 16 宽边栏，0 不占位
+        text = f"{label} [dim]{unread if unread < 1000 else '999+'}[/dim]" if unread else label
         super().__init__(
-            label,
+            text,
             id=f"feed-nav-{idx}",
             classes="feed-nav-item" + (" feed-nav-active" if active else ""),
         )
@@ -181,6 +184,9 @@ class MainScreen(MainSetupScreen):
     # （顶部区域在所有内容之上；源栏 ↓ 下探边栏，与边栏首流 ↑ 互逆）；
     # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
     # 列表 → 抵屏幕右缘无事。详情/评论屏的 ←/→ 换篇在各屏自己的绑定。
+    # 页脚预算：80 列终端放不下全部键位提示（11 个 ≈ 150 列，裁尾会丢中段），
+    # 只亮日常循环的 7 键；低频键（语言/全部已读/收藏列表/←）绑定照常、
+    # 提示进 README 键位表——show=False 不影响命中，只不占页脚
     BINDINGS: ClassVar[Bindings] = [
         Binding("f5", "refresh", "bindings.refresh"),
         Binding("ctrl+o", "open_browser", "bindings.browser"),
@@ -188,11 +194,16 @@ class MainScreen(MainSetupScreen):
         Binding("ctrl+u", "account", "bindings.account", show=False),
         Binding("ctrl+n", "more", "bindings.more"),
         Binding("ctrl+r", "toggle_read", "bindings.toggle_read"),
+        Binding("f4", "unread_only", "bindings.unread_only"),
+        # 全部已读用 Ctrl+A 而不是 Ctrl+Shift+R：终端没启用键盘增强协议时
+        # Shift 不可区分（发的是同一个字节）——真终端按 Ctrl+Shift+R 会落成
+        # Ctrl+R 单条切换，Pilot 直注事件测不出来；Ctrl+A 各终端都可靠送达
+        Binding("ctrl+a", "mark_all_read", "bindings.mark_all_read", show=False),
         Binding("ctrl+f", "favorite", "bindings.favorite"),
-        Binding("f3", "favorites", "bindings.favorites"),
+        Binding("f3", "favorites", "bindings.favorites", show=False),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
-        Binding("ctrl+l", "language", "bindings.language"),
-        Binding("left", "nav_left", "bindings.sidebar"),
+        Binding("ctrl+l", "language", "bindings.language", show=False),
+        Binding("left", "nav_left", "bindings.sidebar", show=False),
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
         Binding("down", "nav_down", show=False),
@@ -253,6 +264,9 @@ class MainScreen(MainSetupScreen):
         # 的「N 新」计数。行首圆点不看它——未读是持久态，直到打开才消失
         # （传统阅读器语义；「新」是瞬态信息，归状态行）
         self._new_count = 0
+        # F4 只看未读：会话级开关不落盘（重启回全量）；只影响渲染层，
+        # self.items 始终是全量（loader 契约 / Ctrl+N / 收藏快照都不受影响）
+        self._unread_only = False
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
         self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
@@ -291,14 +305,19 @@ class MainScreen(MainSetupScreen):
             await tabs.mount(SourceTab(idx, source.label_text, active=(idx == self.source_idx)))
 
     async def _render_feed_sidebar(self) -> None:
-        """按当前源重建左侧信息流边栏，高亮当前流（←/→ 依序切换）。"""
+        """按当前源重建左侧信息流边栏（含未读角标），高亮当前流（←/→ 依序切换）。"""
         nav = self.query_one("#feed-nav", Vertical)
         await nav.remove_children()
         items: list[Widget] = []
         if self.sources:
             source = self.current_source
             items = [
-                FeedNavItem(idx, source.feed_label(name), active=(idx == self.feed_idx))
+                FeedNavItem(
+                    idx,
+                    source.feed_label(name),
+                    active=(idx == self.feed_idx),
+                    unread=self._tui.state.unread_count(source.source_id, name),
+                )
                 for idx, name in enumerate(source.feeds)
             ]
         if not items:
@@ -307,6 +326,17 @@ class MainScreen(MainSetupScreen):
             )
             items.append(Static(f"[dim]{hint}[/dim]"))
         await nav.mount(*items)
+
+    def _refresh_sidebar(self) -> None:
+        """边栏角标随未读数变化重建（抓取后/读到一条/清仓后调用；几项重建无压力）。
+
+        独立 worker 组：列表重画走 default 组的 exclusive（互斥取消在途），
+        边栏刷新不能被它连带取消（否则角标停在旧值）；收尾期不再排程，
+        免一个 never-awaited 警告。
+        """
+        if not self.is_running:
+            return
+        self.run_worker(self._render_feed_sidebar(), group="sidebar")
 
     async def on_source_tab_pressed(self, event: SourceTabPressed) -> None:
         await self._goto_source(event.idx)
@@ -404,10 +434,13 @@ class MainScreen(MainSetupScreen):
             return
 
         self.feed_loader = loader
-        # 先定格「新」计数（渲染不依赖它，但状态行要），再重写缓存
-        self._new_count = len(self._tui.state.note_fetched(loader.items))
+        # 先定格「新」计数（渲染不依赖它，但状态行要）+ 整流重数未读角标，再重写缓存
+        self._new_count = len(
+            self._tui.state.note_fetched(loader.items, self.current_feed, recount=True)
+        )
         feed_cache.save(source.source_id, self.current_feed, loader.items)
         await self._paint_items(loader.items, source)  # 状态行走 _count_sub（含新计数）
+        self._refresh_sidebar()
 
     async def _paint_items(
         self, items: list[FeedItem], source: Source, sub: str | None = None
@@ -415,13 +448,15 @@ class MainScreen(MainSetupScreen):
         """整批渲染列表行（缓存先画与刷新成功共用一条路径）：清-置-画-选中-收空态。
 
         sub 缺省在置完 self.items 后自算（_count_sub 读它）——调用方传进来的
-        实参会在赋值前求值，缓存态的「刷新中」文案走显式入参。
+        实参会在赋值前求值，缓存态的「刷新中」文案走显式入参。行画的是
+        _shown（F4 过滤态 = 未读子集），self.items 保持全量。
         """
         view = self.query_one("#feed", ListView)
         view.clear()
         self.items = items
         self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
         self._tag_width = tag_col_width(self.items)  # 聚合流的源名列（单源流 0）
+        shown = self._shown()
         width = self._wrap_width()
         await view.extend(
             [
@@ -434,22 +469,31 @@ class MainScreen(MainSetupScreen):
                     tag=it.tag,
                     tag_width=self._tag_width,
                 )
-                for it in self.items
+                for it in shown
             ]
         )  # 单次挂载 = 单次布局
-        if self.items:
+        if shown:
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
+        elif self.items and self._unread_only:
+            self.show_empty(t("main.empty_unread_only"))
         else:
             self.show_empty(t("main.empty_no_content"))
         self.app.sub_title = sub if sub is not None else self._count_sub()
 
+    def _shown(self) -> list[FeedItem]:
+        """当前渲染的行集：全量或未读子集（F4）。行↔条目的唯一映射走这里。"""
+        if not self._unread_only:
+            return self.items
+        return [it for it in self.items if not self._tui.state.is_read(it.source, it.id)]
+
     def _count_sub(self) -> str:
         """状态行计数文案：本批有「新」带新计数（刷新与 Ctrl+N 共用）。"""
+        n = len(self._shown())
         return (
-            t("main.status_with_new", n=len(self.items), new=self._new_count)
+            t("main.status_with_new", n=n, new=self._new_count)
             if self._new_count
-            else t("main.status_count", n=len(self.items))
+            else t("main.status_count", n=n)
         )
 
     def show_empty(self, text: str) -> None:
@@ -487,15 +531,17 @@ class MainScreen(MainSetupScreen):
                 feedback.info(self, t("main.toast_no_new_retry"))
             return
         self.items = loader.items
-        # 新批次的首见数累进「新」计数，缓存整流重写（列表变长了）
-        self._new_count += len(self._tui.state.note_fetched(new))
+        # 新批次的首见数累进「新」计数与角标（不重数整流——批是局部的），缓存重写；
+        # store 计数变了但部件不会自己动——边栏角标要跟着刷新（漏了这里会停在旧值）
+        self._new_count += len(self._tui.state.note_fetched(new, self.current_feed))
         feed_cache.save(self.current_source.source_id, self.current_feed, self.items)
+        self._refresh_sidebar()
         view = self.query_one("#feed", ListView)
         new_width = score_col_width(self.current_source, self.items)
         new_tag = tag_col_width(self.items)
-        if new_width > self._score_width or new_tag > self._tag_width:
-            # 新批次带来更长的元信息/源名（更长的署名、聚合流翻出新订阅）：
-            # 列变宽，旧条目的列宽与标题折行全都要重排——全量重建，不只是追加新行
+        if new_width > self._score_width or new_tag > self._tag_width or self._unread_only:
+            # 新批次带来更长的元信息/源名（或过滤态下行集变化）：列变宽或行集
+            # 重算——全量重建，不只是追加新行
             self._score_width = new_width
             self._tag_width = new_tag
             await self.rebuild_items()
@@ -527,7 +573,7 @@ class MainScreen(MainSetupScreen):
         )
 
     async def rebuild_items(self) -> None:
-        """终端宽度变化后按新宽度重新折行（只重排版，不重新抓取）。"""
+        """按当前宽度/过滤态重排列表（只重排版，不重新抓取；行集 = _shown）。"""
         if not self.items:
             return
         view = self.query_one("#feed", ListView)
@@ -535,6 +581,7 @@ class MainScreen(MainSetupScreen):
         view.clear()
         width = self._wrap_width()
         src = self.current_source
+        shown = self._shown()
         await view.extend(
             [
                 build_item(
@@ -546,10 +593,16 @@ class MainScreen(MainSetupScreen):
                     tag=it.tag,
                     tag_width=self._tag_width,
                 )
-                for it in self.items
+                for it in shown
             ]
         )
-        view.index = 0 if idx is None else min(idx, len(self.items) - 1)
+        if shown:
+            view.index = 0 if idx is None else min(idx, len(shown) - 1)
+            self._hide_empty()
+        else:
+            view.index = None
+            self.show_empty(t("main.empty_unread_only"))
+        self.app.sub_title = self._count_sub()
 
     # ---- 已读/未读（状态在 core/store.py，行首圆点见 ui/list_render.py）----
 
@@ -562,19 +615,34 @@ class MainScreen(MainSetupScreen):
         return "" if self._tui.state.is_read(it.source, it.id) else MARK_UNREAD
 
     def _mark_read(self, item: FeedItem) -> None:
-        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）：
-        状态落库 + 该行圆点就地清掉。"""
+        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）。"""
         self._tui.state.mark_read(item.source, item.id)
-        self._update_row_mark(item)
+        self._sync_after_read(item)
+
+    def _sync_after_read(self, item: FeedItem | None = None) -> None:
+        """已读变化后的行与边栏同步（收藏屏代读也走这里）。
+
+        过滤态整表重画——读过的行直接消失（newsboat 同款语义）并保选中位；
+        全量态就地点一行圆标；边栏角标两种态都要刷新。
+        """
+        self._refresh_sidebar()
+        if self._unread_only:
+            self.run_worker(self.rebuild_items(), exclusive=True)
+        elif item is not None:
+            self._update_row_mark(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
         """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。
 
-        按 (source, id) 定位而不是对象相等：收藏屏回写主屏时传的是快照
-        副本（meta 已加源名前缀），等值比对会失配；行身份本来就是键。
+        按 (source, id) 在 _shown 里定位而不是对象相等：收藏屏回写主屏时
+        传的是快照副本，等值比对会失配；行身份本来就是键。
         """
         idx = next(
-            (i for i, it in enumerate(self.items) if it.source == item.source and it.id == item.id),
+            (
+                i
+                for i, it in enumerate(self._shown())
+                if it.source == item.source and it.id == item.id
+            ),
             None,
         )
         if idx is None:
@@ -584,15 +652,49 @@ class MainScreen(MainSetupScreen):
             return  # 行还没画上（在途）：下批渲染自然对
         view.children[idx].query_one(".item-mark", Label).update(self._row_mark(item))
 
+    # ---- 只看未读（F4）与全部已读（Ctrl+Shift+R）----
+
+    def action_unread_only(self) -> None:
+        """F4：只看未读开关（会话级，重启回全量；不影响 loader/Ctrl+N 的全量数据）。"""
+        self._unread_only = not self._unread_only
+        feedback.info(
+            self, t("main.toast_unread_on" if self._unread_only else "main.toast_unread_off")
+        )
+        self.run_worker(self.rebuild_items(), exclusive=True)
+
+    def action_mark_all_read(self) -> None:
+        """Ctrl+Shift+R：当前流全部标已读。过滤态下标的是**全部**（确认文案即全量数）。"""
+        if not self.items:
+            feedback.info(self, t("main.toast_no_selection"))
+            return
+        self.app.run_worker(self._mark_all_flow(), group="markall")
+
+    async def _mark_all_flow(self) -> None:
+        """清仓流：轻确认 → 批量置已读 + 角标清零 → 行圆点全清/过滤态清空。"""
+        ok = await self.app.push_screen(
+            ConfirmScreen(t("main.confirm_mark_all", n=len(self.items))), wait_for_dismiss=True
+        )
+        if not ok:
+            return
+        n = len(self.items)
+        self._tui.state.mark_all_read(self.items, self.current_feed)
+        feedback.info(self, t("main.toast_marked_all", n=n))
+        await self.rebuild_items()
+        self._refresh_sidebar()
+
     def action_toggle_read(self) -> None:
-        """Ctrl+R：当前条目手动切换已读/未读（想重看的标回未读）。"""
+        """Ctrl+R：当前条目手动切换已读/未读（想重看的标回未读）。
+
+        统一走 _sync_after_read：过滤态下切成已读 = 行从视图消失 + 角标递减
+        （单行点圆点在过滤态会失配——_shown 已不含刚读的条目）。
+        """
         item = self.current_item()
         if item is None:
             feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按键不无声
             return
         read = self._tui.state.toggle_read(item.source, item.id)
-        self._update_row_mark(item)
         feedback.info(self, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
+        self._sync_after_read(item)
 
     # ---- 收藏：Ctrl+F 标记 / F3 列表（屏在 ui/screens/favorites.py）----
 
@@ -815,12 +917,13 @@ class MainScreen(MainSetupScreen):
     # ---- Enter：进详情或跳浏览器 ----
 
     def current_item(self) -> FeedItem | None:
-        if not self.items:
+        shown = self._shown()
+        if not shown:
             return None
         view = self.query_one("#feed", ListView)
-        if view.index is None:
+        if view.index is None or view.index >= len(shown):
             return None
-        return self.items[view.index]
+        return shown[view.index]
 
     def _opens_detail(self, item: FeedItem) -> bool:
         """Enter 的分派谓词：进终端详情屏还是跳浏览器，由源的类型词汇表决定
@@ -833,12 +936,14 @@ class MainScreen(MainSetupScreen):
 
         详情屏 [/] 换篇的供给端：跳过 Enter 会跳浏览器的类型（阅读流要留在终端里，
         阅读中突然弹出浏览器是事故）；沿方向没有可读条目时不动选中、返回 None。
+        推进沿 _shown（过滤态下跳过已读行——它们本来就不在屏上）。
         """
         view = self.query_one("#feed", ListView)
-        if not self.items or view.index is None:
+        shown = self._shown()
+        if not shown or view.index is None:
             return None
-        for idx in range(view.index + delta, len(self.items) if delta > 0 else -1, delta):
-            it = self.items[idx]
+        for idx in range(view.index + delta, len(shown) if delta > 0 else -1, delta):
+            it = shown[idx]
             if self._opens_detail(it):
                 view.index = idx
                 # ←/→ 换篇的静默推进同样计已读：详情屏拿目标必经这里，主屏

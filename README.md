@@ -111,6 +111,8 @@ feedscope
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
 | `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
+| `F4` | Unread-only view: the list shows unread items only (session toggle; read rows vanish instantly) |
+| `Ctrl+A` | Mark every item in the current feed as read (with confirmation) |
 | `Ctrl+F` | Favorite / unfavorite the current item (works while reading too) |
 | `F3` | Favorites list: cross-source, newest first; Enter opens detail, Ctrl+F unfavorites |
 | `F5` | Refresh |
@@ -126,13 +128,15 @@ All keys are non-printing — they work while a Chinese IME is active; typing pr
 
 The dot column on each row tracks reading state: `●` unread (editor blue), blank = read. Unread is persistent — refreshes, feed switches and restarts never touch it; the dot only clears when you open the item (`Enter` into detail, `Ctrl+O` to the browser, or `←`/`→` article-stepping inside a detail). `Ctrl+R` toggles the current item — mark it unread to revisit. How many items arrived with this refresh shows as a count in the status line ("N items · M new"), not as row-level marks.
 
+The unread-digestion trio: every feed in the sidebar carries an **unread badge** (counted on refresh, decremented live as you read — including reads from the favorites list); `F4` is the **unread-only view** (session toggle, read rows vanish instantly — the main path for working through a backlog); `Ctrl+A` **marks the current feed read** with a light confirmation.
+
 Favorites (`Ctrl+F`) store a **full snapshot at the moment of starring** (title/link/meta, and the body for RSS / Telegram) — items stay readable after they scroll off hot lists or get deleted. The `F3` list reads snapshots with zero requests (works offline); Enter fetches the latest comments from the original source. Favorited entries are exempt from the read-state cap; `feedscope favorites` lists them in the terminal and `feedscope favorites export [file.md]` exports Markdown to take them anywhere.
 
 Both live in plain local files (delete to reset; no credentials involved):
 
 | File | Contents |
 | --- | --- |
-| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids with timestamps (capped at 10k entries, oldest evicted first; favorites exempt) |
+| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids, timestamps and per-feed unread counts (capped at 10k entries, oldest evicted first; favorites exempt) |
 | `favorites.json` (same state dir) | full snapshots of favorited items (user-curated data, never pruned) |
 | `feeds/` (platform cache dir, `~/.cache/feedscope/feeds/` on Linux) | one JSON list cache per feed (200 items per feed, 60 most recent feeds kept) |
 

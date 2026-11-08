@@ -208,7 +208,8 @@ class FavoritesScreen(Screen[None]):
         self._tui.state.mark_read(item.source, item.id)
         self._update_row_mark(item)
         if (main := self._tui.main) is not None:
-            main._update_row_mark(item)  # 主屏同一行圆点同步清掉（不在主列表则 no-op）
+            # 主屏同一行圆点 + 边栏角标同步（含过滤态重画；不在主列表则 no-op）
+            main._sync_after_read(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
         """单行圆点就地重算（按 (source, id) 定位行，理由见 MainScreen 同名方法）。"""

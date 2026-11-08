@@ -213,6 +213,64 @@ def test_favorites_bad_file_tolerated() -> None:
     assert len(ReadState().favorites()) == 1
 
 
+# ---- 每流未读计数（边栏角标）----
+
+
+def test_feed_counts_recount_and_decrement() -> None:
+    """整流重数以刷新为准；mark_read 按首见流路由递减；刷新纠偏。"""
+    st = ReadState()
+    items = [_item("zhihu", f"q{i}") for i in range(3)]
+    st.note_fetched(items, "hot", recount=True)
+    assert st.unread_count("zhihu", "hot") == 3
+    st.mark_read("zhihu", "q0")
+    assert st.unread_count("zhihu", "hot") == 2
+    st.note_fetched(items, "hot", recount=True)  # 刷新重数与递减一致（无漂移）
+    assert st.unread_count("zhihu", "hot") == 2
+    st.mark_read("zhihu", "q1")
+    st.note_fetched(items, "hot", recount=True)
+    assert st.unread_count("zhihu", "hot") == 1
+    assert st.unread_count("zhihu", "never") == 0  # 没抓过的流零
+
+
+def test_feed_count_routes_by_entry_feed_not_name() -> None:
+    """递减按条目首见流路由：流名跨源撞名不误伤（rss/telegram 都有 all），
+    从收藏屏读也减主场的数（跨屏路由正确性）。"""
+    st = ReadState()
+    st.note_fetched([_item("rss", "a/1")], "all", recount=True)
+    st.note_fetched([_item("telegram", "x/1")], "all", recount=True)
+    st.mark_read("rss", "a/1")
+    assert st.unread_count("rss", "all") == 0
+    assert st.unread_count("telegram", "all") == 1, "同名流不误伤"
+
+
+def test_load_more_partial_batch_adds_not_recounts() -> None:
+    """Ctrl+N 增量批：首见数累加，局部批不得把整流计数冲成批内值。"""
+    st = ReadState()
+    st.note_fetched([_item("hn", str(i)) for i in range(3)], "front", recount=True)
+    st.note_fetched([_item("hn", str(i)) for i in range(10, 12)], "front")
+    assert st.unread_count("hn", "front") == 5
+
+
+def test_toggle_adjusts_count_both_ways() -> None:
+    st = ReadState()
+    items = [_item("v2ex", f"t{i}") for i in range(3)]
+    st.note_fetched(items, "hot", recount=True)
+    st.toggle_read("v2ex", "t0")  # → 已读：3→2
+    assert st.unread_count("v2ex", "hot") == 2
+    st.toggle_read("v2ex", "t0")  # → 未读：2→3
+    assert st.unread_count("v2ex", "hot") == 3
+
+
+def test_mark_all_read_zeroes_feed_count() -> None:
+    st = ReadState()
+    items = [_item("hn", str(i)) for i in range(4)]
+    st.note_fetched(items, "front", recount=True)
+    st.mark_all_read(items, "front")
+    assert st.unread_count("hn", "front") == 0
+    assert all(st.is_read("hn", str(i)) for i in range(4))
+    assert ReadState().unread_count("hn", "front") == 0  # 跨实例（重启）持久
+
+
 def test_write_failure_keeps_memory_state(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

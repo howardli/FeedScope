@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Unread management: per-feed unread badges in the sidebar (recounted on refresh, decremented live as you read — reads from the favorites list decrement the home feed too), `F4` unread-only view (session toggle; read rows vanish instantly, newsboat-style), and `Ctrl+A` mark-all-read for the current feed with a light confirmation
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

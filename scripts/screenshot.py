@@ -811,6 +811,8 @@ async def _demo_read_mix(app: app_mod.FeedScopeApp, pilot) -> None:
 
     截图要同时展示圆点三态（● 新 / ○ 未读 / 空 已读）——全新状态全屏 ●
     看不出「已读会变空」，全已读又看不出特性；隔条混合最像真实使用痕迹。
+    直标 store 会绕过主屏的角标刷新链：标完手动重建边栏，否则角标停在
+    抓取时的全量数（9 而不是 6）。
     """
     main = app.main
     if main is None or not main.items:
@@ -818,6 +820,7 @@ async def _demo_read_mix(app: app_mod.FeedScopeApp, pilot) -> None:
     for it in main.items[::3]:
         app.state.mark_read(it.source, it.id)
     await main.rebuild_items()
+    await main._render_feed_sidebar()
     for _ in range(2):
         await pilot.pause()
 
