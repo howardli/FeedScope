@@ -214,6 +214,7 @@ class AnswerScreen(PagedReadingScreen):
         try:
             self.loader = await self.qloader.open_comments(self.index)
         except Exception as exc:
+            self._note_auth_failure(exc)  # 会话失效要记账（Ctrl+U 直给登录框）
             # 失败文案存下来：resize 重排也要还原成失败态，不能变回「加载中」
             self._comments_error = feedback.failure_text(self.source, exc)
             feedback.fail(self.app, self.source, exc, action="feedback.action_comments_failed")

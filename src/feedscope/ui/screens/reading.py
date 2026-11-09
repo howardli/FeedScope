@@ -36,7 +36,7 @@ from textual.widgets import Label, Static
 
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
-from feedscope.core.source import CommentLoader, DetailLoader, Source
+from feedscope.core.source import CommentLoader, DetailLoader, LoginRequired, Source
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
@@ -257,6 +257,22 @@ class PagedReadingScreen(ReadingScreen):
     source: Source  # 源实例（失败文案与能力判定）
     item: FeedItem  # 正在读的条目（Ctrl+O 与屏间传递）
 
+    @property
+    def _tui(self) -> FeedScopeApp:
+        """self.app 的收窄视图（账号动线等自定义成员经它获得静态类型），同 MainScreen。"""
+        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
+        return cast("FeedScopeApp", self.app)
+
+    def _note_auth_failure(self, exc: Exception) -> None:
+        """翻页/评论撞 LoginRequired：记会话失效（Ctrl+U 此后直接给登录框）。
+
+        半失效会话的 cookie 还躺在 profile 里，判登只看 cookie 在不在——
+        不记的话 Ctrl+U 会弹「登出」框，得先登出才能重登。其余异常不动作
+        （语义与 detail.py 首载分支同一套，见 AccountFlow.stale）。
+        """
+        if isinstance(exc, LoginRequired):
+            self._tui.accounts.mark_stale(self.source)
+
     # 阅读中随手收藏是主场景：详情 / 评论两屏共用这一份（评论屏的 item 是
     # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen。
     # Ctrl+Y 复制链接与 Ctrl+O 同源（_browser_url——回答屏自动带楼层直达）
@@ -318,6 +334,7 @@ class PagedReadingScreen(ReadingScreen):
             new = await loader.load_more()
         except Exception as exc:
             # 不再静默：失败要告诉用户（否则按 Ctrl+N 无反馈，误以为按键失灵）
+            self._note_auth_failure(exc)  # 会话失效要记账（Ctrl+U 直给登录框）
             feedback.fail(self.app, self.source, exc, action="feedback.action_more_failed")
             new = []
         if loader is not self.loader:

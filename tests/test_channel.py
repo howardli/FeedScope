@@ -123,6 +123,23 @@ def test_check_failure_closes_page_and_propagates(make_tab) -> None:
     assert page.closed
 
 
+def test_fetch_check_hook_login_required_survives(monkeypatch) -> None:
+    """开页校验钩子抛的 LoginRequired 要穿透 fetch 原语：不被 except Exception
+    的通用包装降级成 SourceError——否则源内语义转译全部失效（知乎未登录时
+    列表层只剩「抓取失败」，登录引导弹不出来）。"""
+    from feedscope.core.source import LoginRequired
+
+    page = FakePage()
+
+    async def wall(p) -> None:
+        raise LoginRequired("login wall")
+
+    monkeypatch.setattr(browser, "get_session", lambda: FakeSession(page))
+    tab = ChannelTab(_PARK, check=wall, name="test")
+    with pytest.raises(LoginRequired, match="login wall"):
+        asyncio.run(tab.fetch("https://x/api", source="测试"))
+
+
 # ---- ChannelTab.fetch：统一页内取数原语（解包约定 / 报错转译 / 样本落盘）----
 
 

@@ -436,6 +436,7 @@ class MainScreen(MainSetupScreen):
             if not self.items:
                 self.app.sub_title = t("main.status_signed_out")
             hint = t("main.hint_login", error=exc)
+            self._tui.accounts.mark_stale(source)  # Ctrl+U 此后直接给登录框（判登正被骗着）
             if source.source_id in self._tui.accounts.refused:
                 # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
                 if not self.items:
@@ -540,6 +541,8 @@ class MainScreen(MainSetupScreen):
             new = await loader.load_more()
         except Exception as exc:
             self.app.sub_title = t("main.status_more_failed", n=len(self.items))
+            if isinstance(exc, LoginRequired):
+                self._tui.accounts.mark_stale(self.current_source)  # 会话失效记账
             feedback.fail(
                 self, self.current_source, exc, action="feedback.action_more_failed"
             )

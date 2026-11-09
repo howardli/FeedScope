@@ -28,6 +28,19 @@ class AccountFlow:
         self.app = app
         self.in_progress = False  # 有头登录进行中（挡刷新，见 action_refresh）
         self.refused: set[str] = set()  # 已拒绝自动询问的源 id（本运行内有效）
+        # 会话已失效但判登还被骗着的源 id（cookie 在、服务端已拒绝——知乎
+        # 详情 403 形态）：Ctrl+U 据此直接给登录框，省「先登出再登录」一步。
+        # 登录成功/登出即清除。不像 X 的 401 那样清 cookie：403 无法与风控
+        # 彻底区分，会话可能仍有效，清了等于强制重登
+        self.stale: set[str] = set()
+
+    def mark_stale(self, source: Source) -> None:
+        """取数撞 LoginRequired 时由 UI 各出口调用：记下会话失效。
+
+        无脑记即可：真未登录的源（cookie 都没有）本来就走登录框，多记
+        无副作用；这个集合只在「判登说已登录」时才改变 Ctrl+U 的分派。
+        """
+        self.stale.add(source.source_id)
 
     async def on_login_wall(self, source: Source, hint: str) -> None:
         """取数撞登录墙：弹登录框（等用户选「登录」才开浏览器，不擅自弹窗）。
@@ -59,7 +72,10 @@ class AccountFlow:
         if self.in_progress:
             feedback.info(self.app, t("account.login_in_progress"))
             return
-        logged_in = await login.is_logged_in(source.source_id)
+        # stale 命中时跳过判登（cookie 还躺着只会骗人）：直接按未登录分派
+        logged_in = source.source_id not in self.stale and await login.is_logged_in(
+            source.source_id
+        )
         action_key = "dialogs.logout" if logged_in else "dialogs.login"
         proceed = await self.app.push_screen(
             AccountScreen(source.label_text, action_key), wait_for_dismiss=True
@@ -94,6 +110,7 @@ class AccountFlow:
                 ok = False
             if ok:
                 self.refused.discard(source.source_id)  # 后续撞墙（过期）恢复自动询问
+                self.stale.discard(source.source_id)  # 新会话已生效，失效记忆作废
                 feedback.info(self.app, t("account.login_ok", label=source.label_text))
             else:
                 # 未完成（超时/关窗放弃）：别再自动追问，重试入口在 toast 与常驻提示里
@@ -112,6 +129,7 @@ class AccountFlow:
     async def logout(self, source: Source) -> None:
         """清掉当前源登录 cookie → 刷新（撞墙弹登录框，即换账号动线）。"""
         self.refused.discard(source.source_id)  # 主动登出 = 想换账号：撞墙要重新弹登录框
+        self.stale.discard(source.source_id)  # cookie 已清，失效记忆没了意义
         try:
             had = await login.logout(source.source_id)
         except Exception as exc:

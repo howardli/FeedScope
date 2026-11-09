@@ -16,9 +16,16 @@ from textual.widgets import Label
 import feedscope.sources  # noqa: F401  先触发真实源注册
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import _REGISTRY
-from feedscope.core.source import FeedLoader, LoginRequired, Source, StaticFeedLoader
+from feedscope.core.source import (
+    DetailLoader,
+    FeedLoader,
+    LoginRequired,
+    Source,
+    StaticFeedLoader,
+)
 from feedscope.ui.app import FeedScopeApp
 from feedscope.ui.dialogs import AccountScreen
+from feedscope.ui.screens.detail import DetailScreen
 
 
 def _item(i: int) -> FeedItem:
@@ -58,6 +65,25 @@ class AnonSource(Source):
         return StaticFeedLoader([_item(0)])
 
 
+class DetailWallSource(Source):
+    """详情撞墙源（知乎 403 形态）：列表照常出内容（v3 宽松）、进详情才会话失效。"""
+
+    source_id = "detailwall"
+    label = "详情墙源"
+    supports_detail = True
+    feeds: ClassVar[list[str]] = ["main"]
+    feed_labels: ClassVar[dict[str, str]] = {"main": "主"}
+    login_url = "https://example.com/login"
+    login_cookie = "session"
+    logout_cookies: ClassVar[list[str]] = ["session"]
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        return StaticFeedLoader([_item(0)])
+
+    async def open_detail(self, item: FeedItem) -> DetailLoader:
+        raise LoginRequired("详情墙源 登录态已失效（HTTP 403），重新登录通常可恢复")
+
+
 @pytest.fixture(autouse=True)
 def _reset_authed():
     LoginSource.authed = False
@@ -81,6 +107,17 @@ def anon_login_registry():
     _REGISTRY.clear()
     _REGISTRY[AnonSource.source_id] = AnonSource
     _REGISTRY[LoginSource.source_id] = LoginSource
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(saved)
+
+
+@pytest.fixture()
+def detail_wall_registry():
+    """只留详情撞墙源：验证详情屏的登录引导动线（列表正常、详情 LoginRequired）。"""
+    saved = dict(_REGISTRY)
+    _REGISTRY.clear()
+    _REGISTRY[DetailWallSource.source_id] = DetailWallSource
     yield
     _REGISTRY.clear()
     _REGISTRY.update(saved)
@@ -303,3 +340,91 @@ async def _run_account_key_flow(calls) -> None:
 
 def test_account_key_dispatches(anon_login_registry, fake_login) -> None:
     asyncio.run(_run_account_key_flow(fake_login))
+
+
+async def _run_detail_wall_flow() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        # 列表正常（会话半失效的 v3 形态）→ Enter 进详情才撞 LoginRequired
+        assert await settle(pilot, lambda: app.main is not None and len(app.main.items) == 1)
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen)), "详情撞墙也弹登录框"
+        prompt = str(app.screen.query_one("#account-prompt").content)
+        assert "登录" in prompt, "弹框正文说明是登录"
+
+        # 取消：回详情屏，常驻红字提示（不再是裸 HTTP 码），面包屑标记未登录
+        await pilot.press("escape")
+        assert await settle(pilot, lambda: isinstance(app.screen, DetailScreen))
+        line = str(app.screen.query_one("#detail-loading", Label).content)
+        assert "重新登录" in line and "Ctrl+U" in line, "常驻提示指明重登入口"
+        assert app.sub_title == "未登录"
+
+        # 取消被记住：Ctrl+N 原地重试不再追问（与列表屏同一克制）
+        await pilot.press("ctrl+n")
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+        assert isinstance(app.screen, DetailScreen) and not isinstance(
+            app.screen, AccountScreen
+        ), "重试不得再自动弹框"
+
+
+def test_detail_wall_pushes_login_modal_and_remember_cancel(detail_wall_registry) -> None:
+    asyncio.run(_run_detail_wall_flow())
+
+
+async def _run_stale_session_flow(monkeypatch) -> None:
+    """知乎 403 形态的闭环：详情撞墙被拒后 Ctrl+U 直接给登录框（不是登出框
+    ——判登正被躺着的失效 cookie 骗着），重登成功后失效记忆清零恢复如实分派。"""
+    import feedscope.login as login_mod
+
+    from feedscope.ui.screens.main import MainScreen
+
+    login_calls: list[str] = []
+
+    async def _login(source_id: str, *, quiet: bool = False) -> bool:
+        login_calls.append(source_id)
+        return True
+
+    async def _logged_in(source_id: str) -> bool:
+        return True  # cookie 还躺着：判登一直说「已登录」（半失效的真实形态）
+
+    monkeypatch.setattr(login_mod, "login", _login)
+    monkeypatch.setattr(login_mod, "is_logged_in", _logged_in)
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        assert await settle(pilot, lambda: app.main is not None and len(app.main.items) == 1)
+        # 详情撞墙 → 登录框 → 取消（stale 已在详情分支记账）
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
+        await pilot.press("escape")
+        assert await settle(pilot, lambda: isinstance(app.screen, DetailScreen))
+        await pilot.press("escape")  # 退回列表（Ctrl+U 是列表屏键位）
+        assert await settle(pilot, lambda: isinstance(app.screen, MainScreen))
+
+        # Ctrl+U：判登说「已登录」但失效已记账 → 直接给登录框
+        await pilot.press("ctrl+u")
+        assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
+        prompt = str(app.screen.query_one("#account-prompt").content)
+        assert "需要登录" in prompt and "登出" not in prompt, "失效会话直接给登录框"
+
+        # 选登录：新会话生效 → 失效记忆清零（条件并入 settle：记账清理在
+        # worker 里，login 调用记录与 discard 之间有微小时序窗口）
+        await pilot.click("#account-go")
+        assert await settle(
+            pilot,
+            lambda: login_calls == ["detailwall"]
+            and not app.accounts.stale
+            and not isinstance(app.screen, AccountScreen),
+        ), "登录动线走通且失效记忆清零"
+
+        # 再 Ctrl+U：失效记忆已清、判登如实 → 登出框
+        await pilot.press("ctrl+u")
+        assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
+        prompt = str(app.screen.query_one("#account-prompt").content)
+        assert "登出" in prompt, "失效记忆清零后恢复如实分派"
+        await pilot.press("escape")
+
+
+def test_stale_session_ctrl_u_offers_login_directly(detail_wall_registry, monkeypatch) -> None:
+    asyncio.run(_run_stale_session_flow(monkeypatch))

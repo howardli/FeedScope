@@ -135,9 +135,21 @@ def test_clear_cookies_absent_returns_false_and_leaves_others(x) -> None:
 class FakePage:
     def __init__(self) -> None:
         self.gone_to: list[str] = []
+        self._close_cbs: list = []
 
     async def goto(self, url: str, **kwargs) -> None:
         self.gone_to.append(url)
+
+    def on(self, event: str, cb) -> None:
+        """login() 的关窗监听（page.on("close")）：记下回调供测试触发。"""
+        if event == "close":
+            self._close_cbs.append(cb)
+
+    def user_closes_window(self) -> None:
+        """测试钩子：模拟用户关掉登录窗口（触发 page close 回调，带 Page 实参
+        与 Playwright 事件形态一致）。"""
+        for cb in self._close_cbs:
+            cb(self)
 
 
 class FakeBrowserContext(FakeContext):
@@ -241,6 +253,27 @@ def test_login_timeout_returns_false(monkeypatch, capsys) -> None:
     _fast_poll(monkeypatch, timeout=0.2)
     assert asyncio.run(login_mod().login("zhihu")) is False
     assert "超时" in capsys.readouterr().out
+
+
+def test_login_window_closed_ends_wait_early(monkeypatch, capsys) -> None:
+    """用户关掉登录窗口（macOS 红灯：进程不走、轮询不抛）：靠 page close 事件
+    立即收尾返回 False——否则空等满 LOGIN_TIMEOUT，期间 TUI 被 in_progress
+    挡掉所有刷新（实测反馈的「一直登录进行中」卡死）。超时设长作对照：
+    靠关窗信号收尾才是通过条件，且不再误报「超时」。"""
+    ctx = FakeBrowserContext(set())
+    _fake_pw(monkeypatch, ctx)
+    _fast_poll(monkeypatch, timeout=10)
+
+    async def scenario() -> bool:
+        task = asyncio.ensure_future(login_mod().login("zhihu"))
+        await asyncio.sleep(0.15)  # 已进轮询（interval 0.05s）
+        ctx.page.user_closes_window()
+        return await asyncio.wait_for(task, timeout=3)  # 3s 内收不了尾 = 修复失效
+
+    assert asyncio.run(scenario()) is False
+    out = capsys.readouterr().out
+    assert "登录窗口已关闭" in out
+    assert "超时" not in out
 
 
 def test_login_browser_failure_is_friendly(monkeypatch, capsys) -> None:

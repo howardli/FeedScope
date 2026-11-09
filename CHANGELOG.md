@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-10
+
+### Fixed
+
+- Zhihu details failed with a bare `HTTP 403` while lists kept working: once the stored login session expires server-side, the lenient v3 feed endpoints still serve the list but the v4 detail endpoints (question meta / answers feeds / comments) reject the stale session. Those endpoints now translate 401/403 into the login-expired flow, and the detail screen offers the same sign-in dialog as the list screen (persistent hint + `Ctrl+U` after declining); comment paging no longer swallows the session-expired signal either
+- After any session-expired signal this run, `Ctrl+U` offers sign-in directly instead of logout: a stale-but-present login cookie keeps fooling the cookie-presence check, which previously turned the account dialog into a logout-first detour (sign out, then sign in again); the stale-session memory clears on successful sign-in or logout
+- Closing the sign-in Chrome window (the red button / `Cmd+W` on macOS) left the app showing "login in progress" and blocking every refresh for the rest of the 3-minute wait: on macOS the Chrome process outlives its last window, so the polling never errors out; the login page's `close` event now ends the wait immediately with a clear "window closed" outcome
+- A fully logged-out Zhihu showed a generic "fetch failed" at the list layer with no sign-in guidance: the channel tab's login-wall check raised the right signal, but the shared fetch primitive's generic exception wrapper demoted it to a plain error before it could reach the UI (the detail layer took a different path and worked); the wall's exception now passes through untouched, so the list refresh pops the same login dialog
+
 ## [0.3.0] - 2026-11-09
 
 ### Added

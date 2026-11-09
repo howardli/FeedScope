@@ -29,6 +29,10 @@ LOGIN_TIMEOUT = 180  # 秒；3 分钟没扫上就退出
 POLL_INTERVAL = 2
 
 
+class _LoginAborted(Exception):
+    """登录窗口被用户关掉（macOS 红灯/Cmd+W）：等不下去了，login() 转友好提示。"""
+
+
 async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
     import feedscope.sources  # noqa: F401  import 即注册
     from feedscope.core.registry import all_sources, get_source
@@ -57,14 +61,22 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
             )
             try:
                 page = context.pages[0] if context.pages else await context.new_page()
+                # 用户关掉登录窗口（macOS 红灯/Cmd+W）时 Chrome 进程不走、连接
+                # 不断、判登轮询也不抛错——唯一信号是这一页没了。不监听的话
+                # 要空等满 LOGIN_TIMEOUT，期间 TUI 被 in_progress 挡掉所有刷新
+                window_gone = asyncio.Event()
+                page.on("close", lambda _page: window_gone.set())
                 await page.goto(
                     source.login_url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS
                 )
                 # 轮询单独兜底：判据钩子抛错报「登录检测出错」，不被外层误标成
                 # 「浏览器启动失败」（浏览器明明活着，误导排障）
                 try:
-                    if await _await_login(context, source, quiet):
+                    if await _await_login(context, source, quiet, window_gone):
                         return True
+                except _LoginAborted:
+                    _say(quiet, t("login.window_closed"))
+                    return False
                 except Exception as exc:
                     _say(quiet, t("login.check_error", error=exc))
                     return False
@@ -77,8 +89,14 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
     return False
 
 
-async def _await_login(context, source, quiet: bool) -> bool:
-    """轮询源声明的判据（口径见 _logged_in）直到成功（True，已报喜）或超时（False）。"""
+async def _await_login(
+    context, source, quiet: bool, window_gone: asyncio.Event | None = None
+) -> bool:
+    """轮询源声明的判据（口径见 _logged_in）直到成功（True，已报喜）或超时（False）。
+
+    window_gone（登录页 close 事件）置位即抛 _LoginAborted：用户关窗放弃，
+    不再空等（语义见 login() 里的接线注释）。
+    """
     deadline = asyncio.get_running_loop().time() + LOGIN_TIMEOUT
     while asyncio.get_running_loop().time() < deadline:
         if await _logged_in(context, source):
@@ -89,7 +107,15 @@ async def _await_login(context, source, quiet: bool) -> bool:
                 how = t("login.success_cookies", cookies=joiner.join(source.judging_cookies))
             _say(quiet, t("login.success", how=how))
             return True
-        await asyncio.sleep(POLL_INTERVAL)
+        if window_gone is not None:
+            if window_gone.is_set():
+                raise _LoginAborted
+            try:  # 睡到下个轮询点，关窗信号先到先醒（不等满 POLL_INTERVAL）
+                await asyncio.wait_for(window_gone.wait(), timeout=POLL_INTERVAL)
+            except TimeoutError:
+                pass
+        else:
+            await asyncio.sleep(POLL_INTERVAL)
     return False
 
 

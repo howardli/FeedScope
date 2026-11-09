@@ -278,13 +278,24 @@ def test_open_comments_zero_comments(monkeypatch) -> None:
 
 
 def test_open_comments_http_error_is_source_error(monkeypatch) -> None:
-    """接口非 2xx：open_comments 转 SourceError（出口给 UI 提示）。"""
+    """其余非 2xx（如 500）：open_comments 转 SourceError（出口给 UI 提示）。"""
     from feedscope.core.source import SourceError
     from feedscope.sources.zhihu import fetch as zf
 
     loader = _open_loader(monkeypatch, FakePage())
-    zf._tab._on_fetch = lambda req: (403, None)  # 开题已装好替身：就地注入接口 403
-    with pytest.raises(SourceError, match="403"):
+    zf._tab._on_fetch = lambda req: (500, None)  # 开题已装好替身：就地注入接口 500
+    with pytest.raises(SourceError, match="500"):
+        asyncio.run(loader.open_comments(0))
+    asyncio.run(loader.close())
+
+
+def test_open_comments_stale_403_is_login_required(monkeypatch) -> None:
+    """评论端点 403 = 会话失效（与详情同族）：转 LoginRequired 走登录引导。"""
+    from feedscope.sources.zhihu import fetch as zf
+
+    loader = _open_loader(monkeypatch, FakePage())
+    zf._tab._on_fetch = lambda req: (403, None)
+    with pytest.raises(LoginRequired, match="重新登录"):
         asyncio.run(loader.open_comments(0))
     asyncio.run(loader.close())
 
@@ -331,6 +342,34 @@ def test_question_loader_load_more_via_feeds_api(monkeypatch) -> None:
     asyncio.run(loader.close())
 
 
+def test_comments_loader_stale_passes_through(monkeypatch) -> None:
+    """评论翻页撞会话失效：LoginRequired 穿透，不被「单页失败不判死」吞掉。"""
+    from feedscope.sources.zhihu import fetch as zf
+
+    loader = _open_loader(monkeypatch, FakePage())
+    cm = asyncio.run(loader.open_comments(0))
+    zf._tab._on_fetch = lambda req: (403, None)  # 首页已取，翻页撞 403
+    with pytest.raises(LoginRequired, match="403"):
+        asyncio.run(cm.load_more())
+    asyncio.run(cm.close())
+    asyncio.run(loader.close())
+
+
+def test_question_loader_load_more_stale_403_is_login_required(monkeypatch) -> None:
+    """回答翻页撞会话失效：转 LoginRequired（Ctrl+N 的出口能指引用户重登）。"""
+    from feedscope.core.source import SourceError
+
+    loader = _open_loader(monkeypatch)
+
+    async def _stale(url: str, referer: str) -> dict:
+        raise SourceError("接口请求失败（HTTP 403）")
+
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._api_json", _stale)
+    with pytest.raises(LoginRequired, match="重新登录"):
+        asyncio.run(loader.load_more())
+    asyncio.run(loader.close())
+
+
 def test_question_deleted_404_is_friendly(monkeypatch) -> None:
     """问题被删/不存在：元信息 404 转友好文案，不让用户看 HTTP 码猜。"""
     from feedscope.core.source import SourceError
@@ -351,6 +390,50 @@ def test_api_json_401_is_login_required(monkeypatch) -> None:
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", tab)
     with pytest.raises(LoginRequired, match="重新登录"):
         asyncio.run(_api_json("https://www.zhihu.com/api/v4/questions/1", "https://www.zhihu.com/"))
+
+
+def test_api_json_403_stays_source_error(monkeypatch) -> None:
+    """信息流 v3 端点的 403 不并入登录转译：那边可能是纯风控，引导重登会误导。"""
+    from feedscope.core.source import SourceError
+    from feedscope.sources.zhihu.fetch import RECOMMEND_API
+
+    tab = _tab_for(FakePage())
+    tab._on_fetch = lambda req: (403, None)
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", tab)
+    with pytest.raises(SourceError, match="403") as caught:
+        asyncio.run(_api_json(RECOMMEND_API, "https://www.zhihu.com/"))
+    assert not isinstance(caught.value, LoginRequired)
+
+
+def test_open_question_stale_403_is_login_required(monkeypatch) -> None:
+    """线上实测 bug 的钉子：z_c0 服务端过期后列表（v3 端点）照常、详情（v4）一律
+    403、重新登录即恢复——转 LoginRequired 触发 UI 登录引导，不再裸报 HTTP 码。"""
+    page = FakePage()
+    page._open_payload = {"meta": {"__status": 403}, "feeds": _feeds_top()}
+
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
+    with pytest.raises(LoginRequired, match="重新登录"):
+        asyncio.run(open_question("123"))
+
+
+def test_open_question_stale_403_on_feeds_is_login_required(monkeypatch) -> None:
+    """feeds 端点同转译：元信息放行、首批回答 403 也算会话失效。"""
+    page = FakePage()
+    page._open_payload = {"meta": dict(_Q_META), "feeds": {"__status": 403}}
+
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
+    with pytest.raises(LoginRequired, match="403"):
+        asyncio.run(open_question("123"))
+
+
+def test_open_question_401_is_login_required(monkeypatch) -> None:
+    """401（明确过期）同转译——开题路径此前连 401 都不转（列表路径才有）。"""
+    page = FakePage()
+    page._open_payload = {"meta": {"__status": 401}, "feeds": _feeds_top()}
+
+    monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
+    with pytest.raises(LoginRequired, match="401"):
+        asyncio.run(open_question("123"))
 
 
 def test_question_loader_without_next_done_at_open(monkeypatch) -> None:
@@ -494,3 +577,27 @@ def test_channel_login_wall_is_login_required(monkeypatch) -> None:
     )
     with pytest.raises(LoginRequired):
         asyncio.run(zhihu_fetch._tab.get())
+
+
+def test_wall_survives_list_layer_end_to_end(monkeypatch) -> None:
+    """未登录开知乎列表：登录墙的 LoginRequired 要活着穿过整条链路到达 UI
+    （弹登录引导），不被通道 fetch 的通用包装吞成「抓取失败」——热榜与
+    推荐（经 first_batch 的 loader.load_more）两条路都钉住。"""
+    from feedscope.sources.zhihu import ZhihuSource
+
+    page = FakePage()
+
+    async def goto_signin(url: str, **kw) -> None:
+        page.url = "https://www.zhihu.com/signin?next=%2F"
+
+    page.goto = goto_signin
+    monkeypatch.setattr("feedscope.core.browser.get_session", lambda: _FakeSession2(page))
+    monkeypatch.setattr(
+        zhihu_fetch,
+        "_tab",
+        ChannelTab("https://www.zhihu.com/", check=zhihu_fetch._login_wall, name="zhihu"),
+    )
+    with pytest.raises(LoginRequired):
+        asyncio.run(zhihu_fetch.fetch_hot_list("https://www.zhihu.com/hot"))
+    with pytest.raises(LoginRequired):
+        asyncio.run(ZhihuSource().open_feed("recommend"))

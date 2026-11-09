@@ -19,7 +19,7 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.models import Answer, DetailDoc, FeedItem
-from feedscope.core.source import DetailLoader, Source
+from feedscope.core.source import DetailLoader, LoginRequired, Source
 from feedscope.core.i18n import t
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.answer import AnswerScreen
@@ -105,6 +105,16 @@ class DetailScreen(PagedReadingScreen):
         await body.mount(loading)
         try:
             self.loader = await self.source.open_detail(self.item)
+        except LoginRequired as exc:
+            # 会话失效（知乎详情 403 的实测形态：列表 v3 端点照常、v4 详情回绝）：
+            # 与列表屏同一动线给登录引导；拒绝后留常驻提示（重登后 Ctrl+N 重试）
+            hint = t("main.hint_login", error=exc)
+            self.app.sub_title = t("main.status_signed_out")
+            loading.update(f"[red]{escape(hint)}[/red]")
+            self._tui.accounts.mark_stale(self.source)  # Ctrl+U 此后直接给登录框
+            if self.source.source_id not in self._tui.accounts.refused:
+                await self._tui.accounts.on_login_wall(self.source, hint)
+            return
         except Exception as exc:
             # notify 给细节（瞬时），屏内留一行常驻失败态：notify 会消失，屏幕不能空着
             feedback.fail(self.app, self.source, exc)

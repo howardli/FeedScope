@@ -81,14 +81,41 @@ def _raise_compound_error(data: Any) -> None:
     """复合脚本（一次 evaluate 多请求）的返回自检：__status/__error 键转 SourceError。
 
     单请求已走 ChannelTab.fetch 的统一解包；这里只剩 _OPEN_QUESTION_JS 的
-    嵌套形态（{meta: {...}, feeds: {...}}，各自的 __status 分开查）。
+    嵌套形态（{meta: {...}, feeds: {...}}，各自的 __status 分开查）。401/403
+    = 登录态失效（语义见 _reauth_if_stale）转 LoginRequired 走 UI 登录引导；
+    404 的友好转译归调用方（open_question）。
     """
     if not isinstance(data, dict):
         raise SourceError(t("errors.zhihu_api_bad_data", kind=type(data).__name__))
     if status := data.get("__status"):
+        if status in (401, 403):
+            raise LoginRequired(
+                t("errors.zhihu_session_stale", label=t("sources.zhihu.label"), status=status)
+            )
         raise SourceError(t("errors.zhihu_api_status", status=status))
     if err := data.get("__error"):
         raise SourceError(t("errors.zhihu_api_failed", error=err))
+
+
+_STALE_RE = re.compile(r"HTTP (40[13])")
+
+
+def _reauth_if_stale(exc: SourceError) -> None:
+    """详情族端点（questions feeds 翻页 / comment_v5）的 401/403 = 登录态失效：
+    转 LoginRequired 让 UI 走登录引导；其余状态不动作（调用方随后原样上抛）。
+
+    2026-11 用户实测：z_c0 服务端过期后列表照常（v3 信息流端点只认
+    cookie、宽松放行）、点进详情一律 403、重新登录即恢复——v4 详情端点
+    对失效会话的回绝就是 403，与版本门禁的 403 不同（那是 err 10003，
+    x-zse-93 已带，见 _X_ZSE_93 注释）。信息流 v3 端点的 403 不并入（见
+    _api_json：那边可能是纯风控，引导重登会误导）。不清 z_c0：403 无法
+    与风控彻底区分，会话可能仍有效，清了等于强制重登（X 源 401 清
+    cookie 的前提是语义唯一，这里不满足）。
+    """
+    if m := _STALE_RE.search(str(exc)):
+        raise LoginRequired(
+            t("errors.zhihu_session_stale", label=t("sources.zhihu.label"), status=m.group(1))
+        ) from exc
 
 
 def _headers(zse93: bool) -> dict[str, str]:
@@ -128,7 +155,11 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
     就拉全（并发下一次请求，留着「另有 1 条回复」的尾巴比多花一次请求
     更伤阅读）；补全失败（限流/风控）时静默保留接口已带出的热门子回复。
     """
-    data = await _fetch_json(url)
+    try:
+        data = await _fetch_json(url)
+    except SourceError as exc:
+        _reauth_if_stale(exc)  # 401/403 = 登录态失效（评论首页与每页翻页同语义）
+        raise
 
     def _gap(r: dict) -> int:
         if r.get("is_delete"):
@@ -191,7 +222,13 @@ _tab = ChannelTab(
 
 
 async def _api_json(url: str, referer: str, zse93: bool = False) -> dict:
-    """API 一次通道页签 fetch -> JSON；401 = 会话过期转 LoginRequired（403 可能是风控，不并入）。"""
+    """API 一次通道页签 fetch -> JSON；401 = 会话过期转 LoginRequired。
+
+    信息流 v3 端点的 403 不并入（可能是纯风控，引导重登会误导）；详情族
+    v4 端点的 401/403 = 登录态失效，转译在 _reauth_if_stale /
+    _raise_compound_error（2026-11 用户实测：会话过期后列表正常、详情一律
+    403、重登即愈）。
+    """
     try:
         return await _fetch_json(url, referrer=referer, zse93=zse93)
     except SourceError as exc:
@@ -338,7 +375,11 @@ class ZhihuQuestionLoader(DetailLoader):
         if self._done or self._next is None:
             self._done = True
             return []
-        data = await _api_json(self._next, self._referer)
+        try:
+            data = await _api_json(self._next, self._referer)
+        except SourceError as exc:
+            _reauth_if_stale(exc)  # 翻页撞会话失效（401 已在 _api_json 转译）
+            raise
         # 回答按 url 去重防排序抖动（dedup_by：空 url 不去重直接放行）
         new = dedup_by(_feeds_answers(data, self._qid), self._seen_urls, key=lambda a: a.url)
         self.doc.answers.extend(new)  # 维持「doc = 已加载全部」的不变量
@@ -392,6 +433,8 @@ class ZhihuCommentsLoader(CommentLoader):
             return []
         try:
             comments, next_url, is_end = await _comment_page(self._next)
+        except LoginRequired:
+            raise  # 会话失效要见光（UI 指引重登），不算「单页失败可重试」
         except SourceError:
             return []  # 单页失败不判死：可以再按 Ctrl+N 重试
         new = dedup_by(comments, self._ids, key=lambda c: c.raw_id)

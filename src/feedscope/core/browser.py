@@ -23,7 +23,7 @@ from platformdirs import user_cache_path
 from feedscope.core import samples
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
 from feedscope.core.i18n import t
-from feedscope.core.source import SourceError
+from feedscope.core.source import LoginRequired, SourceError
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,8 @@ class ChannelTab:
     换页签重试一次。页签随 BrowserSession 生灭，无需显式释放。
 
     各源差异走四个显式扩展点，不往本类里加源名分支：
-    - check：开页校验钩子（知乎的登录墙）
+    - check：开页校验钩子（知乎的登录墙）；其 LoginRequired 原样穿透
+      fetch 的通用异常包装（否则登录引导语义在取数原语层就被吞掉）
     - fetch() 的 headers / cookie_headers / referrer / as_text：每次请求的
       头形状与正文形态（Reddit 的 Accept+版本头、X 的 Bearer+ct0 csrf、
       知乎的 x-zse-93 与 referer）
@@ -166,6 +167,10 @@ class ChannelTab:
             data = await self.eval(
                 _FETCH_JS, [url, headers or {}, cookie_headers or {}, referrer, as_text]
             )
+        except LoginRequired:
+            # 开页校验钩子（check，如知乎登录墙）抛的语义优先：原样穿透，
+            # 不被通用包装降级成 SourceError——否则源的登录引导全被吞掉
+            raise
         except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
             raise SourceError(t("errors.http_failed", source=source, error=exc)) from exc
         if not isinstance(data, dict):
