@@ -27,11 +27,17 @@ from feedscope.ui.screens.source_setup import (
 
 
 class MainSetupScreen(Screen[None]):
-    """源启用编排基类（MainScreen 的父类；协作者由主屏实现，见抽象声明）。"""
+    """源启用编排基类（主屏继承链的第一层；协作者由下层实现，见抽象声明）。
 
-    # 编排读写的源列表状态（MainScreen.__init__ 初始化）
+    继承链：MainSetupScreen（本模块）→ MainNavScreen（导航）→
+    MainReadScreen（行集与已读）→ MainScreen（取数上屏）。
+    """
+
+    # 编排读写的源列表状态（MainScreen.__init__ 初始化；feed_idx 由
+    # MainNavScreen 的切流/回停读写，同属「当前位置」契约）
     sources: list[Source]
     source_idx: int
+    feed_idx: int
     _feed_memory: dict[str, int]
     _subs_dirty: bool
 

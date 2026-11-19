@@ -1,10 +1,12 @@
 """主屏（默认屏）：顶部站点 tab 条 + 左侧信息流边栏 + 单栏列表。
 
-从 app.py 下沉为主屏后，键位归属与守卫关系自然理顺：主屏专属键
-（刷新/翻页/方向导航/F2/Ctrl+U）绑在屏级——弹层与详情屏在前台时这些
-绑定根本不命中，原先 App 级动作里的「是否在主屏」守卫不再是必需品；
-App 只留全局退出与生命周期（见 app.py）。主屏状态（选中位/区域焦点/
-列表数据）也都在这里，外部（AccountFlow 等）经 app.main 访问。
+继承链四层（各层只留自己的职责，纯搬家零行为变化）：
+MainSetupScreen（源启用编排）→ MainNavScreen（导航与切站切流）→
+MainReadScreen（行集与已读/过滤）→ MainScreen（本模块：取数上屏、
+边栏渲染、Enter 动线与杂项转发动作）。从 app.py 下沉为主屏后，键位
+归属与守卫关系自然理顺：主屏专属键绑在屏级——弹层与详情屏在前台时
+这些绑定根本不命中；App 只留全局退出与生命周期（见 app.py）。主屏
+状态也都在这条链上，外部（AccountFlow 等）经 app.main 访问。
 """
 
 from __future__ import annotations
@@ -12,7 +14,6 @@ from __future__ import annotations
 import logging
 import time
 import webbrowser
-from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.markup import escape
@@ -42,7 +43,7 @@ from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
-from feedscope.ui.screens.main_setup import MainSetupScreen
+from feedscope.ui.screens.main_nav import MainNavScreen
 from feedscope.ui.widgets import (
     FeedListView,
     FeedNavItem,
@@ -59,19 +60,12 @@ if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
 
 
-class Pane(StrEnum):
-    """主屏的区域焦点（纯逻辑层，Textual 焦点始终留在列表）。"""
+class MainScreen(MainNavScreen):
+    """站点 tab 条 + 信息流边栏 + 条目列表；取数上屏与边栏渲染。
 
-    LIST = "list"
-    SIDEBAR = "sidebar"
-    TABS = "tabs"
-
-
-class MainScreen(MainSetupScreen):
-    """站点 tab 条 + 信息流边栏 + 条目列表；全部主屏键位与状态。
-
-    源启用编排（首启引导 / F2 管理 / 启用集生效）在父类 MainSetupScreen
-    （screens/main_setup.py），本类只留渲染、导航与取数。
+    继承链：MainSetupScreen（源启用编排）→ MainNavScreen（导航）→
+    MainReadScreen（行集与已读/过滤）→ 本类。本类只留渲染、取数与
+    Enter/账号/收藏等转发动作。
     """
 
     @property
@@ -84,13 +78,8 @@ class MainScreen(MainSetupScreen):
         # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
         return cast("FeedScopeApp", self.app)
 
-    # 两轴导航：Tab/Shift+Tab 切站、←/→ 切流。键位全部非打印键（输入法免疫：
-    # 中文输入法只拦字母/数字进候选框）。屏级绑定只在本屏前台时命中——
-    # 弹层/详情屏在前台时这些键归它们管，主屏动作不需要守卫。
-    # CLI 惯例的空间语义：↑/↓ 在纵向列表里移动选中；首行再 ↑ 上探源栏
-    # （顶部区域在所有内容之上；源栏 ↓ 下探边栏，与边栏首流 ↑ 互逆）；
-    # 其余区域移动走横向（列表 ← 进边栏、边栏 → 回列表 / ← 去源栏）；
-    # 列表 → 抵屏幕右缘无事。详情/评论屏的 ←/→ 换篇在各屏自己的绑定。
+    # 导航键位（方向键六件）声明在 MainNavScreen、已读/过滤键位在
+    # MainReadScreen——Textual 沿 MRO 合并，帮助页沿 MRO 收集，不因分层丢失。
     # 页脚只亮 F1（帮助入口自身必须可见可发现，其余键全在 F1/README）：
     # 日常键绑定照常命中，提示退入帮助页——换来每屏一行正文与干净的视觉。
     # show=False 只是不占页脚，不影响命中
@@ -119,12 +108,6 @@ class MainScreen(MainSetupScreen):
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
         Binding("ctrl+l", "language", "bindings.language", show=False),
         Binding("ctrl+t", "theme", "bindings.theme", show=False),
-        Binding("left", "nav_left", "bindings.sidebar", show=False),
-        Binding("right", "nav_right", "bindings.right_edge", show=False),
-        Binding("up", "nav_up", "bindings.move", show=False),
-        Binding("down", "nav_down", "bindings.move", show=False),
-        Binding("enter", "nav_enter", "bindings.open", show=False),
-        Binding("escape", "nav_back", "bindings.back", show=False),
     ]
 
     # 用 DEFAULT_CSS 而非 CSS：Textual 8.x 的默认屏创建路径不装载 Screen.CSS
@@ -170,10 +153,7 @@ class MainScreen(MainSetupScreen):
         self.sources = self._enabled_sources()
         self.source_idx = 0
         self.feed_idx = 0
-        # 主屏区域焦点（默认列表），方向键边界跃迁（见 _enter_pane）
-        self._pane = Pane.LIST
-        # source_id -> 上次选的信息流（切站回到上次看的板块）
-        self._feed_memory: dict[str, int] = {}
+        # 区域焦点 _pane 与 _feed_memory 在 MainNavScreen.__init__ 初始化（导航族状态）
         self.items: list[FeedItem] = []
         self.feed_loader: FeedLoader | None = None  # 持有活页签，切流/退出前要 close
         # 本批「新抓到」的条目数（note_fetched 返回集的长度）：只喂顶部状态行
@@ -281,22 +261,7 @@ class MainScreen(MainSetupScreen):
     async def on_feed_nav_pressed(self, event: FeedNavPressed) -> None:
         await self.action_select_feed(event.idx)
 
-    # ---- 数据加载 ----
-
-    @property
-    def current_source(self) -> Source:
-        return self.sources[self.source_idx]
-
-    @property
-    def current_feed(self) -> str:
-        feeds = self.current_source.feeds
-        return feeds[self.feed_idx] if feeds else ""
-
-    def _restore_feed_idx(self) -> None:
-        """切站后停回该站上次的信息流（_feed_memory）；越界（流被隐藏/删除）回 0。"""
-        feeds = self.current_source.feeds if self.sources else []
-        mem = self._feed_memory.get(self.current_source.source_id, 0) if self.sources else 0
-        self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
+    # ---- 数据加载（当前源/流属性与切站回停在 MainNavScreen）----
 
     def action_refresh(self) -> None:
         if self._tui.accounts.in_progress:
@@ -778,177 +743,6 @@ class MainScreen(MainSetupScreen):
                 ]
             )
         )
-
-    # ---- 导航多路合一：顶部 tab 点击 / Tab 循环切站，侧栏点击 / ←→ 切流 ----
-
-    async def _goto_source(self, target: int) -> None:
-        """切到第 target 个源：Tab 循环（±1）与 tab 点击共用。
-
-        两个入口都只在主屏生效（列表绑定 / 主屏点击），不会在详情屏下触发。
-        只有一个源或已在目标源时不做任何事。
-        """
-        if len(self.sources) < 2:
-            return
-        target %= len(self.sources)
-        if target == self.source_idx:
-            return
-        self.source_idx = target
-        self._restore_feed_idx()  # 回到该站上次的信息流
-        await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
-        await self._render_feed_sidebar()
-        if self._pane != Pane.TABS:
-            self._enter_pane(Pane.SIDEBAR)  # 切站落边栏：先挑流再回列表（源栏态连切不被拽走）
-        self.action_refresh()
-
-    async def action_next_source(self) -> None:
-        await self._goto_source(self.source_idx + 1)
-
-    async def action_prev_source(self) -> None:
-        await self._goto_source(self.source_idx - 1)
-
-    async def action_select_source(self, idx: int) -> None:
-        """顶部 tab 点击的落点：直接切到第 idx 个源。"""
-        await self._goto_source(idx)
-
-    async def action_select_feed(self, idx: int) -> None:
-        feeds = self.current_source.feeds
-        if not feeds or not 0 <= idx < len(feeds):
-            return
-        if self.feed_idx == idx:
-            return  # 已在该流，不重复刷新
-        self.feed_idx = idx
-        self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
-        await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）
-        self.action_refresh()
-
-    async def action_nav_left(self) -> None:
-        """← 的单点分派：源栏态切上一个站；边栏态去源栏；列表态进边栏——
-        对齐当前流、不换流（空间语义：← 永远是向左的区域移动）。"""
-        if self._pane == Pane.TABS:
-            await self.action_prev_source()  # 与 Tab 同一条切站路径
-        elif self._pane == Pane.SIDEBAR:
-            self._enter_pane(Pane.TABS)
-        else:
-            self._enter_pane(Pane.SIDEBAR)
-
-    async def action_nav_right(self) -> None:
-        """→ 的单点分派：源栏态切下一个站；边栏态回列表；列表态抵屏幕右缘，
-        静默无事（与源栏顶、列表底的同款边界行为）。"""
-        if self._pane == Pane.TABS:
-            await self.action_next_source()
-        elif self._pane == Pane.SIDEBAR:
-            self._enter_pane(Pane.LIST)
-
-    async def _step_feed(self, delta: int) -> None:
-        """边栏 ↑/↓ 切流：末流到边给反馈；首个流再 ↑ 上探源栏（与列表首条
-        ↑ 同规——顶部区域在所有内容之上；源栏 ↓ 下探与之互逆）。
-
-        列表态不再切流——← 是区域移动（进边栏停当前流），切流只发生在
-        边栏的 ↑/↓（纵向列表的本职）。
-        """
-        if not self.sources:
-            return
-        target = self.feed_idx + delta
-        if not 0 <= target < len(self.current_source.feeds):
-            if delta < 0:
-                self._enter_pane(Pane.TABS)  # 首个流再 ↑：上探源栏
-            else:
-                feedback.info(self, t("main.toast_last_feed"))
-            return
-        await self.action_select_feed(target)
-
-    # ---- 全屏方向键导航：列表 ⇄ 左侧边栏 ⇄ 顶部源栏（边界跃迁）----
-
-    def _enter_pane(self, pane: Pane) -> None:
-        """区域焦点切换（撞到边界继续往相邻区域走，键位表见 README）。
-
-        pane 是纯逻辑层：Textual 焦点始终留在列表（主屏唯一可聚焦控件，
-        Tab 切站的 widget 绑定才能随时命中、连按不退化），非列表态给 #feed
-        挂 pane-aside 让列表光标转「暗」（仿 unfocused，见 CSS）；容器
-        pane-focus 标记聚焦区域，_render_* 全量重建子项不受影响。
-        """
-        if pane == self._pane:
-            return
-        if pane == Pane.TABS and len(self.sources) < 2:
-            return  # 单源无站可切，跃迁进去只剩空操作（与 Tab 切站同款静默）
-        self._pane = pane
-        self.query_one("#source-tabs", Horizontal).set_class(pane == Pane.TABS, "pane-focus")
-        self.query_one("#feed-nav", Vertical).set_class(pane == Pane.SIDEBAR, "pane-focus")
-        self.query_one("#feed", FeedListView).set_class(pane != Pane.LIST, "pane-aside")
-        if pane != Pane.LIST:
-            feedback.info(
-                self,
-                t("main.hint_top_bar") if pane == Pane.TABS else t("main.hint_sidebar"),
-            )
-
-    async def action_nav_up(self) -> None:
-        """↑ 的单点分派：边栏态切上一个流（首个流再 ↑ 上探源栏，由
-        _step_feed 分派）；源栏态抵屏幕上缘；列表态移文章选中（首条再
-        ↑ 上探源栏——顶部区域在所有内容之上）。焦点丢了先找回。"""
-        if self._pane == Pane.SIDEBAR:
-            await self._step_feed(-1)
-            return
-        if self._pane == Pane.TABS:
-            return
-        view = self.query_one("#feed", FeedListView)
-        if not view.has_focus:
-            view.focus()  # 焦点丢失（测试置空/竞态）：↑ 先把焦点找回来
-            return
-        if view.index in (None, 0):
-            self._enter_pane(Pane.TABS)  # 首条再 ↑：上探源栏
-        else:
-            view.action_cursor_up()
-
-    async def action_nav_down(self) -> None:
-        """↓ 的单点分派：边栏态切下一个流（末流到边给反馈）；源栏态下探
-        边栏（唯一的纵向区域移动：顶部 → 边栏）；列表态移文章选中。"""
-        if self._pane == Pane.SIDEBAR:
-            await self._step_feed(1)
-            return
-        if self._pane == Pane.TABS:
-            self._enter_pane(Pane.SIDEBAR)
-            return
-        view = self.query_one("#feed", FeedListView)
-        if not view.has_focus:
-            view.focus()
-            return
-        view.action_cursor_down()
-
-    def action_nav_enter(self) -> None:
-        """Enter 的单点分派：边栏/源栏态回列表（流/站已随行走就地切换）；
-        列表态 = 原生选中（进详情/开浏览器，与改派前同一条路径）。
-
-        详情屏 Enter 进评论层是屏级绑定（先命中），到不了这。
-        """
-        if self._pane == Pane.LIST:
-            self.query_one("#feed", FeedListView).action_select_cursor()
-        else:
-            self._enter_pane(Pane.LIST)
-
-    def action_nav_back(self) -> None:
-        """屏级 Esc：边栏/源栏态先回列表（逐层返回的最内层）。
-
-        弹层/详情屏的 Esc 由各自屏级绑定先命中，落不到这。
-        """
-        if self._pane != Pane.LIST:
-            self._enter_pane(Pane.LIST)
-
-    async def action_nav_scroll(self, key: str) -> None:
-        """home/end/pageup/pagedown：列表视口滚动，只在列表态生效——键盘
-        在边栏/源栏时去滚一个看不见的列表，违反「焦点在哪键就作用在哪」。
-        """
-        if self._pane != Pane.LIST:
-            return
-        view = self.query_one("#feed", FeedListView)
-        fn = {
-            "home": view.action_scroll_home,
-            "end": view.action_scroll_end,
-            "pageup": view.action_page_up,
-            "pagedown": view.action_page_down,
-        }[key]
-        maybe = fn()  # 新版 Textual 的滚动动作返回 AwaitComplete，可等可不等
-        if maybe is not None and hasattr(maybe, "__await__"):
-            await maybe
 
     def action_open_browser(self) -> None:
         item = self.current_item()
