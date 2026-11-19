@@ -202,6 +202,12 @@ feedscope rss import <x.opml> | export [x.opml] # bulk import (idempotent merge)
 feedscope favorites [export [x.md]]             # list favorites / export as Markdown (no lock-in)
 ```
 
+Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to stderr) and `--log-file <path>` (write the log elsewhere).
+
+### Troubleshooting & logs
+
+Every run writes a log file (INFO level) at the location `feedscope doctor` reports — `$HOME/Library/Logs/feedscope/feedscope.log` on macOS, the systemd user log dir on Linux — rotated at 1 MB ×3. When something misbehaves, that file usually already holds the answer: fetch failures with tracebacks, self-heal paths (X queryId re-harvest, Reddit version header) that quietly fell back, login-detector errors. `--verbose` raises it to DEBUG for the chatty detail; `FEEDSCOPE_LOG_FILE` relocates it for good. Inside the TUI nothing ever prints to stderr (it would corrupt the redraw), so the file is the one place to look.
+
 ### Source & Feed Config
 
 First launch shows a picker; `F2` reopens it anytime. Selections are saved to user config (`~/.config/feedscope/sources.toml` on Linux; `FEEDSCOPE_CONFIG` overrides), which you can also hand-edit; restart to apply:

@@ -12,6 +12,7 @@ rss 函数。OPML 用 stdlib ElementTree 解析（嵌套目录拍平），导出
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from feedscope.core.config import Subscription
 from feedscope.core.i18n import t
 from feedscope.core.registry import get_class
 from feedscope.core.source import SourceError
+
+logger = logging.getLogger(__name__)
 
 
 def _reserved(source_id: str) -> tuple[str, ...]:
@@ -71,6 +74,7 @@ async def _fetch_body_or_none(url: str) -> bytes | None:
     try:
         return (await http.get(url, source="RSS")).content
     except Exception:
+        logger.debug("订阅取名/自动发现拉取失败 %s", url, exc_info=True)
         return None
 
 

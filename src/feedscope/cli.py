@@ -8,10 +8,30 @@ from pathlib import Path
 from feedscope.core.i18n import t
 
 
+def _early_logging(argv: list[str]) -> None:
+    """语言/配置初始化**之前**的先行日志装配：手动预扫 argv。
+
+    顺序是鸡蛋问题：语言按配置设定（要读配置，坏配置要记日志）而 argparse
+    的 help 又要等语言——预扫只认 `--verbose` 与 `--log-file PATH` 两种
+    长旗标形态（`--log-file=PATH` 看不见，正式 parse 后 force 换位补齐），
+    让 config 读取期的警告也进文件。
+    """
+    from feedscope.core import logsetup
+
+    path: Path | None = None
+    if "--log-file" in argv:
+        i = argv.index("--log-file")
+        if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+            path = Path(argv[i + 1])
+    logsetup.setup_logging(verbose="--verbose" in argv, path=path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="feedscope", description=t("cli.description")
     )
+    parser.add_argument("--verbose", action="store_true", help=t("cli.help_verbose"))
+    parser.add_argument("--log-file", metavar="PATH", help=t("cli.help_log_file"))
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("tui", help=t("cli.help_tui"))
@@ -155,14 +175,20 @@ def _run_favorites(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 日志先行（预扫 argv，见 _early_logging）：config 读取期的警告也要进文件
+    _early_logging(list(argv) if argv is not None else [])
     # 进程语言按配置设定（未设置 = 缺省）：CLI 的 help/输出与 TUI 同语言；
     # 必须在 build_parser 之前——argparse 的 help 在构造时就成型。展示时区
     # 同批设定（fmt_* 全走它，见 core/timefmt.py）
-    from feedscope.core import config, i18n, timefmt
+    from feedscope.core import config, i18n, logsetup, timefmt
 
     i18n.set_language(config.get_language() or i18n.DEFAULT_LANGUAGE)
     timefmt.set_timezone(config.get_timezone())
     args = build_parser().parse_args(argv)
+    if args.log_file:  # --log-file=VALUE 形式预扫看不见：正式 parse 后换位
+        logsetup.setup_logging(verbose=args.verbose, path=Path(args.log_file), force=True)
+    if args.verbose and args.command not in (None, "tui"):
+        logsetup.add_stderr_mirror()  # 子命令在普通终端跑，镜像不串屏；TUI 绝不
 
     if args.command in (None, "tui"):
         # 惰性导入：让 doctor / login / probe / rss 子命令不用加载 Textual

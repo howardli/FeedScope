@@ -11,6 +11,7 @@ TLS/自动头/cookie 与浏览器会话完全自洽（风控一致性优先，�
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -42,6 +43,8 @@ from feedscope.sources.zhihu.parse import (
 # 版本门禁 code 10003）；其余端点带上无害；唯独 feeds 无 cursor 入口反而
 # 拒绝它——故按调用方显式传入，不全局统一。x-zse-96 签名一律不需要。
 _X_ZSE_93 = "101_3_3.0"  # 知乎客户端版本声明（静态常量；三处使用：_headers 与两条复合 JS）
+
+logger = logging.getLogger(__name__)
 
 # 「N 条评论」= 根评论 + 子回复总数：root_comment 只带每根的热门子回复
 # （1-2 条），其余靠 comment/{id}/child_comment 游标分页补全。
@@ -183,7 +186,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
                 if kids:
                     r.setdefault("child_comments", []).extend(kids)
         except Exception:
-            pass  # 补全失败：热门子集兜底
+            logger.debug("子回复补全失败（热门子集兜底）", exc_info=True)
     paging = data.get("paging") or {}
     return _api_comments(data), paging.get("next") or "", bool(paging.get("is_end"))
 

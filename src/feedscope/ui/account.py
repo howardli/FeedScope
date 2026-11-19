@@ -9,6 +9,7 @@ MainScreen 只留 Ctrl+U 转发，状态与全过程在这里：
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from feedscope import login
@@ -19,6 +20,8 @@ from feedscope.ui.dialogs import AccountScreen
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp
+
+logger = logging.getLogger(__name__)
 
 
 class AccountFlow:
@@ -107,6 +110,8 @@ class AccountFlow:
             try:
                 ok = await login.login(source.source_id, quiet=True)
             except Exception:
+                # 用户只见通用「登录未完成」，异常细节（Playwright 崩溃等）进日志
+                logger.warning("登录流程异常 source=%s", source.source_id, exc_info=True)
                 ok = False
             if ok:
                 self.refused.discard(source.source_id)  # 后续撞墙（过期）恢复自动询问
@@ -133,6 +138,7 @@ class AccountFlow:
         try:
             had = await login.logout(source.source_id)
         except Exception as exc:
+            logger.warning("登出异常 source=%s", source.source_id, exc_info=True)
             feedback.fail(self.app, source, exc, action="feedback.action_logout_failed")
             return
         if had:

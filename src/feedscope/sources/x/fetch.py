@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -61,6 +62,8 @@ from feedscope.sources.x.parse import (
 )
 
 _tab = ChannelTab(f"{BASE}/home", name="x")  # 停靠 x.com/home：同源 fetch 与 cookie 的前提
+
+logger = logging.getLogger(__name__)
 
 # 公开网页端 Bearer（多年稳定的公开常量）；浏览器不会自动带，页内手动补
 _BEARER = (
@@ -281,11 +284,14 @@ async def harvest() -> None:
     try:
         await _tab.get()  # 重开页签（goto 完成），收割才算数
     except Exception:
-        return  # 页签打不开等硬错误：交给种子兜底
+        # 页签打不开等硬错误：交给种子兜底（自愈路径记 debug，抓不到不打扰人）
+        logger.debug("queryId 收割：页签重开失败", exc_info=True)
+        return
     await asyncio.sleep(_HARVEST_WAIT)  # SPA 数据 chunk 异步加载，稍等它进 resource entries
     try:
         chunks = await _tab.eval(_SCRIPT_URLS_JS) or []
     except Exception:
+        logger.debug("queryId 收割：读 resource entries 失败", exc_info=True)
         return
     missing = [op for op in _TIMELINE_OPS.values() if op not in _harvest]
     chunks = sorted(
@@ -340,7 +346,9 @@ async def _deep_capture_detail() -> _Op | None:
     try:
         await get_session().run(run_page, _watch)
     except Exception:
-        return None  # 瞬态页打不开/超时：回落到 harvest + 种子，不让自愈路径裸炸
+        # 瞬态页打不开/超时：回落到 harvest + 种子，不让自愈路径裸炸
+        logger.debug("TweetDetail 深度截获失败（回落种子）", exc_info=True)
+        return None
     if not box or not (parsed := _parse_graphql_url(box["url"])):
         return None
     _harvest[_DETAIL_OP] = parsed[1]

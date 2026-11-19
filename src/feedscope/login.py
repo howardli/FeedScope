@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -30,6 +31,8 @@ from feedscope.core.source import Source
 
 if TYPE_CHECKING:  # 注解用：运行时保持函数内懒导入 playwright 的惯例
     from playwright.async_api import BrowserContext
+
+logger = logging.getLogger(__name__)
 
 LOGIN_TIMEOUT = 180  # 秒；3 分钟没扫上就退出
 POLL_INTERVAL = 2
@@ -84,11 +87,13 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
                     _say(quiet, t("login.window_closed"))
                     return False
                 except Exception as exc:
+                    logger.info("登录检测出错 source=%s", source.source_id, exc_info=True)
                     _say(quiet, t("login.check_error", error=exc))
                     return False
             finally:
                 await context.close()
     except Exception as exc:  # 浏览器没装/起不来/导航超时：给中文出口，不裸栈
+        logger.info("登录浏览器启动失败 source=%s", source.source_id, exc_info=True)
         _say(quiet, t("login.browser_failed", error=exc))
         return False
     _say(quiet, t("login.timeout", seconds=LOGIN_TIMEOUT))

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from logging import getLogger
 from typing import ClassVar
 
 from rich.markup import escape
@@ -31,6 +32,8 @@ from feedscope.ui.screens.reading import (
     floor_head,
 )
 from feedscope.ui.wrap import wrap_markdown
+
+logger = getLogger(__name__)
 
 
 class AnswerScreen(PagedReadingScreen):
@@ -214,6 +217,9 @@ class AnswerScreen(PagedReadingScreen):
         try:
             self.loader = await self.qloader.open_comments(self.index)
         except Exception as exc:
+            logger.warning(
+                "评论加载失败 source=%s id=%s", self.source.source_id, self.item.id, exc_info=True
+            )
             self._note_auth_failure(exc)  # 会话失效要记账（Ctrl+U 直给登录框）
             # 失败文案存下来：resize 重排也要还原成失败态，不能变回「加载中」
             self._comments_error = feedback.failure_text(self.source, exc)

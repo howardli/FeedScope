@@ -54,6 +54,10 @@ def run_checks() -> int:
     state = t("doctor.profile_exists") if state_path().exists() else t("doctor.profile_will_create")
     _check(t("doctor.state_label"), True, f"{state_path()}（{state}）")
 
+    from feedscope.core.logsetup import active_path
+
+    _check(t("doctor.log_label"), True, str(active_path()))
+
     print()
     print(t("doctor.all_ok") if ok else t("doctor.has_failures"))
     return 0 if ok else 1

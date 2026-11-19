@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Sequence
 from typing import Literal
@@ -26,6 +27,8 @@ from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, LoginRequired, Source, SourceError
 from feedscope.report import line as _line
+
+logger = logging.getLogger(__name__)
 
 
 def _classify(exc: BaseException) -> tuple[Literal["SKIP", "FAIL"], str]:
@@ -47,6 +50,7 @@ async def _try_open_feed(
     try:
         return "OK", await source.open_feed(name), label
     except Exception as exc:
+        logger.debug("probe 打开流失败 %s", label, exc_info=True)  # 状态行给结论，栈进日志
         state, msg = _classify(exc)
         return state, None, f"{label} - {msg}"
 

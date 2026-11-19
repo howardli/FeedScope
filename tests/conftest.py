@@ -39,6 +39,9 @@ def _isolated_user_env(
     monkeypatch.setenv("FEEDSCOPE_STATE", str(env_dir / "state.json"))
     monkeypatch.setenv("FEEDSCOPE_FEED_CACHE", str(env_dir / "feeds"))
     monkeypatch.setenv("FEEDSCOPE_FAVORITES", str(env_dir / "favorites.json"))
+    # 日志文件同理（cli.main 现在默认落盘）：不隔离会让每次跑测试都写
+    # 真实用户日志目录
+    monkeypatch.setenv("FEEDSCOPE_LOG_FILE", str(env_dir / "feedscope.log"))
 
 
 @pytest.fixture(autouse=True)

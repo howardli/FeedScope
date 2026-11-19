@@ -9,6 +9,7 @@ App 只留全局退出与生命周期（见 app.py）。主屏状态（选中位
 
 from __future__ import annotations
 
+import logging
 import time
 import webbrowser
 from enum import StrEnum
@@ -47,6 +48,8 @@ from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, scree
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
@@ -459,6 +462,10 @@ class MainScreen(MainSetupScreen):
             return
         except Exception as exc:
             # 缓存行保留（有内容时不清屏不亮空态）：断网/改版时旧内容仍可翻
+            logger.warning(
+                "刷新失败 source=%s feed=%s", source.source_id, self.current_feed,
+                exc_info=True,
+            )
             self.app.sub_title = t("read.status_failed")
             feedback.fail(self, source, exc)
             if not self.items:
@@ -564,6 +571,10 @@ class MainScreen(MainSetupScreen):
         try:
             new = await loader.load_more()
         except Exception as exc:
+            logger.warning(
+                "加载更多失败 source=%s feed=%s", self.current_source.source_id, self.current_feed,
+                exc_info=True,
+            )
             self.app.sub_title = t("main.status_more_failed", n=len(self.items))
             if isinstance(exc, LoginRequired):
                 self._tui.accounts.mark_stale(self.current_source)  # 会话失效记账

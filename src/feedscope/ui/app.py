@@ -9,7 +9,7 @@ App 只保留跨屏职责——主题注册、启动序列（注册表检查 + �
 
 from __future__ import annotations
 
-import contextlib
+import logging
 import os
 from typing import ClassVar
 
@@ -27,6 +27,8 @@ from feedscope.ui.account import AccountFlow
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.screens.main import MainScreen
 from feedscope.ui.theme import register_all, resolve
+
+logger = logging.getLogger(__name__)
 
 
 def _no_prewarm() -> bool:
@@ -98,10 +100,13 @@ class FeedScopeApp(App[None]):
         UA 探针另有 7 天落盘缓存，多数启动只付 Chrome 拉起）。
 
         知乎/Reddit（通道页签）与 X/Reddit（profile 读 cookie）都要浏览器，
-        预热几乎总用得上；失败静默——首次真正取数时自然再试并给正式报错。
+        预热几乎总用得上；失败静默给用户（首次真正取数时自然再试并给正式
+        报错），但记进日志——报障时能对上「预热就已失败」。
         """
-        with contextlib.suppress(Exception):
+        try:
             await get_session().start()
+        except Exception:
+            logger.debug("浏览器预热失败（首次取数会再试）", exc_info=True)
 
     # ---- 清理 ----
 

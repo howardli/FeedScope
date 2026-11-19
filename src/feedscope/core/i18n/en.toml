@@ -375,6 +375,7 @@ profile_exists = "already exists"
 profile_will_create = "created automatically on first run"
 config_label = "user config sources.toml (info)"
 state_label = "read-state state.json (info)"
+log_label = "log file (info; --verbose raises it to DEBUG)"
 all_ok = "all checks passed"
 has_failures = "some checks failed — follow the hints and retry"
 
@@ -404,6 +405,8 @@ success = "signed in: {how}; the headless session reuses it from now on."
 
 [cli]
 description = "FeedScope — a terminal feed aggregator & reader"
+help_verbose = "debug logging: file goes to DEBUG (subcommands also mirror to stderr)"
+help_log_file = "log file location (default: user log dir, see feedscope doctor)"
 help_tui = "start the TUI (default)"
 help_login = "open a browser window to sign in to a source"
 help_login_source = "source id (default zhihu)"

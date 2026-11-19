@@ -9,6 +9,7 @@ Enter 进「视口正在阅读」的那个回答（读到哪进哪）；评论�
 from __future__ import annotations
 
 from collections.abc import Callable
+from logging import getLogger
 from typing import ClassVar
 
 from rich.markup import escape
@@ -31,6 +32,8 @@ from feedscope.ui.screens.reading import (
     floor_head,
 )
 from feedscope.ui.wrap import wrap_markdown
+
+logger = getLogger(__name__)
 
 
 class DetailScreen(PagedReadingScreen):
@@ -117,6 +120,9 @@ class DetailScreen(PagedReadingScreen):
             return
         except Exception as exc:
             # notify 给细节（瞬时），屏内留一行常驻失败态：notify 会消失，屏幕不能空着
+            logger.warning(
+                "详情加载失败 source=%s id=%s", self.source.source_id, self.item.id, exc_info=True
+            )
             feedback.fail(self.app, self.source, exc)
             self.app.sub_title = t("read.status_failed")  # 常驻失败标记（与列表屏面包屑同一手法）
             failure = t(

@@ -372,6 +372,7 @@ profile_exists = "已存在"
 profile_will_create = "首次运行时自动创建"
 config_label = "用户配置 sources.toml（信息）"
 state_label = "已读状态 state.json（信息）"
+log_label = "日志文件（信息，--verbose 提到 DEBUG）"
 all_ok = "全部通过"
 has_failures = "存在失败项：按提示处理后重试"
 
@@ -401,6 +402,8 @@ success = "登录成功：{how}，之后无头复用。"
 
 [cli]
 description = "FeedScope（观流）- 终端信息流聚合阅读器"
+help_verbose = "调试日志：日志文件提到 DEBUG 级（子命令输出同时镜像到 stderr）"
+help_log_file = "日志文件位置（缺省用户日志目录，见 feedscope doctor）"
 help_tui = "启动 TUI（默认）"
 help_login = "打开浏览器窗口登录某个源"
 help_login_source = "源 id（默认 zhihu）"

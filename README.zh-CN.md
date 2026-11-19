@@ -202,6 +202,12 @@ feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合
 feedscope favorites [export [x.md]]           # 收藏列表 / 导出 Markdown（防锁定）
 ```
 
+全局旗标：`--verbose`（日志提到 DEBUG，子命令同时镜像 stderr）与 `--log-file <路径>`（换日志位置）。
+
+### 故障排查与日志
+
+每次运行都会写日志文件（INFO 级），位置见 `feedscope doctor` 的信息行——macOS 是 `~/Library/Logs/feedscope/feedscope.log`，Linux 走 systemd 用户日志目录，1MB 滚动 ×3。出问题时答案多半已经在里面：带异常栈的抓取失败、自愈路径（X queryId 重收割、Reddit 版本头）悄悄回落的过程、登录判据的报错。`--verbose` 提到 DEBUG 看细节；`FEEDSCOPE_LOG_FILE` 永久换位置。TUI 里任何日志都不走 stderr（会打花重绘流），文件是唯一去处。
+
 ### 源与信息流配置
 
 首次启动先弹勾选引导；之后 `F2` 随时增删。勾选落盘到用户配置（Linux 为 `~/.config/feedscope/sources.toml`，`FEEDSCOPE_CONFIG` 可换路径），也可手动编辑，改完重启生效：
