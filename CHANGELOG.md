@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-20
+
+### Added
+
+- Time awareness in list rows: feeds that carry timestamps (RSS / Telegram / HN / V2EX / X) show a right-aligned relative-time column (`25m` / `4h` / `2d`, then `MM-DD` / `YY-MM`); sources without list timestamps (Zhihu hot) keep the old layout. A new `timezone` config key (IANA name; default stays Beijing UTC+8) renders every timestamp in the chosen zone
+- `/` filters the current list by title (case-insensitive substring; empty input clears the filter, Esc leaves it untouched) — on the main list and the favorites list, composing with `F4` unread-only (both filters show a dedicated empty-state hint)
+- `]` / `[` jump to the next / previous unread item, wrapping around the current feed (same keys as floor-stepping in reply layers); all-read gives a toast
+- Self-diagnosis logging: every run writes a rotating log file (INFO by default, `--verbose` for DEBUG, `--log-file <path>` to relocate, subcommands mirror to stderr under `--verbose`) — fetch failures with tracebacks, self-heal fallbacks (X queryId re-harvest etc.) and login-detector errors all land there; `feedscope doctor` prints the location
+- `F2` source manager: `,` / `.` nudges the highlighted source's position (numbers re-sequence instantly; untick-then-tick still moves to the end)
+- Favorites list paginates (100 rows per page, `Ctrl+N` loads the next page; the status line shows how many are displayed) — thousands of favorites no longer freeze the screen on open
+- CLI: `--version`, `feedscope cache [clear]` (report / wipe the derived list cache, lossless), `feedscope rss rename <key> <name>`
+
+### Changed
+
+- Saving from the TUI (first-run / `F2` / `Ctrl+L` / `Ctrl+T` / subscription changes) now round-trips `sources.toml` with tomlkit: hand-written comments, unknown keys and formatting survive verbatim and only managed keys change (previously the file was re-rendered from scratch, silently dropping them); the standard header comment is added only to newly created files
+- Toolchain baseline: type checking runs mypy `strict` (src keeps zero `type: ignore`); lint rules extended with bugbear / pyupgrade / isort / simplify / ruff-natives
+
+### Fixed
+
+- The in-place "comments failed · Ctrl+N retry" hint never actually appeared: the status swap queried the widget id as a CSS selector (`cm-loading` instead of `#cm-loading`), killing the worker with `InvalidQueryFormat` — the failure state only showed up after a resize repaint
+- The favorites screen could mount duplicate rows when a filter dialog dismissed into a resume rebuild (two `clear`/`extend` cycles interleaving); rebuilds now coalesce through a single scheduler
+
 ## [0.3.1] - 2026-11-10
 
 ### Fixed

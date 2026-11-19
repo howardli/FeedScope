@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 from typing import ClassVar
@@ -347,7 +348,10 @@ _HN = [
 ]
 
 
-def _hn_item(title: str, meta: str, kind: str) -> FeedItem:
+def _hn_item(title: str, meta: str, kind: str, i: int = 0) -> FeedItem:
+    # HN 首页本就按时间排：相对时间列（0.4.0）在这里出镜。年龄档位取真实
+    # 首页质感（25m → 1d+ 递增），不是均匀假数
+    ages = (1500, 7600, 15_900, 29_000, 47_000, 76_000, 105_000, 140_000)
     return FeedItem(
         source="hn",
         id=str(abs(hash(title)) % 10**9),
@@ -355,6 +359,7 @@ def _hn_item(title: str, meta: str, kind: str) -> FeedItem:
         url="https://example.com/article",
         kind=kind,
         meta=meta,
+        published=time.time() - ages[i % len(ages)],
     )
 
 
@@ -634,7 +639,7 @@ class DemoHn(Source):
     comment_unit_label = "回复"
 
     async def open_feed(self, name: str) -> FeedLoader:
-        return StaticFeedLoader([_hn_item(t, m, k) for t, m, k in _HN])
+        return StaticFeedLoader([_hn_item(t, m, k, i) for i, (t, m, k) in enumerate(_HN)])
 
     async def open_detail(self, item: FeedItem) -> DetailLoader:
         return DemoHnDetail()

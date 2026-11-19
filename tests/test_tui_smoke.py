@@ -19,7 +19,7 @@ from typing import ClassVar
 import pytest
 from conftest import last_notification, settle
 from textual.containers import VerticalScroll
-from textual.widgets import ListItem, Markdown, SelectionList
+from textual.widgets import ListItem, Markdown, SelectionList, Static
 
 import feedscope.sources  # noqa: F401  先触发真实源注册
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
@@ -1245,3 +1245,69 @@ def test_detail_initially_done_shows_eof(stub_registry, monkeypatch) -> None:
 
 def test_prelayout_render_recovers_on_first_resize(stub_registry) -> None:
     asyncio.run(_run_prelayout_render_recovery_flow())
+
+
+def test_answer_comments_failure_and_retry(stub_registry, monkeypatch) -> None:
+    """评论首载失败（0.3.1 修的就是这条链路别吞信号）：失败文案常驻 + Ctrl+N 重试
+    换回正常 loader——评论层失败不连带楼层内容消失。"""
+    asyncio.run(_run_answer_comments_failure(monkeypatch))
+
+
+async def _run_answer_comments_failure(monkeypatch) -> None:
+    from feedscope.core.source import SourceError
+
+    calls = {"n": 0}
+
+    async def flaky_comments(self, index: int):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SourceError("评论接口 403")
+        return StubCommentsLoader()
+
+    monkeypatch.setattr(StubDetailLoader, "open_comments", flaky_comments)
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("enter")
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await settle(pilot, lambda: answer._comments_error is not None)
+        assert "403" in answer._comments_error, "_comments_error 存原始失败文案"
+        status = str(answer.query_one("#cm-loading", Static).content)
+        assert "评论加载失败" in status and "Ctrl+N" in status, "状态行带重试指路"
+
+        await pilot.press("ctrl+n")  # 重试：这次成功
+        assert await settle(
+            pilot, lambda: answer.loader is not None and answer._comments_error is None
+        ), "重试换回正常 loader"
+        assert await settle(
+            pilot, lambda: len(answer.loader.comments) >= 2
+        ), "评论批已挂载"
+
+
+def test_detail_step_boundary_feedback(stub_registry) -> None:
+    """详情屏 ←/→ 换篇的到边反馈：最后一篇再 → 给 toast、选中位不动
+    （step_readable_item 到边返回 None 的 UI 侧出口）。"""
+    asyncio.run(_run_step_boundary())
+
+
+async def _run_step_boundary() -> None:
+    from textual.widgets import ListView
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        view = app.query_one("#feed", ListView)
+        view.index = 2  # 直接停在最后一行（全部可进详情）
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("right")  # 已是最后一篇
+        assert last_notification(app) == "后面没有可读的了"
+        assert isinstance(app.screen, DetailScreen), "到边不弹回列表"

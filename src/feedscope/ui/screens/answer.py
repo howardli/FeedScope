@@ -225,7 +225,7 @@ class AnswerScreen(PagedReadingScreen):
             self._comments_error = feedback.failure_text(self.source, exc)
             feedback.fail(self.app, self.source, exc, action="feedback.action_comments_failed")
             self._swap_status(
-                "cm-loading",
+                "#cm-loading",  # 带 #：query 吃 CSS 选择器，裸 id 串会 InvalidQueryFormat
                 f"[red]{t('read.comments_failed_retry', text=escape(self._comments_error))}[/red]",
             )
             return
