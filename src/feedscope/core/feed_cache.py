@@ -102,3 +102,33 @@ def _evict() -> None:
         # 并发/权限抖动：残留一个旧文件无害，下次淘汰再试
         with contextlib.suppress(OSError):
             p.unlink()
+
+
+def cache_stats() -> tuple[int, int]:
+    """(文件数, 总字节)——`feedscope cache` 的体检数。目录不存在 = (0, 0)。"""
+    try:
+        files = [p for p in cache_dir().iterdir() if p.suffix == ".json"]
+    except OSError:
+        return 0, 0
+    size = 0
+    for p in files:
+        with contextlib.suppress(OSError):
+            size += p.stat().st_size
+    return len(files), size
+
+
+def clear_cache() -> int:
+    """删光缓存文件，返回删掉的数量（`feedscope cache clear`）。
+
+    缓存是纯派生数据（下次刷新重建），删错无损；残留并发写的新文件无害。
+    """
+    try:
+        files = [p for p in cache_dir().iterdir() if p.suffix == ".json"]
+    except OSError:
+        return 0
+    removed = 0
+    for p in files:
+        with contextlib.suppress(OSError):
+            p.unlink()
+            removed += 1
+    return removed

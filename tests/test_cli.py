@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 
 import pytest
+from conftest import use_config
 
-from feedscope import cli
-from feedscope.core import logsetup
+from feedscope import __version__, cli
+from feedscope.core import feed_cache, logsetup
+from feedscope.core.config import Subscription, rss_feeds, update_feeds
 
 
 @pytest.fixture()
@@ -81,3 +83,38 @@ def test_cli_early_logging_and_doctor_line(
     out = capsys.readouterr().out
     assert "where.log" in out, "doctor 的信息行列出日志位置"
     assert "日志" in out
+
+
+def test_cli_version_flag(capsys) -> None:
+    """--version 打印版本（单源 __version__），exit 0。"""
+    with pytest.raises(SystemExit) as ei:
+        cli.build_parser().parse_args(["--version"])
+    assert ei.value.code == 0
+    assert capsys.readouterr().out.strip() == f"feedscope {__version__}"
+
+
+def test_cli_cache_status_and_clear(monkeypatch, tmp_path, capsys) -> None:
+    """cache 子命令：无参报数（目录/文件数/字节），clear 清空（派生数据无损）。"""
+    monkeypatch.setenv("FEEDSCOPE_FEED_CACHE", str(tmp_path / "feeds"))
+    from feedscope.core.models import FeedItem
+
+    feed_cache.save("stub", "one", [FeedItem("stub", "i1", "t", "u")])
+    feed_cache.save("stub", "two", [FeedItem("stub", "i2", "t", "u")])
+    assert cli.main(["cache"]) == 0
+    out = capsys.readouterr().out
+    assert "2 个缓存文件" in out and str(tmp_path / "feeds") in out
+
+    assert cli.main(["cache", "clear"]) == 0
+    assert "已清空缓存（删 2 个文件）" in capsys.readouterr().out
+    assert cli.main(["cache"]) == 0
+    assert "0 个缓存文件" in capsys.readouterr().out
+
+
+def test_cli_rss_rename(monkeypatch, tmp_path, capsys) -> None:
+    """rss rename：改名落盘可读回；不存在的 key 退 1。"""
+    use_config(monkeypatch, tmp_path, 'language = "zh-CN"\n')
+    update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
+    assert cli.main(["rss", "rename", "a", "新名字"]) == 0
+    assert "已改名 a：新名字" in capsys.readouterr().out
+    assert rss_feeds()[0].label == "新名字"
+    assert cli.main(["rss", "rename", "nope", "x"]) == 1

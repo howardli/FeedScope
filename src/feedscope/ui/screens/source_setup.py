@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
@@ -64,6 +65,10 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         # 按钮行上按 = 右移焦点（action_nav_right 分派）。Enter 不能用：
         # SelectionList 把它截停转成勾选切换（widget 内 event.stop()），
         # 屏级绑定与事件路径都压不过——留给勾选
+        # 调序 ,/.：高亮的已勾选源在 _order 里挪一位（行序字母正序不动，
+        # 只动序号文案——比「取消再勾选挪到末尾」轻）
+        Binding("comma", "move_up", "bindings.move_up", show=False),
+        Binding("period", "move_down", "bindings.move_down", show=False),
     ]
 
     # 卡片三件套在 ArrowModalScreen.DEFAULT_CSS，这里只写差异（宽度约束与
@@ -108,7 +113,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     def on_selection_list_selection_toggled(
         self, event: SelectionList.SelectionToggled[str]
     ) -> None:
-        """维护勾选顺序：勾上排到末尾、取消即移出（再勾上 = 挪到末尾，这就是调序动线）。
+        """维护勾选顺序：勾上排到末尾、取消即移出（再勾上 = 挪到末尾）。
 
         _toggle 先改状态后发消息，handler 里 selected 已是新状态，按成员关系
         分支即可，不必依赖事件本身携带方向。
@@ -120,6 +125,28 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
         else:
             self._order = [s for s in self._order if s != sid]
         self._renumber()
+
+    def _move_highlighted(self, delta: int) -> None:
+        """,/. 的公共体：高亮源的序号在 _order 里挪一位。"""
+        sl = self.query_one(FocusNavSelectionList)
+        if sl.highlighted is None:
+            return
+        sid = self._entries[sl.highlighted][0]
+        if sid not in self._order:
+            feedback.info(self, t("source_setup.move_needs_selected"))
+            return  # 未勾选的源没有序号可挪（勾上它 = 排到末尾）
+        i = self._order.index(sid)
+        j = i + delta
+        if not 0 <= j < len(self._order):
+            return  # 已在边界：序号文案不动就是反馈
+        self._order[i], self._order[j] = self._order[j], self._order[i]
+        self._renumber()
+
+    def action_move_up(self) -> None:
+        self._move_highlighted(-1)
+
+    def action_move_down(self) -> None:
+        self._move_highlighted(+1)
 
     def _renumber(self) -> None:
         """给勾选的行标序号（= 站点排列位置），未勾选的留空对齐。

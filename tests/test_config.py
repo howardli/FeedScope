@@ -128,28 +128,35 @@ def test_save_enabled_does_not_log_enabled_as_unknown(
 def test_save_enabled_roundtrip_preserves_hide(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    p = use_config(monkeypatch, tmp_path, '[zhihu]\nhide = ["follow"]\n')
+    p = use_config(monkeypatch, tmp_path, '# 我自己的段注释\n[zhihu]\nhide = ["follow"]\n')
     save_enabled(["x", "zhihu"])
 
     assert enabled_ids() == ["x", "zhihu"]  # 读回一致
     assert hidden_feeds("zhihu") == ["follow"]  # 已有 hide 段保留
     text = p.read_text(encoding="utf-8")
-    assert text.startswith("#") and "enabled" in text  # 注释头 + enabled 行
+    assert "# 我自己的段注释" in text  # 手编注释原样保留（不再被重渲染洗掉）
+    assert "enabled" in text
     assert tomllib.loads(text)  # 手写的 TOML 必须能被标准库解析
     assert not list(tmp_path.glob("*.tmp"))  # 原子写不留临时文件
 
 
-def test_save_enabled_overwrite_drops_unknown_keys(
+def test_save_enabled_overwrite_preserves_unknown_keys(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """覆写只保留认识的键（enabled + 各源 hide）：未知键丢弃，文件仍是合法 TOML。"""
+    """覆写只动受管键（enabled）：未知键与注释原样保留，文件仍是合法 TOML。
+
+    旧行为是全量重渲染（未知键/注释丢弃记日志）——手编内容静默消失属
+    数据丢失级，0.4.0 起换 tomlkit 往返「改受管键、其余不碰」。
+    """
     p = use_config(
-        monkeypatch, tmp_path, 'note = "手写备注"\n[x]\nfoo = 1\nhide = ["foryou"]\n'
+        monkeypatch, tmp_path, '# 顶部说明\nnote = "手写备注"\n[x]\nfoo = 1\nhide = ["foryou"]\n'
     )
     save_enabled(["zhihu"])
     data = tomllib.loads(p.read_text(encoding="utf-8"))
     assert data["enabled"] == ["zhihu"]
-    assert data["x"] == {"hide": ["foryou"]}  # hide 在、foo 不在
+    assert data["note"] == "手写备注"  # 未知顶层键保留
+    assert data["x"] == {"foo": 1, "hide": ["foryou"]}  # 段内未知键与 hide 都在
+    assert "# 顶部说明" in p.read_text(encoding="utf-8")  # 注释也在
 
 
 def test_describe_reports_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -202,13 +209,13 @@ def test_rss_feeds_absent_section(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 def test_update_feeds_does_not_rewrite_malformed_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """坏 enabled 按「未配置」处理：加订阅既不该崩，也不该把字符串拆成字符数组写回。"""
+    """坏 enabled 按「未配置」处理：加订阅不崩、不参与联动；坏值**原样留在文件里**
+    （读侧忽略它当默认全启用；重渲染把它删了也是「改了没改的东西」）。"""
     p = use_config(monkeypatch, tmp_path, 'enabled = "zhihu"\n')
     update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
-    assert not any(
-        line.startswith("enabled =") for line in p.read_text(encoding="utf-8").splitlines()
-    )
+    assert 'enabled = "zhihu"' in p.read_text(encoding="utf-8")  # 原样保留，不拆不删
     assert enabled_ids() is None  # 读侧默认全启用
+    assert rss_feeds()[0].key == "a"  # 订阅本身照常落盘
 
 
 def test_save_enabled_preserves_rss_feeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -276,12 +283,24 @@ def test_save_enabled_and_update_feeds_preserve_language(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """语言键是已知顶层键：F2 保存 / 订阅变更的重渲染不能把它抹掉（回归锁）。"""
-    p = use_config(monkeypatch, tmp_path, 'language = "en"\n')
+    use_config(monkeypatch, tmp_path, 'language = "en"\n')
     save_enabled(["zhihu"])
     assert get_language() == "en"
     update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
     assert get_language() == "en"
-    assert tomllib.loads(p.read_text(encoding="utf-8"))["language"] == "en"
+
+
+def test_fresh_file_gets_header_comment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """全新文件（首启保存）带标准头注释——键含义的说明书只在这时注入；
+    既有文件的头/注释是用户手笔，不覆盖不注入。"""
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(tmp_path / "absent.toml"))
+    save_enabled(["zhihu"])
+    text = (tmp_path / "absent.toml").read_text(encoding="utf-8")
+    assert text.startswith("#")  # 标准头
+    assert "enabled" in text
+    assert tomllib.loads(text)["enabled"] == ["zhihu"]
 
 
 def test_describe_reports_language(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

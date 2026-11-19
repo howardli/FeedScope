@@ -5,10 +5,10 @@
 - 容错哲学：配置问题绝不挡启动——文件不存在 = 全默认；TOML 语法错 / 结构
   不符 = 警告日志 + 当作不存在（feedscope doctor 可诊断）。
 - 写入走 save_enabled（首启引导 / F2 管理界面）、update_feeds（订阅管理
-  屏 / rss 子命令）与 save_language（语言选择屏）：保留各源 hide 段与
-  feeds 订阅表（订阅是用户数据，覆写丢段 = 丢订阅；rss 的 feed、reddit
-  的 subreddit、telegram 的频道同款）与顶层 language，无法识别的键丢弃；
-  原子落盘（临时文件 + os.replace），不留半截文件。
+  屏 / rss 子命令）与 save_language / save_theme（选择屏落盘）：**只改受管
+  键、其余原样落盘**（tomlkit 往返）——手编的注释/未知键/排版不再被覆写
+  洗掉，订阅是用户数据（覆写丢段 = 丢订阅）更是如此；原子落盘（临时文件
+  + os.replace），不留半截文件。
 - 本模块对「源」只认 id 字符串，不认识任何具体源：订阅 key 的保留字
   （聚合流名 / 内置流名）由各源自己声明（Source.reserved_feed_keys），
   读取侧的过滤在 SubscribedSource、添加侧的拒收在 subscriptions。
@@ -16,15 +16,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import tomlkit
 from platformdirs import user_config_path
 
 from feedscope.core.i18n import t
@@ -49,18 +47,23 @@ def config_path() -> Path:
 
 
 def _read() -> tuple[dict[str, Any], str]:
-    """读配置返回 (数据, 状态描述)；不存在 / 坏 = ({}, 原因)，不抛异常。"""
+    """读配置返回 (数据, 状态描述)；不存在 / 坏 = (空文档, 原因)，不抛异常。
+
+    解析用 tomlkit 而非 tomllib：保存路径要「改受管键、原样落盘」，注释与
+    排版只有在解析层就留着才写回得回去（tomllib 到手就是纯 dict，注释已
+    丢失）。TOMLDocument 是 dict 子类，读侧的 isinstance/迭代/取值照常。
+    非 UTF-8 字节（手编/别的工具写坏）也是「坏配置」：容错哲学要求绝不
+    挡启动，不能让它以 UnicodeDecodeError 逃出 _read。
+    """
     path = config_path()
     try:
-        with path.open("rb") as f:
-            return tomllib.load(f), ""
+        with path.open("r", encoding="utf-8") as f:
+            return tomlkit.parse(f.read()), ""
     except FileNotFoundError:
-        return {}, t("config.describe_not_created")
-    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        # 非 UTF-8 字节（手编/别的工具写坏）也是「坏配置」：容错哲学要求
-        # 绝不挡启动，不能让它以 UnicodeDecodeError 逃出 _read
+        return tomlkit.document(), t("config.describe_not_created")
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
         logger.warning("用户配置 %s 无法解析，已忽略：%s", path, exc)
-        return {}, t("config.describe_unparsable", error=exc)
+        return tomlkit.document(), t("config.describe_unparsable", error=exc)
 
 
 def hidden_feeds(source_id: str) -> list[str]:
@@ -187,10 +190,10 @@ def get_language() -> str | None:
 
 
 def save_language(code: str) -> None:
-    """保存语言设置（语言选择屏的落盘路径）；enabled / hide / feeds 原样保留。"""
-    data = _read()[0]
-    data["language"] = code
-    _write_config(_render_config(_enabled_from_data(data), data))
+    """保存语言设置（语言选择屏的落盘路径）；其余内容（注释/未知键）原样保留。"""
+    doc = _read()[0]
+    doc["language"] = code
+    _write_config(doc)
 
 
 def get_theme() -> str | None:
@@ -200,10 +203,10 @@ def get_theme() -> str | None:
 
 
 def save_theme(name: str) -> None:
-    """保存主题设置（Ctrl+T 即时生效 + 这里落盘）；其余键原样保留。"""
-    data = _read()[0]
-    data["theme"] = name
-    _write_config(_render_config(_enabled_from_data(data), data))
+    """保存主题设置（Ctrl+T 即时生效 + 这里落盘）；其余内容原样保留。"""
+    doc = _read()[0]
+    doc["theme"] = name
+    _write_config(doc)
 
 
 def get_timezone() -> str | None:
@@ -216,42 +219,6 @@ def get_timezone() -> str | None:
     return tz if isinstance(tz, str) and tz else None
 
 
-def _toml_str(s: str) -> str:
-    # json 字符串即合法 TOML 基本串（转义规则同源），不为此引入写库
-    return json.dumps(s, ensure_ascii=False)
-
-
-_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def _toml_key(s: str) -> str:
-    """键/段名：能裸写就裸写（[rss.feeds] 好读），含特殊字符才引用 _toml_str。"""
-    return s if _BARE_KEY.match(s) else _toml_str(s)
-
-
-def _toml_array(values: list[str]) -> str:
-    return "[" + ", ".join(_toml_str(v) for v in values) + "]"
-
-
-def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
-    """feeds 表的写前校验：留 (key, label, url)，坏条目丢弃记日志。
-
-    与 feeds_for 共用 _subscription_from_entry（表 + 非空 str url、label
-    只收 str），读写往返规则只有一处。
-    """
-    if raw is None:
-        return []
-    if not isinstance(raw, dict):
-        logger.warning("覆写配置：feeds 应为订阅表，已丢弃 %r", raw)
-        return []
-    out: list[tuple[str, str, str]] = []
-    for key, entry in raw.items():
-        feed = _subscription_from_entry(key, entry, context="覆写配置")
-        if feed is not None:
-            out.append((feed.key, feed.label, feed.url))
-    return out
-
-
 def _enabled_from_data(data: dict[str, Any]) -> list[str] | None:
     """从配置数据里取出规范化的 enabled（坏值按未配置；空列表是合法的零启用）。"""
     raw = data.get("enabled")
@@ -261,73 +228,38 @@ def _enabled_from_data(data: dict[str, Any]) -> list[str] | None:
     return kept if kept or not raw else None
 
 
-def _render_config(ids: list[str] | None, data: dict[str, Any]) -> list[str]:
-    """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
-
-    只写本工具认识的键：language + theme + timezone + enabled + 各源非空
-    hide 段 + feeds 订阅表（其余丢弃，记 info——这里的「重新生成」与手改
-    文件的自由度是此消彼长，注释头已说明归属）。feeds 是用户数据（不是
-    工具生成的状态），必须原样保留——丢段等于丢订阅；language / theme /
-    timezone 同理（落盘键，漏写 = 丢设置）。
-    """
-    lines = [f"# {line}" for line in t("config.file_header").splitlines()]
-    language = data.get("language")
-    if isinstance(language, str) and language:
-        lines += ["", f"language = {_toml_str(language)}"]
-    theme = data.get("theme")
-    if isinstance(theme, str) and theme:
-        lines += ["", f"theme = {_toml_str(theme)}"]
-    tz = data.get("timezone")
-    if isinstance(tz, str) and tz:
-        lines += ["", f"timezone = {_toml_str(tz)}"]
-    if ids is not None:
-        lines += ["", f"enabled = {_toml_array(ids)}"]
-    for sid, section in data.items():
-        if sid in ("enabled", "language", "theme", "timezone"):
-            continue  # 已由参数 ids / language / theme 行统一重写，不是「无法识别的顶层键」
-        if not isinstance(section, dict):
-            logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)
-            continue
-        if set(section) - {"hide", "feeds"}:
-            logger.info(
-                "覆写配置：[%s] 里除 hide/feeds 外的键不被保留 %r",
-                sid, sorted(set(section) - {"hide", "feeds"}),
-            )
-        hide = section.get("hide")
-        feeds = _valid_feeds(section.get("feeds"))
-        if (isinstance(hide, list) and hide) or feeds:
-            lines += ["", f"[{_toml_key(sid)}]"]
-            if isinstance(hide, list) and hide:
-                lines.append(f"hide = {_toml_array(hide)}")
-            if feeds:
-                # 订阅行用内联表：一行一条，手编/比对都清爽；键引用字符串形式
-                # （json 串即合法 TOML），key 带空格等字符也不会写出坏文件
-                lines.append(f"[{_toml_key(sid)}.feeds]")
-                lines += [
-                    f"{_toml_key(key)} = {{ url = {_toml_str(url)}, label = {_toml_str(label)} }}"
-                    for key, label, url in feeds
-                ]
-    return lines
+def _dump(doc: dict[str, Any], *, fresh: bool) -> str:
+    """文档 -> 落盘文本；落盘前文件还不存在（首启保存）才补标准头注释——
+    键含义的说明书只在这一种情况注入，既有文件的头/注释是用户手笔或上次
+    写入的原样，覆写头等于洗掉用户注释。"""
+    text = tomlkit.dumps(doc)
+    if not fresh:
+        return text
+    header = "\n".join(f"# {line}" for line in t("config.file_header").splitlines())
+    return f"{header}\n\n{text}" if text.strip() else header + "\n"
 
 
-def _write_config(lines: list[str]) -> None:
+def _write_config(doc: dict[str, Any]) -> None:
     """原子落盘（临时文件 + os.replace）：读者要么旧文件要么新文件，没有半截。"""
     path = config_path()
+    fresh = not path.exists()  # 判定要在落盘前：保存动作本身就会建出文件
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.write_text(_dump(doc, fresh=fresh), encoding="utf-8")
     os.replace(tmp, path)
 
 
 def save_enabled(ids: list[str]) -> None:
     """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。"""
-    _write_config(_render_config(list(dict.fromkeys(ids)), _read()[0]))
+    doc = _read()[0]
+    doc["enabled"] = list(dict.fromkeys(ids))
+    _write_config(doc)
 
 
 def update_feeds(
     source_id: str, feeds: list[Subscription], *, drop_enabled_when_empty: bool = False
 ) -> None:
-    """整体替换某源的订阅表（订阅管理屏 / rss 子命令的落盘路径）；enabled / hide 原样保留。
+    """整体替换某源的订阅表（订阅管理屏 / rss 子命令的落盘路径）；其余原样保留。
 
     enabled 联动让「加订阅」一步到位：订阅非空且 enabled 已配置但缺该源
     → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）。删到空是否摘
@@ -335,28 +267,43 @@ def update_feeds(
     来自订阅，没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。
     enabled 未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
     """
-    data = _read()[0]
-    section = data.get(source_id)
-    if not isinstance(section, dict):
-        section = {}
-    if feeds:
-        section["feeds"] = {f.key: {"label": f.label, "url": f.url} for f in feeds}
+    doc = _read()[0]
+    section = doc.get(source_id)
+    if section is not None and not isinstance(section, dict):
+        # 顶层已有同名标量（手编冲突）：不能既保它又挂 [source_id] 段——
+        # 保用户数据优先，这次订阅落不了盘，日志可见
+        logger.warning(
+            "配置顶层已存在非表键 %r，%d 条订阅未写入（请手动清理该键）",
+            source_id, len(feeds),
+        )
     else:
-        section.pop("feeds", None)
-    if section:
-        data[source_id] = section
-    elif source_id in data:
-        del data[source_id]
+        if section is None:
+            section = tomlkit.table()
+            doc[source_id] = section
+        if feeds:
+            table = tomlkit.table()
+            for f in feeds:
+                # 内联表一行一条（手编/比对都清爽）；label/url 的引号转义交给 tomlkit
+                row = tomlkit.inline_table()
+                row["url"] = f.url
+                row["label"] = f.label
+                table[f.key] = row
+            section["feeds"] = table
+        else:
+            section.pop("feeds", None)
+            if not section:  # 没剩任何键：空段不保留（有手编键则连段一起留着）
+                doc.pop(source_id, None)
     # 坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，
     # 也不把畸形值原样写回去——读侧本来就是当默认全启用；空列表是
     # 合法状态（零启用），保留
-    enabled = _enabled_from_data(data)
+    enabled = _enabled_from_data(doc)
     if enabled is not None:
         if feeds and source_id not in enabled:
             enabled.append(source_id)
         if not feeds and drop_enabled_when_empty and source_id in enabled:
             enabled.remove(source_id)
-    _write_config(_render_config(enabled, data))
+        doc["enabled"] = enabled
+    _write_config(doc)
 
 
 def update_rss_feeds(feeds: list[Subscription]) -> None:

@@ -21,7 +21,7 @@ from textual.binding import Binding
 from textual.events import Resize
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import Footer, Header, Label, ListView
+from textual.widgets import Footer, Header, Label, ListItem, ListView
 
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
@@ -74,6 +74,9 @@ class _FallbackSource(Source):
 
 _FALLBACK = _FallbackSource()
 
+_PAGE = 100  # 分页步长：ListView 没有虚拟化，几千条收藏一次性挂载会冻结秒级
+             #（主列表 SliceFeedLoader 同一动机；数据全在本地，Ctrl+N 只是渲染放量）
+
 
 class FavoritesScreen(Screen[None]):
     """收藏列表：Esc 返回，Enter 进详情/开浏览器，Ctrl+F 取消收藏。"""
@@ -84,6 +87,7 @@ class FavoritesScreen(Screen[None]):
         Binding("ctrl+f", "unfavorite", "bindings.favorite", show=False),
         Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
+        Binding("ctrl+n", "more", "bindings.more", show=False),
         Binding("/", "title_filter", "bindings.title_filter", show=False),
         Binding("f1", "help", "bindings.help"),
     ]
@@ -100,6 +104,9 @@ class FavoritesScreen(Screen[None]):
         # / 标题过滤（会话级，同主屏）：None = 未过滤；行集走 _shown()，
         # self.items 保持全量（快照/取消收藏/同步主屏都不受影响）
         self._filter: str | None = None
+        self._shown_limit = _PAGE  # 已挂载行数上限（Ctrl+N 逐页放量；重建时回 _PAGE）
+        self._tag_w = 0  # 源名列宽（重建时算，Ctrl+N 追加行复用）
+        self._time_w = 0  # 时间列宽（同上）
         self._score_width = 1 + META_COL_SPARE
         self._prev_sub_title: str | None = None  # 退屏恢复（同 ReadingScreen）
         self._last_width = 0
@@ -203,38 +210,52 @@ class FavoritesScreen(Screen[None]):
         q = self._filter
         return [it for it in self.items if q in it.title.lower()]
 
+    def _mounted(self) -> list[FeedItem]:
+        """已挂载进列表的行集 = _shown() 的前缀（分页逐步放量）。"""
+        return self._shown()[: self._shown_limit]
+
+    def _build_rows(self, items: list[FeedItem]) -> list[ListItem]:
+        width = list_title_width(
+            self.query_one("#fav-list", ListView).region.width or 80,
+            self._score_width,
+            self._tag_w,
+            self._time_w,
+        )
+        return [
+            build_item(
+                it,
+                width,
+                self._score_width,
+                self._source_of(it),
+                self._row_mark(it),
+                tag=self._tag_of(it),
+                tag_width=self._tag_w,
+                time_width=self._time_w,
+            )
+            for it in items
+        ]
+
     async def _rebuild(self) -> None:
-        """按当前收藏重建列表（挂载 / 每次 ScreenResume / resize 后调用；保留选中位）。"""
+        """按当前收藏重建列表（挂载 / 每次 ScreenResume / resize 后调用；保留选中位）。
+
+        只挂前 _PAGE 条（防冻结，见 _PAGE），其余 Ctrl+N 放量；列宽按全量
+        算（追加行不用重排）。
+        """
         view = self.query_one("#fav-list", ListView)
         idx = view.index
         pairs = self._tui.state.favorites()
         self.items = [it for _, it in pairs]
         shown = self._shown()
+        self._shown_limit = _PAGE
+        mounted = shown[:_PAGE]
         await view.clear()
         empty = self.query_one("#fav-empty", Label)
-        if shown:
+        if mounted:
             self._score_width = self._score_width_of()
-            tag_width = self._tag_width_of()
-            time_width = time_col_width(self.items)  # 快照里带时间的条目成列
-            width = list_title_width(
-                view.region.width or 80, self._score_width, tag_width, time_width
-            )
-            await view.extend(
-                [
-                    build_item(
-                        it,
-                        width,
-                        self._score_width,
-                        self._source_of(it),
-                        self._row_mark(it),
-                        tag=self._tag_of(it),
-                        tag_width=tag_width,
-                        time_width=time_width,
-                    )
-                    for it in shown
-                ]
-            )
-            view.index = 0 if idx is None else min(idx, len(shown) - 1)
+            self._tag_w = self._tag_width_of()
+            self._time_w = time_col_width(self.items)  # 快照里带时间的条目成列
+            await view.extend(self._build_rows(mounted))
+            view.index = 0 if idx is None else min(idx, len(mounted) - 1)
             empty.display = False
         elif self.items:
             empty.update(t("fav.empty_filter", q=self._filter or ""))
@@ -242,10 +263,39 @@ class FavoritesScreen(Screen[None]):
         else:
             empty.update(t("fav.empty"))
             empty.display = True
+        self._update_status(len(shown), len(mounted))
+
+    def _update_status(self, total: int, mounted: int) -> None:
         if self._filter:
-            self.app.sub_title = t("fav.status_filtered", n=len(shown), q=self._filter)
+            self.app.sub_title = t("fav.status_filtered", n=total, q=self._filter)
+        elif mounted < total:
+            self.app.sub_title = t("fav.status_paged", n=total, m=mounted)
         else:
-            self.app.sub_title = t("fav.status_count", n=len(shown))
+            self.app.sub_title = t("fav.status_count", n=total)
+
+    def action_more(self) -> None:
+        """Ctrl+N：挂载下一页（与主屏加载更多同键同义；数据全在本地，纯渲染放量）。"""
+        shown = self._shown()
+        if self._shown_limit >= len(shown):
+            feedback.info(self, t("main.toast_no_more"))
+            return
+        prev = self._shown_limit
+        self._shown_limit = min(prev + _PAGE, len(shown))
+        batch = shown[prev : self._shown_limit]
+        self.run_worker(self._mount_batch(batch))
+
+    async def _mount_batch(self, batch: list[FeedItem]) -> None:
+        """追加一页行（单次挂载 = 单次布局）；期间整屏重建了就放弃迟到批。"""
+        view = self.query_one("#fav-list", ListView)
+        if not batch:
+            return
+        await view.extend(self._build_rows(batch))
+        self._update_status(len(self._shown()), len(view.children))
+        self._hide_empty_if_filled()
+
+    def _hide_empty_if_filled(self) -> None:
+        if len(self.query_one("#fav-list", ListView).children):
+            self.query_one("#fav-empty", Label).display = False
 
     # ---- 已读（与主屏同语义；标记后同步主屏同一行）----
 
@@ -254,10 +304,10 @@ class FavoritesScreen(Screen[None]):
 
     def _current(self) -> FeedItem | None:
         view = self.query_one("#fav-list", ListView)
-        shown = self._shown()
-        if not shown or view.index is None:
+        mounted = self._mounted()
+        if not mounted or view.index is None or view.index >= len(mounted):
             return None
-        return shown[view.index]
+        return mounted[view.index]
 
     def _mark_read(self, item: FeedItem) -> None:
         self._tui.state.mark_read(item.source, item.id)
@@ -267,12 +317,12 @@ class FavoritesScreen(Screen[None]):
             main._sync_after_read(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
-        """单行圆点就地重算（按 (source, id) 定位行——在 _shown 行集里找，
+        """单行圆点就地重算（按 (source, id) 定位行——在已挂载行集里找，
         行号即 view.children 下标；理由见 MainScreen 同名方法）。"""
         idx = next(
             (
                 i
-                for i, it in enumerate(self._shown())
+                for i, it in enumerate(self._mounted())
                 if it.source == item.source and it.id == item.id
             ),
             None,
@@ -370,14 +420,14 @@ class FavoritesScreen(Screen[None]):
 
     def step_readable(self, delta: int) -> FeedItem | None:
         """详情屏 ←/→ 的供给端（镜像主屏 step_readable_item）：沿方向推进到下一条
-        可进终端详情的收藏（沿 _shown 行集——过滤态下不可读的行本来就不在屏上），
-        同步选中并计已读；没有可读目标时返回 None。"""
+        可进终端详情的收藏（沿已挂载行集——未挂载的页没有行可选），同步选中
+        并计已读；没有可读目标时返回 None。"""
         view = self.query_one("#fav-list", ListView)
-        shown = self._shown()
-        if not shown or view.index is None:
+        mounted = self._mounted()
+        if not mounted or view.index is None:
             return None
-        for idx in range(view.index + delta, len(shown) if delta > 0 else -1, delta):
-            it = shown[idx]
+        for idx in range(view.index + delta, len(mounted) if delta > 0 else -1, delta):
+            it = mounted[idx]
             src = self._source_of(it)
             if src.supports_detail and it.kind in src.detail_kinds:
                 view.index = idx

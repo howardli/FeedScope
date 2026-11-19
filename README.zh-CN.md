@@ -196,13 +196,15 @@ feedscope [tui]           # 启动 TUI（默认）
 feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x、reddit）
 feedscope probe [源 id…]  # 全源巡检：定位改版，原始样本落盘
 feedscope doctor          # 环境自检（Chrome / profile / 配置）
+feedscope cache [clear]   # 列表缓存体检 / 清空（纯派生数据，无损）
 feedscope rss add <url> [--key k --label 名]  # 加订阅：feed 直链 / 站点首页（自动发现）/ OPML 路径
 feedscope rss list | remove <key>             # 查看 / 删除订阅
+feedscope rss rename <key> <名>               # 改订阅显示名
 feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合并）/ 导出
 feedscope favorites [export [x.md]]           # 收藏列表 / 导出 Markdown（防锁定）
 ```
 
-全局旗标：`--verbose`（日志提到 DEBUG，子命令同时镜像 stderr）与 `--log-file <路径>`（换日志位置）。
+全局旗标：`--verbose`（日志提到 DEBUG，子命令同时镜像 stderr）、`--log-file <路径>`（换日志位置）与 `--version`。
 
 ### 故障排查与日志
 
@@ -233,7 +235,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（�
 hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
 ```
 
-`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`）。调整站点顺序：`F2` 里「取消勾选再重新勾选」即移到末尾。
+`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`）——0.4.0 起手写的注释与未知键也原样保留（tomlkit 往返）。调整站点顺序：`F2` 里高亮已勾选的源按 `,` / `.` 微调（「取消勾选再重新勾选」仍是移到末尾）。
 
 ### RSS 订阅
 

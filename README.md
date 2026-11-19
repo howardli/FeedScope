@@ -196,13 +196,15 @@ feedscope [tui]           # start the TUI (default)
 feedscope login [source]  # browser login (defaults to zhihu; e.g. x, reddit)
 feedscope probe [source…] # inspect all sources; raw samples saved to disk
 feedscope doctor          # environment self-check (Chrome / profile / config)
+feedscope cache [clear]   # list-cache report / wipe it (purely derived, lossless)
 feedscope rss add <url> [--key k --label name]  # add: feed URL / site homepage (auto-discovered) / OPML path
 feedscope rss list | remove <key>               # list / remove subscriptions
+feedscope rss rename <key> <name>               # rename a subscription's display name
 feedscope rss import <x.opml> | export [x.opml] # bulk import (idempotent merge) / export
 feedscope favorites [export [x.md]]             # list favorites / export as Markdown (no lock-in)
 ```
 
-Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to stderr) and `--log-file <path>` (write the log elsewhere).
+Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to stderr), `--log-file <path>` (write the log elsewhere) and `--version`.
 
 ### Troubleshooting & logs
 
@@ -233,7 +235,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label defaults to key (k
 hide = ["all"]       # hide the "All" aggregate, or a subscription key to hide one feed
 ```
 
-Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`). To reorder sites: untick then re-tick in `F2` (moves to the end).
+Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`) — and since 0.4.0 it also preserves hand-written comments and unknown keys verbatim (tomlkit round-trip). To reorder sites: highlight a ticked source in `F2` and nudge with `,` / `.` (untick-then-tick still moves to the end).
 
 ### RSS Subscriptions
 

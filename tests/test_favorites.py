@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from conftest import last_notification, settle
 from test_tui_smoke import StubSource, StubSourceTwo
-from textual.widgets import Label, ListView
+from textual.widgets import Input, Label, ListView
 
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import _REGISTRY
@@ -211,3 +211,51 @@ def _star_two() -> None:
     st = ReadState()
     st.toggle_fav(FeedItem(source="stub", id="a", title="甲标题", url="https://example.com/a"))
     st.toggle_fav(FeedItem(source="stub", id="b", title="乙标题", url="https://example.com/b"))
+
+
+def test_favorites_pagination(monkeypatch, stub_registry) -> None:
+    """收藏列表分页（防冻结，与主列表 SliceFeedLoader 同一动机）：首屏只挂
+    _PAGE 条、Ctrl+N 放量、放完 toast；列宽按全量算（追加行不重排）。"""
+    from feedscope.ui.screens import favorites as fav_mod
+
+    monkeypatch.setattr(fav_mod, "_PAGE", 2)  # 小页长：3 条收藏即覆盖全动线
+    asyncio.run(_run_fav_pagination())
+
+
+async def _run_fav_pagination() -> None:
+    from feedscope.core.models import FeedItem
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        for i in range(3):  # 收藏 3 条（全量），页长 2 → 首屏 2 行
+            app.state.toggle_fav(FeedItem("stub", f"i{i}", f"标题{i}", f"https://e.com/{i}"))
+        await pilot.press("f3")
+        assert await settle(pilot, lambda: isinstance(app.screen, FavoritesScreen))
+        fav = app.screen
+        view = fav.query_one("#fav-list", ListView)
+        assert await settle(pilot, lambda: len(view.children) == 2), "只挂第一页"
+        assert app.sub_title == "收藏 3 条 · 已显示 2（Ctrl+N 更多）"
+
+        await pilot.press("ctrl+n")  # 放出最后 1 条
+        assert await settle(pilot, lambda: len(view.children) == 3)
+        assert app.sub_title == "收藏 3 条", "全部挂上后回到普通计数"
+
+        await pilot.press("ctrl+n")  # 再按：没有更多
+        assert last_notification(app) == "没有更多了"
+
+        # / 过滤后行集缩小：分页跟着行集走——重建把上限重置回页长（2 行），
+        # 再 Ctrl+N 放量到过滤后的总量（3 条全匹配）
+        from conftest import settle as _settle
+
+        await pilot.press("/")
+        await _settle(pilot, lambda: pilot.app.screen.query("#input-line"))
+        pilot.app.screen.query_one(Input).value = "标题"
+        await pilot.press("enter")
+        assert await _settle(
+            pilot, lambda: len(fav.query_one("#fav-list", ListView).children) == 2
+        ), "重建重置分页：先挂页长条"
+        await pilot.press("ctrl+n")
+        assert await _settle(
+            pilot, lambda: len(fav.query_one("#fav-list", ListView).children) == 3
+        )

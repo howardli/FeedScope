@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from feedscope import __version__
 from feedscope.core.i18n import t
 
 
@@ -32,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", action="store_true", help=t("cli.help_verbose"))
     parser.add_argument("--log-file", metavar="PATH", help=t("cli.help_log_file"))
+    parser.add_argument(
+        "--version", action="version", version=f"feedscope {__version__}",
+        help=t("cli.help_version"),
+    )
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("tui", help=t("cli.help_tui"))
@@ -44,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help=t("cli.help_doctor"))
 
+    cache = sub.add_parser("cache", help=t("cli.help_cache"))
+    cache_sub = cache.add_subparsers(dest="cache_command")
+    cache_sub.add_parser("clear", help=t("cli.help_cache_clear"))
+
     rss = sub.add_parser("rss", help=t("cli.help_rss"))
     rss_sub = rss.add_subparsers(dest="rss_command", required=True)
     rss_sub.add_parser("list", help=t("cli.help_rss_list"))
@@ -53,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--label", help=t("cli.help_rss_add_label"))
     remove_p = rss_sub.add_parser("remove", help=t("cli.help_rss_remove"))
     remove_p.add_argument("key", help=t("cli.help_rss_remove_key"))
+    rename_p = rss_sub.add_parser("rename", help=t("cli.help_rss_rename"))
+    rename_p.add_argument("key", help=t("cli.help_rss_rename_key"))
+    rename_p.add_argument("label", help=t("cli.help_rss_rename_label"))
     import_p = rss_sub.add_parser("import", help=t("cli.help_rss_import"))
     import_p.add_argument("path", help=t("cli.help_rss_import_path"))
     export_p = rss_sub.add_parser("export", help=t("cli.help_rss_export"))
@@ -113,6 +125,14 @@ def _run_rss(args: argparse.Namespace) -> int:
         print(t("cli.removed", key=removed.key, label=removed.label) + t("cli.restart_hint"))
         return 0
 
+    if args.rss_command == "rename":
+        renamed = subs.rename_feed(args.key, args.label)
+        if renamed is None:
+            print(t("cli.no_such_key", key=repr(args.key)))
+            return 1
+        print(t("cli.renamed", key=renamed.key, label=renamed.label) + t("cli.restart_hint"))
+        return 0
+
     if args.rss_command == "import":
         try:
             added, skipped = subs.import_opml(subs.read_opml_file(args.path))
@@ -138,6 +158,23 @@ def _run_rss(args: argparse.Namespace) -> int:
         print(t("cli.exported", n=len(config.rss_feeds()), path=args.path))
     else:
         print(opml, end="")
+    return 0
+
+
+def _run_cache(args: argparse.Namespace) -> int:
+    """cache 子命令：无子命令 = 体检（目录/文件数/字节），clear = 清空。
+
+    缓存是纯派生数据（下次刷新重建），clear 无损——不需要确认。
+    """
+    from feedscope.core import feed_cache
+
+    if args.cache_command == "clear":
+        removed = feed_cache.clear_cache()
+        print(t("cli.cache_cleared", n=removed))
+        return 0
+    n, size = feed_cache.cache_stats()
+    print(f"{feed_cache.cache_dir()}")
+    print(t("cli.cache_status", n=n, size=size))
     return 0
 
 
@@ -213,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
         from feedscope.doctor import run_checks
 
         return run_checks()
+
+    if args.command == "cache":
+        return _run_cache(args)
 
     if args.command == "rss":
         return _run_rss(args)

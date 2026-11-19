@@ -46,6 +46,7 @@ _ACTION_GROUP: dict[str, str] = {
     # 配置
     "manage_sources": "settings", "account": "settings",
     "language": "settings", "theme": "settings",
+    "move_up": "settings", "move_down": "settings",
 }
 
 

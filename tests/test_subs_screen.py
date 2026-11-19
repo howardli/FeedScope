@@ -365,3 +365,40 @@ async def _run_buttons_and_guards_flow(rss_env) -> None:
 
 def test_subs_screen_buttons_and_guards(rss_env) -> None:
     asyncio.run(_run_buttons_and_guards_flow(rss_env))
+
+
+def test_source_order_nudge_keys(monkeypatch, tmp_path) -> None:
+    """F2 的 ,/. 调序：高亮的已勾选源序号挪一位（行序字母正序不动）；边界不动、
+    未勾选源给指路反馈。比「取消再勾选（挪到末尾）」轻的微调动线。"""
+    asyncio.run(_run_order_nudge(monkeypatch, tmp_path))
+
+
+async def _run_order_nudge(monkeypatch, tmp_path) -> None:
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text('language = "zh-CN"\nenabled = ["hn", "v2ex"]\n', encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        screen = app.screen
+        await _goto_row(pilot, screen, "hn")  # 高亮 hn（已勾选、序号 1）
+        assert screen.selected_ids == ["hn", "v2ex"]
+
+        await pilot.press("comma")  # 已在顶部：序号不动（无反馈即反馈）
+        assert screen.selected_ids == ["hn", "v2ex"]
+
+        await pilot.press("period")  # hn 挪到 v2ex 后面
+        assert screen.selected_ids == ["v2ex", "hn"]
+        sl = screen.query_one(SelectionList)
+        hn_prompt = str(sl.get_option_at_index(_row_of(screen, "hn")).prompt)
+        assert hn_prompt.strip().startswith("2"), "行文案的序号变成 2"
+
+        await pilot.press("comma")  # 挪回来
+        assert screen.selected_ids == ["hn", "v2ex"]
+
+        # 未勾选源：没有序号可挪，指路先勾选
+        await _goto_row(pilot, screen, "reddit")
+        await pilot.press("period")
+        assert last_notification(app) == "先勾选（空格）才能挪动它的序号"
+        assert screen.selected_ids == ["hn", "v2ex"]
