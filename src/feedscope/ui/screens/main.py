@@ -30,7 +30,7 @@ from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
-from feedscope.ui.dialogs import ConfirmScreen
+from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_SPARE,
@@ -199,6 +199,11 @@ class MainScreen(MainSetupScreen):
         Binding("ctrl+n", "more", "bindings.more", show=False),
         Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
         Binding("f4", "unread_only", "bindings.unread_only", show=False),
+        # / 标题过滤（newsboat 惯例）：弹输入层，Enter 设词/空清除、Esc 不变；
+        # [/] 环扫跳未读——与回答屏楼层步进（] 下一楼）同键同语义
+        Binding("/", "title_filter", "bindings.title_filter", show=False),
+        Binding("]", "next_unread", "bindings.next_unread", show=False),
+        Binding("[", "prev_unread", "bindings.prev_unread", show=False),
         # 全部已读用 Ctrl+A 而不是 Ctrl+Shift+R：终端没启用键盘增强协议时
         # Shift 不可区分（发的是同一个字节）——真终端按 Ctrl+Shift+R 会落成
         # Ctrl+R 单条切换，Pilot 直注事件测不出来；Ctrl+A 各终端都可靠送达
@@ -274,6 +279,8 @@ class MainScreen(MainSetupScreen):
         # F4 只看未读：会话级开关不落盘（重启回全量）；只影响渲染层，
         # self.items 始终是全量（loader 契约 / Ctrl+N / 收藏快照都不受影响）
         self._unread_only = False
+        # / 标题过滤（会话级，同 F4 只动渲染层）：None = 未过滤；小写子串匹配
+        self._title_filter: str | None = None
         # 边栏刷新的合并式调度状态（见 _refresh_sidebar）：在途 + 期间有人再要
         self._sidebar_busy = False
         self._sidebar_dirty = False
@@ -504,17 +511,30 @@ class MainScreen(MainSetupScreen):
         if shown:
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
-        elif self.items and self._unread_only:
-            self.show_empty(t("main.empty_unread_only"))
+        elif self.items:
+            self.show_empty(self._empty_hint())  # 有数据但被过滤光：指路去关过滤
         else:
             self.show_empty(t("main.empty_no_content"))
         self.app.sub_title = sub if sub is not None else self._count_sub()
 
+    def _empty_hint(self) -> str:
+        """过滤态空表的专属指路（F4 与 / 并存时给更具体的标题过滤那条）。"""
+        if self._title_filter:
+            return t("main.empty_filter", q=self._title_filter)
+        if self._unread_only:
+            return t("main.empty_unread_only")
+        return t("main.empty_no_content")
+
     def _shown(self) -> list[FeedItem]:
-        """当前渲染的行集：全量或未读子集（F4）。行↔条目的唯一映射走这里。"""
-        if not self._unread_only:
-            return self.items
-        return [it for it in self.items if not self._tui.state.is_read(it.source, it.id)]
+        """当前渲染的行集：全量 / 未读子集（F4）/ 标题过滤（/）的 AND 组合。
+        行↔条目的唯一映射走这里——rebuild/同步/计数全部跟随，无一旁路。"""
+        shown = self.items
+        if self._unread_only:
+            shown = [it for it in shown if not self._tui.state.is_read(it.source, it.id)]
+        if self._title_filter:
+            q = self._title_filter
+            shown = [it for it in shown if q in it.title.lower()]
+        return shown
 
     def _count_sub(self) -> str:
         """状态行计数文案：本批有「新」带新计数（刷新与 Ctrl+N 共用）。"""
@@ -644,7 +664,7 @@ class MainScreen(MainSetupScreen):
             self._hide_empty()
         else:
             view.index = None
-            self.show_empty(t("main.empty_unread_only"))
+            self.show_empty(self._empty_hint())
         self.app.sub_title = self._count_sub()
 
     # ---- 已读/未读（状态在 core/store.py，行首圆点见 ui/list_render.py）----
@@ -707,6 +727,55 @@ class MainScreen(MainSetupScreen):
             self, t("main.toast_unread_on" if self._unread_only else "main.toast_unread_off")
         )
         self.run_worker(self.rebuild_items(), exclusive=True)
+
+    def action_title_filter(self) -> None:
+        """/：标题过滤（newsboat 惯例，会话级）。弹输入层：Enter 设词（大小写
+        不敏感子串）/ 空提交 = 清除 / Esc = 不变。走 worker：wait_for_dismiss
+        只能在 worker 里用（同 _mark_all_flow 的既有形态）。"""
+        self.app.run_worker(self._title_filter_flow(), group="titlefilter")
+
+    async def _title_filter_flow(self) -> None:
+        q = await self.app.push_screen(
+            # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
+            InputScreen(
+                t("main.filter_prompt"), initial=self._title_filter or "", allow_empty=True
+            ),
+            wait_for_dismiss=True,
+        )
+        if q is None:
+            return  # Esc/取消：不动现有过滤（取消输入 ≠ 清除过滤）
+        new = q.lower() or None
+        if new == self._title_filter:
+            return  # 词没变：不重画不弹 toast
+        self._title_filter = new
+        feedback.info(
+            self, t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear")
+        )
+        await self.rebuild_items()
+
+    def action_next_unread(self) -> None:
+        """]：环扫跳到下一条未读（详情屏换楼层同键）。"""
+        self._jump_unread(+1)
+
+    def action_prev_unread(self) -> None:
+        """[：环扫跳到上一条未读。"""
+        self._jump_unread(-1)
+
+    def _jump_unread(self, delta: int) -> None:
+        """沿 delta 方向环扫一圈找首条未读：命中即选中（列表自动滚到行），
+        一圈无未读 toast 收尾。F4 过滤态天然兼容（行集本就是未读）。"""
+        shown = self._shown()
+        if not shown:
+            return
+        view = self.query_one("#feed", ListView)
+        cur = view.index or 0
+        for step in range(1, len(shown) + 1):
+            i = (cur + delta * step) % len(shown)
+            it = shown[i]
+            if not self._tui.state.is_read(it.source, it.id):
+                view.index = i
+                return
+        feedback.info(self, t("main.no_unread"))
 
     def action_mark_all_read(self) -> None:
         """Ctrl+Shift+R：当前流全部标已读。过滤态下标的是**全部**（确认文案即全量数）。"""

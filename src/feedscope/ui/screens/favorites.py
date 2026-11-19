@@ -29,6 +29,7 @@ from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, Source
 from feedscope.core.text import display_width
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.dialogs import InputScreen
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_MAX,
@@ -83,6 +84,7 @@ class FavoritesScreen(Screen[None]):
         Binding("ctrl+f", "unfavorite", "bindings.favorite", show=False),
         Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
+        Binding("/", "title_filter", "bindings.title_filter", show=False),
         Binding("f1", "help", "bindings.help"),
     ]
 
@@ -95,10 +97,15 @@ class FavoritesScreen(Screen[None]):
         super().__init__()
         self._sources: dict[str, Source] = {}  # 全注册表（含已停用源），挂载时解析一次
         self.items: list[FeedItem] = []  # 当前行序（收藏时间新→旧，行序 = items 序）
+        # / 标题过滤（会话级，同主屏）：None = 未过滤；行集走 _shown()，
+        # self.items 保持全量（快照/取消收藏/同步主屏都不受影响）
+        self._filter: str | None = None
         self._score_width = 1 + META_COL_SPARE
         self._prev_sub_title: str | None = None  # 退屏恢复（同 ReadingScreen）
         self._last_width = 0
         self._resize_timer: Timer | None = None
+        self._rebuild_busy = False  # 重建的合并式调度状态（见 _rerender）
+        self._rebuild_dirty = False
 
     @property
     def _tui(self) -> FeedScopeApp:
@@ -119,9 +126,11 @@ class FavoritesScreen(Screen[None]):
         await self._rebuild()
         self.query_one("#fav-list", ListView).focus()
 
-    async def on_screen_resume(self) -> None:
-        # 详情屏退回：已读圆点 / 在详情里取消的收藏都要反映（见模块头）
-        await self._rebuild()
+    def on_screen_resume(self) -> None:
+        # 详情屏退回：已读圆点 / 在详情里取消的收藏都要反映（见模块头）。
+        # 走 _rerender 的 exclusive worker 而非直 await：与 / 过滤等屏内触发
+        # 共用一条串行道，两路 clear/extend 交错会把同一行挂两遍
+        self._rerender()
 
     async def on_unmount(self) -> None:
         if self._prev_sub_title is not None:
@@ -138,7 +147,28 @@ class FavoritesScreen(Screen[None]):
         self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, self._rerender)
 
     def _rerender(self) -> None:
-        self.run_worker(self._rebuild(), exclusive=True)
+        """请求一次整屏重建（resize / resume / 过滤变化共用入口）。
+
+        合并式调度（同 MainScreen._refresh_sidebar）：在途时只标脏不并跑——
+        clear 的删除异步落地，两个重建的 clear/extend 交错会把同一行挂两遍；
+        exclusive 取消也能防并发，但被取代的协程从未启动会留 never-awaited
+        警告。跑完那份见脏标志自动再来一轮。
+        """
+        if self._rebuild_busy:
+            self._rebuild_dirty = True
+            return
+        self._rebuild_busy = True
+        self.run_worker(self._rebuild_cycle())
+
+    async def _rebuild_cycle(self) -> None:
+        try:
+            while True:
+                await self._rebuild()
+                if not self._rebuild_dirty:
+                    return
+                self._rebuild_dirty = False
+        finally:
+            self._rebuild_busy = False
 
     # ---- 列表 ----
 
@@ -166,15 +196,23 @@ class FavoritesScreen(Screen[None]):
         )
         return min(longest, META_COL_MAX) + META_COL_SPARE
 
+    def _shown(self) -> list[FeedItem]:
+        """当前渲染的行集（/ 过滤态 = 标题匹配子集）；行↔条目映射的唯一入口。"""
+        if not self._filter:
+            return self.items
+        q = self._filter
+        return [it for it in self.items if q in it.title.lower()]
+
     async def _rebuild(self) -> None:
         """按当前收藏重建列表（挂载 / 每次 ScreenResume / resize 后调用；保留选中位）。"""
         view = self.query_one("#fav-list", ListView)
         idx = view.index
         pairs = self._tui.state.favorites()
         self.items = [it for _, it in pairs]
+        shown = self._shown()
         await view.clear()
         empty = self.query_one("#fav-empty", Label)
-        if self.items:
+        if shown:
             self._score_width = self._score_width_of()
             tag_width = self._tag_width_of()
             time_width = time_col_width(self.items)  # 快照里带时间的条目成列
@@ -193,15 +231,21 @@ class FavoritesScreen(Screen[None]):
                         tag_width=tag_width,
                         time_width=time_width,
                     )
-                    for it in self.items
+                    for it in shown
                 ]
             )
-            view.index = 0 if idx is None else min(idx, len(self.items) - 1)
+            view.index = 0 if idx is None else min(idx, len(shown) - 1)
             empty.display = False
+        elif self.items:
+            empty.update(t("fav.empty_filter", q=self._filter or ""))
+            empty.display = True  # 有收藏但被过滤光：指路去关过滤
         else:
             empty.update(t("fav.empty"))
             empty.display = True
-        self.app.sub_title = t("fav.status_count", n=len(self.items))
+        if self._filter:
+            self.app.sub_title = t("fav.status_filtered", n=len(shown), q=self._filter)
+        else:
+            self.app.sub_title = t("fav.status_count", n=len(shown))
 
     # ---- 已读（与主屏同语义；标记后同步主屏同一行）----
 
@@ -210,9 +254,10 @@ class FavoritesScreen(Screen[None]):
 
     def _current(self) -> FeedItem | None:
         view = self.query_one("#fav-list", ListView)
-        if not self.items or view.index is None:
+        shown = self._shown()
+        if not shown or view.index is None:
             return None
-        return self.items[view.index]
+        return shown[view.index]
 
     def _mark_read(self, item: FeedItem) -> None:
         self._tui.state.mark_read(item.source, item.id)
@@ -222,9 +267,14 @@ class FavoritesScreen(Screen[None]):
             main._sync_after_read(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
-        """单行圆点就地重算（按 (source, id) 定位行，理由见 MainScreen 同名方法）。"""
+        """单行圆点就地重算（按 (source, id) 定位行——在 _shown 行集里找，
+        行号即 view.children 下标；理由见 MainScreen 同名方法）。"""
         idx = next(
-            (i for i, it in enumerate(self.items) if it.source == item.source and it.id == item.id),
+            (
+                i
+                for i, it in enumerate(self._shown())
+                if it.source == item.source and it.id == item.id
+            ),
             None,
         )
         if idx is None:
@@ -260,7 +310,7 @@ class FavoritesScreen(Screen[None]):
             return
         self._tui.state.toggle_fav(item)
         feedback.info(self, t("fav.toast_removed"))
-        self.run_worker(self._rebuild(), exclusive=True)
+        self._rerender()
 
     def action_copy_link(self) -> None:
         """Ctrl+Y：复制当前收藏的链接（快照里的 url，不依赖源在线）。"""
@@ -270,6 +320,29 @@ class FavoritesScreen(Screen[None]):
             return
         self.app.copy_to_clipboard(item.url)
         feedback.info(self, t("main.toast_copied"))
+
+    def action_title_filter(self) -> None:
+        """/：标题过滤（会话级，同主屏语义）：Enter 设词/空提交清除/Esc 不变。"""
+        self.run_worker(self._title_filter_flow(), exclusive=True)
+
+    async def _title_filter_flow(self) -> None:
+        q = await self.app.push_screen(
+            # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
+            InputScreen(t("main.filter_prompt"), initial=self._filter or "", allow_empty=True),
+            wait_for_dismiss=True,
+        )
+        if q is None:
+            return  # Esc/取消：不动现有过滤
+        new = q.lower() or None
+        if new == self._filter:
+            return
+        self._filter = new
+        feedback.info(
+            self, t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear")
+        )
+        # 弹层关闭还会触发 on_screen_resume 重建：都走 _rerender 的 exclusive
+        # worker 串行，两路 clear/extend 交错会把同一行挂两遍（sidebar 竞态同族）
+        self._rerender()
 
     def action_help(self) -> None:
         """F1：键位帮助（全局 + 本屏，从声明自动生成）。"""
@@ -297,12 +370,14 @@ class FavoritesScreen(Screen[None]):
 
     def step_readable(self, delta: int) -> FeedItem | None:
         """详情屏 ←/→ 的供给端（镜像主屏 step_readable_item）：沿方向推进到下一条
-        可进终端详情的收藏，同步选中并计已读；没有可读目标时返回 None。"""
+        可进终端详情的收藏（沿 _shown 行集——过滤态下不可读的行本来就不在屏上），
+        同步选中并计已读；没有可读目标时返回 None。"""
         view = self.query_one("#fav-list", ListView)
-        if not self.items or view.index is None:
+        shown = self._shown()
+        if not shown or view.index is None:
             return None
-        for idx in range(view.index + delta, len(self.items) if delta > 0 else -1, delta):
-            it = self.items[idx]
+        for idx in range(view.index + delta, len(shown) if delta > 0 else -1, delta):
+            it = shown[idx]
             src = self._source_of(it)
             if src.supports_detail and it.kind in src.detail_kinds:
                 view.index = idx

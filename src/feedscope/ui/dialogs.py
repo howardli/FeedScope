@@ -91,17 +91,22 @@ class InputScreen(DialogScreen[str | None]):
     全应用唯一的文本输入（粘贴走终端原生 bracketed paste，从 Finder 拖
     文件进终端即得路径）；Input 自己消费字符键（←/→ 是文本光标），↑/↓
     在输入行与按钮行间移动焦点（ArrowModalScreen）。
+    allow_empty=True 时空串回 ""（与取消的 None 可区分）——「空提交 =
+    清除」语义的调用方用（标题过滤）；默认 False 沿用「空 = 取消」。
     """
 
     CSS = """
     .dialog-fixed { width: 64; }  /* 输入行要 1fr：卡片定宽，输入行才有得铺 */
     """
 
-    def __init__(self, title: str, *, initial: str = "", placeholder: str = "") -> None:
+    def __init__(
+        self, title: str, *, initial: str = "", placeholder: str = "", allow_empty: bool = False
+    ) -> None:
         super().__init__()
         self._title = title
         self._initial = initial
         self._placeholder = placeholder
+        self._allow_empty = allow_empty
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-card dialog-card dialog-fixed"):
@@ -114,12 +119,16 @@ class InputScreen(DialogScreen[str | None]):
     def on_mount(self) -> None:
         self.query_one("#input-line", Input).focus()
 
+    def _dismiss_value(self, raw: str) -> str | None:
+        text = raw.strip()
+        return text if text or self._allow_empty else None
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value.strip() or None)
+        self.dismiss(self._dismiss_value(event.value))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "input-ok":
-            self.dismiss(self.query_one("#input-line", Input).value.strip() or None)
+            self.dismiss(self._dismiss_value(self.query_one("#input-line", Input).value))
         else:
             self.dismiss(None)
 

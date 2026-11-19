@@ -113,6 +113,8 @@ feedscope
 | `Ctrl+Y` | Copy the current item's link (in details, copies the article you are reading; in reply layers, the floor-direct link) |
 | `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
 | `F4` | Unread-only view: the list shows unread items only (session toggle; read rows vanish instantly) |
+| `]` / `[` | Jump to the next / previous unread item (wraps around the current feed) |
+| `/` | Filter the list by title (case-insensitive substring; empty input clears; also works in the favorites list) |
 | `Ctrl+A` | Mark every item in the current feed as read (with confirmation) |
 | `Ctrl+F` | Favorite / unfavorite the current item (works while reading too) |
 | `F3` | Favorites list: cross-source, newest first; Enter opens detail, Ctrl+F unfavorites |

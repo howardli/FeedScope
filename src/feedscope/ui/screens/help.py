@@ -37,9 +37,10 @@ _ACTION_GROUP: dict[str, str] = {
     "next_answer": "nav", "prev_answer": "nav", "close": "nav",
     # 内容：取数与外带
     "refresh": "content", "more": "content", "open_browser": "content",
-    "copy_link": "content",
+    "copy_link": "content", "title_filter": "content",
     # 已读与未读
     "toggle_read": "read", "mark_all_read": "read", "unread_only": "read",
+    "next_unread": "read", "prev_unread": "read",
     # 收藏
     "favorite": "fav", "unfavorite": "fav", "favorites": "fav",
     # 配置
