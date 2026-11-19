@@ -38,6 +38,7 @@ from feedscope.ui.layout import (
     list_title_width,
     score_col_width,
     tag_col_width,
+    time_col_width,
 )
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
@@ -279,6 +280,7 @@ class MainScreen(MainSetupScreen):
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
         self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
+        self._time_width = 0  # 时间列宽（批内有 published 才成列；无时间的源 0）
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
 
@@ -481,6 +483,7 @@ class MainScreen(MainSetupScreen):
         self.items = items
         self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
         self._tag_width = tag_col_width(self.items)  # 聚合流的源名列（单源流 0）
+        self._time_width = time_col_width(self.items)  # 相对时间列（无时间批 0）
         shown = self._shown()
         width = self._wrap_width()
         await view.extend(
@@ -493,6 +496,7 @@ class MainScreen(MainSetupScreen):
                     self._row_mark(it),
                     tag=it.tag,
                     tag_width=self._tag_width,
+                    time_width=self._time_width,
                 )
                 for it in shown
             ]
@@ -566,11 +570,18 @@ class MainScreen(MainSetupScreen):
         view = self.query_one("#feed", ListView)
         new_width = score_col_width(self.current_source, self.items)
         new_tag = tag_col_width(self.items)
-        if new_width > self._score_width or new_tag > self._tag_width or self._unread_only:
-            # 新批次带来更长的元信息/源名（或过滤态下行集变化）：列变宽或行集
-            # 重算——全量重建，不只是追加新行
+        new_time = time_col_width(self.items)
+        if (
+            new_width > self._score_width
+            or new_tag > self._tag_width
+            or new_time > self._time_width
+            or self._unread_only
+        ):
+            # 新批次带来更长的元信息/源名/成列时间（或过滤态下行集变化）：
+            # 列变宽或行集重算——全量重建，不只是追加新行
             self._score_width = new_width
             self._tag_width = new_tag
+            self._time_width = new_time
             await self.rebuild_items()
         else:
             width = self._wrap_width()
@@ -584,6 +595,7 @@ class MainScreen(MainSetupScreen):
                         self._row_mark(it),
                         tag=it.tag,
                         tag_width=self._tag_width,
+                        time_width=self._time_width,
                     )
                     for it in new
                 ]
@@ -596,7 +608,10 @@ class MainScreen(MainSetupScreen):
     def _wrap_width(self) -> int:
         """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
         return list_title_width(
-            self.query_one("#feed", ListView).region.width, self._score_width, self._tag_width
+            self.query_one("#feed", ListView).region.width,
+            self._score_width,
+            self._tag_width,
+            self._time_width,
         )
 
     async def rebuild_items(self) -> None:
@@ -619,6 +634,7 @@ class MainScreen(MainSetupScreen):
                     self._row_mark(it),
                     tag=it.tag,
                     tag_width=self._tag_width,
+                    time_width=self._time_width,
                 )
                 for it in shown
             ]

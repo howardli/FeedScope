@@ -29,6 +29,11 @@ META_COL_MAX = 18
 # 折行算术在 list_title_width 一并扣除，标题可用宽不含它
 MARK_COL_WIDTH = 2
 
+# 相对时间列（.item-time）：fmt_relative 的最长文本（MM-DD / YY-MM）5 列
+# 定宽；批内任一条带 published 才成列（+1 列间隙），全无则 0——tag 列同款
+# 的「批内有才占列」先例，无时间可取的源（知乎热榜）行式与从前一致
+TIME_COL_WIDTH = 5
+
 # 正文 markdown 可用宽 = 容器宽 - 8：
 # 滚动条(2) + 左右 padding 0 2(4) + 2 列余量防 Rich 二次折行
 MD_OVERHEAD = 8
@@ -37,11 +42,20 @@ MD_OVERHEAD = 8
 RESIZE_DEBOUNCE = 0.15  # 秒
 
 
-def list_title_width(container_width: int, meta_col_width: int, tag_width: int = 0) -> int:
+def list_title_width(
+    container_width: int, meta_col_width: int, tag_width: int = 0, time_width: int = 0
+) -> int:
     """列表标题列的折行可用宽；meta_col_width = 当前批的元信息列宽，
-    tag_width = 源名列宽（收藏屏跨源列表用，主列表为 0）。"""
+    tag_width = 源名列宽（收藏屏跨源列表用，主列表为 0），
+    time_width = 相对时间列宽（批内有 published 才非 0）。"""
     return max(
-        10, container_width - LIST_ROW_OVERHEAD - MARK_COL_WIDTH - tag_width - meta_col_width
+        10,
+        container_width
+        - LIST_ROW_OVERHEAD
+        - MARK_COL_WIDTH
+        - tag_width
+        - time_width
+        - meta_col_width,
     )
 
 
@@ -81,3 +95,11 @@ def tag_col_width(items: list[FeedItem]) -> int:
     """
     longest = max((display_width(it.tag) for it in items), default=0)
     return longest + 1 if longest else 0
+
+
+def time_col_width(items: list[FeedItem]) -> int:
+    """时间列宽：批内任一条带 published 即定宽（TIME_COL_WIDTH + 1 间隙），
+    全无为 0（不占列）。定宽不随内容自适应——右对齐成列，NM/Nh/Nd/日期
+    各档位宽度接近，让列稳定比省一两列更可读（源名列左对齐同理成列）。
+    """
+    return TIME_COL_WIDTH + 1 if any(it.published for it in items) else 0

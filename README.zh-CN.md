@@ -159,6 +159,16 @@ language = "zh-CN"   # 或 "en"（缺省）；删掉这行 = 回到默认英文�
 
 `Ctrl+T` 随时切换——**即时生效并落盘**（与语言的「重启生效」不同：主题是纯显示层）。内置 `editor-dark`（默认）与 `editor-light`；配置里手动指定 `theme = "editor-light"`，删掉该行 = 回默认深色。新增一个主题：复制 `src/feedscope/ui/themes/editor-dark.toml` 改色即被自动发现（零代码），色槽完整性由 `tests/test_theme.py` 钉住。
 
+### 展示时区
+
+时间戳（列表行的相对时间列、详情页的时间行）默认按**北京时间（UTC+8）**展示——刻意不跟本机时区，同一份内容在服务器上和海外笔记本上读起来一致。配置里写 IANA 名即可更换：
+
+```toml
+timezone = "Asia/Tokyo"   # 任意 IANA 时区名；删掉该行 / 写错 = 回默认 UTC+8
+```
+
+与语言一样随进程固定（已格式化的时间会进列表缓存；时间列背后的 `published` 原始时间戳始终跟随当前设置）。列表没有时间可取的源（知乎热榜/推荐）不会出现该列。
+
 ### 登录 / 登出
 
 知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。

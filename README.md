@@ -159,6 +159,16 @@ Adding a language: copy `src/feedscope/core/i18n/en.toml` to `<code>.toml` (e.g.
 
 `Ctrl+T` switches anytime — **applied instantly and saved** (unlike language's restart model: a theme is pure presentation). Built-ins are `editor-dark` (default) and `editor-light`; set it manually in the config with `theme = "editor-light"` (delete the line to fall back to the dark default). Adding a theme: copy `src/feedscope/ui/themes/editor-dark.toml` and recolor — it is auto-discovered with zero code changes; completeness is pinned by `tests/test_theme.py`.
 
+### Display timezone
+
+Timestamps (list rows' relative-time column, detail headers) render in **Beijing time (UTC+8) by default** — deliberately not the machine's local timezone, so the same content reads identically on a server or an overseas laptop. Set an IANA name in the config to change it:
+
+```toml
+timezone = "Asia/Tokyo"   # any IANA name; delete the line / bad value = back to UTC+8
+```
+
+Like language, it is fixed per process (formatted times are baked into the list cache; the raw `published` timestamps behind the time column always follow the current setting). Sources without list timestamps (Zhihu hot/recommend) simply don't grow the column.
+
 ### Login / Logout
 
 Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`.

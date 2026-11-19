@@ -204,7 +204,8 @@ visits_wan = " · {n} 万浏览"
 
 
 [config]
-file_header = """FeedScope 源配置：language = 界面语言；enabled = 启用的源；各源 hide = 隐藏的信息流
+file_header = """FeedScope 源配置：language = 界面语言；timezone = 展示时区（IANA 名，缺省北京时间）；
+enabled = 启用的源；各源 hide = 隐藏的信息流
 feeds = 订阅表（key = {{ label, url }}）：rss 订 feed、reddit 订 subreddit、
 telegram 订频道；由 feedscope 自动维护（首启引导 / F2 管理 / rss 子命令），
 也可手动编辑"""

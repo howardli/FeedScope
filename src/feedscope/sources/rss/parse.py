@@ -97,6 +97,7 @@ def parse_feed(
         if not guid and not link:
             continue  # 双缺无法寻址
         author = _clean(entry.get("author"))
+        epoch = _epoch(entry.get("published_parsed") or entry.get("updated_parsed"))
         items.append(
             FeedItem(
                 source=SOURCE_ID,
@@ -107,13 +108,12 @@ def parse_feed(
                 # 聚合流的订阅名走源名列（拼进元信息列会让右对齐列左缘参差），
                 # 单订阅流整屏同名不占列
                 tag=feed_label if all_view else "",
+                published=epoch or None,  # 0（无时间）不进时间列：整列有无看批内
                 extra={
                     "feed_key": feed_key,
                     "feed_label": feed_label,
                     "author": author,
-                    "published": _epoch(
-                        entry.get("published_parsed") or entry.get("updated_parsed")
-                    ),
+                    "published": epoch,
                     "content_html": _content_html(entry),
                 },
             )

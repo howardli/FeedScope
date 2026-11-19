@@ -27,6 +27,8 @@ class FeedItem:
     meta: str = ""                     # 列表元信息列语义文本（热度/作者/节点名…），UI 统一截断对齐
     tag: str = ""                      # 源名列：跨流混排（聚合流/收藏屏）标出处（订阅名/频道名）；
                                        # 单源流为空。显示数据由解析层产出——UI 不读 extra 的约定不变
+    published: float | None = None     # 发布时间 unix 秒（UTC）；无时间可取的源/条目为 None，
+                                       # 时间列按批内有无可无整列隐去（tag 列同款先例）
     extra: dict[str, Any] = field(default_factory=dict)  # 传给 detail 抓取的补充字段
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +45,7 @@ class FeedItem:
             "kind": self.kind,
             "meta": self.meta,
             "tag": self.tag,
+            "published": self.published,
             "extra": self.extra,
         }
 
@@ -52,6 +55,7 @@ class FeedItem:
 
         旧版缓存少字段/手编多字段都不炸：缓存是派生数据，宽容读回优于版本迁移。
         """
+        raw_published = data.get("published")
         return cls(
             source=str(data.get("source", "")),
             id=str(data.get("id", "")),
@@ -60,6 +64,7 @@ class FeedItem:
             kind=str(data.get("kind", "")),
             meta=str(data.get("meta", "")),
             tag=str(data.get("tag", "")),
+            published=float(raw_published) if isinstance(raw_published, (int, float)) else None,
             extra=dict(data.get("extra") or {}),
         )
 

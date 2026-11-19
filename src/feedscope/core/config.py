@@ -206,6 +206,16 @@ def save_theme(name: str) -> None:
     _write_config(_render_config(_enabled_from_data(data), data))
 
 
+def get_timezone() -> str | None:
+    """配置的展示时区（IANA 名，如 "Asia/Shanghai"）；None = 未设置（默认北京时间）。
+
+    合法性校验在消费侧 timefmt.set_timezone（ZoneInfo 解析）：这里只把
+    字符串读出来，坏值由 set_timezone 记警告并回退，doctor 可见。
+    """
+    tz = _read()[0].get("timezone")
+    return tz if isinstance(tz, str) and tz else None
+
+
 def _toml_str(s: str) -> str:
     # json 字符串即合法 TOML 基本串（转义规则同源），不为此引入写库
     return json.dumps(s, ensure_ascii=False)
@@ -254,10 +264,11 @@ def _enabled_from_data(data: dict[str, Any]) -> list[str] | None:
 def _render_config(ids: list[str] | None, data: dict[str, Any]) -> list[str]:
     """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
 
-    只写本工具认识的键：language + theme + enabled + 各源非空 hide 段 + feeds
-    订阅表（其余丢弃，记 info——这里的「重新生成」与手改文件的自由度是此消
-    彼长，注释头已说明归属）。feeds 是用户数据（不是工具生成的状态），必须
-    原样保留——丢段等于丢订阅；language / theme 同理（落盘键，漏写 = 丢设置）。
+    只写本工具认识的键：language + theme + timezone + enabled + 各源非空
+    hide 段 + feeds 订阅表（其余丢弃，记 info——这里的「重新生成」与手改
+    文件的自由度是此消彼长，注释头已说明归属）。feeds 是用户数据（不是
+    工具生成的状态），必须原样保留——丢段等于丢订阅；language / theme /
+    timezone 同理（落盘键，漏写 = 丢设置）。
     """
     lines = [f"# {line}" for line in t("config.file_header").splitlines()]
     language = data.get("language")
@@ -266,10 +277,13 @@ def _render_config(ids: list[str] | None, data: dict[str, Any]) -> list[str]:
     theme = data.get("theme")
     if isinstance(theme, str) and theme:
         lines += ["", f"theme = {_toml_str(theme)}"]
+    tz = data.get("timezone")
+    if isinstance(tz, str) and tz:
+        lines += ["", f"timezone = {_toml_str(tz)}"]
     if ids is not None:
         lines += ["", f"enabled = {_toml_array(ids)}"]
     for sid, section in data.items():
-        if sid in ("enabled", "language", "theme"):
+        if sid in ("enabled", "language", "theme", "timezone"):
             continue  # 已由参数 ids / language / theme 行统一重写，不是「无法识别的顶层键」
         if not isinstance(section, dict):
             logger.info("覆写配置：忽略无法识别的顶层键 %r", sid)

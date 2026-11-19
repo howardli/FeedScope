@@ -17,7 +17,7 @@ from textual.app import App
 from textual.binding import Binding
 
 import feedscope.sources  # noqa: F401  import 即注册
-from feedscope.core import config, http, i18n
+from feedscope.core import config, http, i18n, timefmt
 from feedscope.core.browser import close_session, get_session
 from feedscope.core.i18n import t
 from feedscope.core.registry import source_classes
@@ -64,6 +64,9 @@ class FeedScopeApp(App[None]):
         # 首启语言屏的预选高亮；这里保证直构 App 的路径（截图脚本 / 测试）
         # 与 cli.main 组装的一致）。语言随进程固定：改语言走 Ctrl+L 落盘 + 重启
         i18n.set_language(config.get_language() or i18n.DEFAULT_LANGUAGE)
+        # 展示时区同语言一道烙进进程（fmt_* / 列表时间列全走它）：配置缺失/
+        # 非法回退默认北京时间（UTC+8），见 core/timefmt.py 的 set_timezone
+        timefmt.set_timezone(config.get_timezone())
         # 主题：ui/themes/ 一文件一主题自动发现（见 ui/theme.py）；配置缺失/
         # 非法回退默认深色。纯显示层，Ctrl+T 运行时可实时切换（无需重启）
         register_all(self)

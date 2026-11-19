@@ -207,7 +207,8 @@ visits_wan = " · {n} views"
 
 
 [config]
-file_header = """FeedScope source config: language = UI language; enabled = sources in use; per-source hide = feeds hidden
+file_header = """FeedScope source config: language = UI language; timezone = display timezone (IANA name,
+defaults to Beijing UTC+8); enabled = sources in use; per-source hide = feeds hidden
 feeds = subscriptions (key = {{ label, url }}): rss takes feeds, reddit subreddits,
 telegram channels; maintained by feedscope (first-run setup / F2 manager / rss command),
 but can also be edited by hand"""

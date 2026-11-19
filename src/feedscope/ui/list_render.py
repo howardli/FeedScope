@@ -13,6 +13,7 @@ from textual.widgets import Label, ListItem
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import Source
+from feedscope.core.timefmt import fmt_relative
 from feedscope.ui.layout import meta_col_text
 from feedscope.ui.wrap import wrap_display
 
@@ -38,6 +39,9 @@ ListItem.row-read .item-title { color: $text-muted; }
 /* source tag column (favorites only; width set per-batch inline): left-aligned
    and muted so cross-source rows stay visually uniform */
 .item-tag { text-wrap: nowrap; color: $text-muted; }
+/* relative-time column (width set per-batch inline, absent when the batch has
+   no timestamps): right-aligned so the unit edge lines up into a column */
+.item-time { text-align: right; text-wrap: nowrap; color: $text-muted; }
 /* score width is set per-row inline (see layout.score_col_width); right-aligned,
    overlong bylines wrap (full names must stay visible) */
 .item-score { text-align: right; text-wrap: wrap; }
@@ -59,8 +63,9 @@ def build_item(
     mark: str = "",
     tag: str = "",
     tag_width: int = 0,
+    time_width: int = 0,
 ) -> ListItem:
-    """一条 FeedItem -> 列表行部件（圆点列 + 可选源名列 + 元信息列 + 折行标题）。
+    """一条 FeedItem -> 列表行部件（圆点 + 源名 + 时间 + 元信息 + 折行标题）。
 
     标题按 width 折行（规范版：避头尾 + 词不拆），逐行转义；元信息列宽
     逐行 inline 设置（列宽随批内容自适应，见 layout.score_col_width），
@@ -69,6 +74,8 @@ def build_item(
     tag/tag_width 是跨源列表（收藏屏）的源名列：左对齐、批内统一宽，
     让源名成列、元信息回到各源原生形态——源名拼进元信息会让右对齐列
     左缘参差且超限折行，跨源混排时尤其乱。主列表整屏同源，不传即无此列。
+    time_width 是相对时间列（layout.time_col_width 的产物，批内有
+    published 才 >0）：右对齐成列，纯数字档位（0m/Nm/Nh/Nd/日期）。
     """
     title = "\n".join(escape(line) for line in wrap_display(it.title, width))
     score = Label(meta_col(source, it), classes="item-score")
@@ -78,6 +85,10 @@ def build_item(
         tag_label = Label(tag, classes="item-tag")
         tag_label.styles.width = tag_width
         cells.append(tag_label)
+    if time_width:
+        time_label = Label(fmt_relative(it.published), classes="item-time")
+        time_label.styles.width = time_width
+        cells.append(time_label)
     cells.append(score)
     cells.append(Label(title, classes="item-title"))
     # 二态圆点语义下 mark 为空 = 已读：行加 row-read 类（标题置灰，CSS 见上）

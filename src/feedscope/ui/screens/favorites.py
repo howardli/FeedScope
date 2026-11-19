@@ -36,6 +36,7 @@ from feedscope.ui.layout import (
     RESIZE_DEBOUNCE,
     list_title_width,
     meta_col_text,
+    time_col_width,
 )
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
@@ -176,7 +177,10 @@ class FavoritesScreen(Screen[None]):
         if self.items:
             self._score_width = self._score_width_of()
             tag_width = self._tag_width_of()
-            width = list_title_width(view.region.width or 80, self._score_width, tag_width)
+            time_width = time_col_width(self.items)  # 快照里带时间的条目成列
+            width = list_title_width(
+                view.region.width or 80, self._score_width, tag_width, time_width
+            )
             await view.extend(
                 [
                     build_item(
@@ -187,6 +191,7 @@ class FavoritesScreen(Screen[None]):
                         self._row_mark(it),
                         tag=self._tag_of(it),
                         tag_width=tag_width,
+                        time_width=time_width,
                     )
                     for it in self.items
                 ]

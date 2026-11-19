@@ -26,7 +26,7 @@ from feedscope.core.i18n import t
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import FeedItem
 from feedscope.core.text import truncate_display
-from feedscope.core.timefmt import fmt_iso
+from feedscope.core.timefmt import fmt_iso, iso_epoch
 
 SOURCE_ID = "telegram"
 
@@ -139,6 +139,7 @@ def parse_channel_html(
             continue  # 既无正文也无媒体：不可展示，跳条不跳流
         views = (m.group(1) if (m := _VIEWS_RE.search(chunk)) else "").strip()
         author = (m.group(1) if (m := _AUTHOR_RE.search(chunk)) else "").strip()
+        iso = m.group(1) if (m := _TIME_RE.search(chunk)) else ""
         parts = [t("words.views", n=views)] if views else []
         # 聚合视图频道名在源名列：署名与频道同名时不再重复占位；单频道流
         # 频道名只在侧栏，署名照常显示
@@ -152,9 +153,10 @@ def parse_channel_html(
                 url=url,
                 meta=" · ".join(parts),
                 tag=label if all_view else "",
+                published=iso_epoch(iso),  # 列表时间列；extra 里保留 ISO 原文（详情层显示用）
                 extra={
                     "content_md": md,
-                    "published": m.group(1) if (m := _TIME_RE.search(chunk)) else "",
+                    "published": iso,
                     "author": author,
                     "channel": label,
                 },

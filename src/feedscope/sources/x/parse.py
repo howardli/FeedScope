@@ -33,7 +33,7 @@ from feedscope.core.media import mark
 from feedscope.core.models import Answer, FeedItem
 from feedscope.core.source import dedup_by
 from feedscope.core.text import strip_zwsp, truncate_display
-from feedscope.core.timefmt import fmt_twitter
+from feedscope.core.timefmt import fmt_twitter, twitter_epoch
 
 BASE = "https://x.com"
 
@@ -304,6 +304,8 @@ def _tweet_from_result(r: dict[str, Any]) -> FeedItem | None:
         url=f"{BASE}/{handle}/status/{rest_id}",
         kind="tweet",
         meta=signature(name, handle),  # 署名「名字 @handle」；截断统一在 UI
+        # 计龄取实质内容那条（RT 读内层原推的发布时间）
+        published=twitter_epoch((src.get("legacy") or {}).get("created_at")),
         extra={"conversation_id": conversation_id} if conversation_id else {},
     )
 

@@ -156,10 +156,12 @@ def _run_favorites(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     # 进程语言按配置设定（未设置 = 缺省）：CLI 的 help/输出与 TUI 同语言；
-    # 必须在 build_parser 之前——argparse 的 help 在构造时就成型
-    from feedscope.core import config, i18n
+    # 必须在 build_parser 之前——argparse 的 help 在构造时就成型。展示时区
+    # 同批设定（fmt_* 全走它，见 core/timefmt.py）
+    from feedscope.core import config, i18n, timefmt
 
     i18n.set_language(config.get_language() or i18n.DEFAULT_LANGUAGE)
+    timefmt.set_timezone(config.get_timezone())
     args = build_parser().parse_args(argv)
 
     if args.command in (None, "tui"):

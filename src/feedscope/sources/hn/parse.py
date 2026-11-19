@@ -20,7 +20,7 @@ from feedscope.core.display import fmt_count
 from feedscope.core.i18n import t
 from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
-from feedscope.core.timefmt import fmt_iso
+from feedscope.core.timefmt import fmt_iso, iso_epoch
 from feedscope.core.tree import (
     TreeAccessors,
     build_floors,
@@ -119,6 +119,7 @@ def parse_search(hits: list[dict[str, Any]]) -> list[FeedItem]:
                     safe_int(hit.get("points")), safe_int(hit.get("num_comments")),
                     str(hit.get("author") or ""),
                 ),
+                published=iso_epoch(hit.get("created_at")),
             )
         )
     return items

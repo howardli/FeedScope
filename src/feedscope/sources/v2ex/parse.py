@@ -64,6 +64,7 @@ def parse_topics(topics: list[dict[str, Any]]) -> list[FeedItem]:
         tid = str(tp.get("id") or "")
         if not tid.isdigit():
             continue  # 无 id 无法寻址，跳条不跳流
+        created = tp.get("created")
         items.append(
             FeedItem(
                 source=SOURCE_ID,
@@ -72,6 +73,8 @@ def parse_topics(topics: list[dict[str, Any]]) -> list[FeedItem]:
                 url=f"{_TOPIC_URL}{tid}",
                 kind="topic",
                 meta=_meta(tp),
+                # created 已是 unix 秒（列表端点原样）；防野数据 isinstance 收口
+                published=float(created) if isinstance(created, (int, float)) else None,
                 extra={"topic": tp},
             )
         )
