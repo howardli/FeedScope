@@ -6,6 +6,8 @@ import asyncio
 import re
 
 import pytest
+from conftest import last_notification, settle
+from test_tui_smoke import StubSource
 from textual.widgets import Label, ListView
 
 from feedscope.core.registry import _REGISTRY
@@ -14,9 +16,6 @@ from feedscope.ui.dialogs import ConfirmScreen
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.main import FeedNavItem, MainScreen
-
-from conftest import last_notification, settle
-from test_tui_smoke import StubSource
 
 
 @pytest.fixture()

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from conftest import settle
+from test_tui_smoke import StubSource
 from textual.widgets import Label
 
 from feedscope.core.registry import _REGISTRY
@@ -13,9 +15,6 @@ from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import HelpScreen
 from feedscope.ui.screens.main import MainScreen
-
-from conftest import settle
-from test_tui_smoke import StubSource
 
 
 @pytest.fixture()

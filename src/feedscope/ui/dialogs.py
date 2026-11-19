@@ -14,8 +14,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Label
 
-from feedscope.ui.focus_nav import ArrowModalScreen
 from feedscope.core.i18n import t
+from feedscope.ui.focus_nav import ArrowModalScreen
 
 _DialogT = TypeVar("_DialogT")
 

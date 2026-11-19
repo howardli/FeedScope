@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator
+from typing import Any
 
 from feedscope.core.display import fmt_count, signature, votes_text
 from feedscope.core.i18n import has, t
@@ -47,18 +48,18 @@ _QUOTE_SNIPPET_CELLS = 80
 _DETAIL_TITLE_CELLS = 60
 
 
-def _rt_result(r: dict) -> dict:
+def _rt_result(r: dict[str, Any]) -> dict[str, Any]:
     """转发（RT）的内层原推 result；非转发或残卡返回空 dict。"""
     return ((r.get("legacy") or {}).get("retweeted_status_result") or {}).get("result") or {}
 
 
-def _quote_result(r: dict) -> dict:
+def _quote_result(r: dict[str, Any]) -> dict[str, Any]:
     """被引推文 result（quoted_status_result）；非引用或已删（tombstone 无 legacy）返回空 dict。"""
     q = _unwrap((r.get("quoted_status_result") or {}).get("result") or {})
     return q if q.get("legacy") else {}
 
 
-def _tweet_text(r: dict) -> str:
+def _tweet_text(r: dict[str, Any]) -> str:
     """推文全文（保留换行）：长推取 note_tweet 全文，否则 legacy.full_text。"""
     legacy = r.get("legacy") or {}
     text = strip_zwsp(legacy.get("full_text", ""))
@@ -68,13 +69,13 @@ def _tweet_text(r: dict) -> str:
     return text
 
 
-def _is_long_form(r: dict) -> bool:
+def _is_long_form(r: dict[str, Any]) -> bool:
     """蓝 V 长文（note_tweet，可达几千字）：列表截断只针对它。"""
     note = ((r.get("note_tweet") or {}).get("note_tweet_results") or {}).get("result") or {}
     return bool(note.get("text"))
 
 
-def _media_markers(r: dict) -> str:
+def _media_markers(r: dict[str, Any]) -> str:
     """媒体记号（[图片 N] / [视频]）：扫描面用——列表缀尾、引用片段、详情标题回退。
 
     只报数量不附地址（列表一行是扫的不是读的，知乎列表同样不带）；地址
@@ -91,7 +92,7 @@ def _media_markers(r: dict) -> str:
     return markers
 
 
-def _best_video_url(m: dict) -> str:
+def _best_video_url(m: dict[str, Any]) -> str:
     """视频媒体 -> 直链：最高码率 mp4（m3u8 是流清单不是播放地址，仅兜底）。"""
     variants = ((m.get("video_info") or {}).get("variants")) or []
     mp4 = [v for v in variants if v.get("content_type") == "video/mp4" and v.get("url")]
@@ -103,7 +104,7 @@ def _best_video_url(m: dict) -> str:
     return ""
 
 
-def _media_links(r: dict) -> str:
+def _media_links(r: dict[str, Any]) -> str:
     """媒体尾注（详情正文/回复楼层）：每个媒体一个「[图片]/[视频](地址)」链接 token。
 
     地址取 pbs.twimg.com 原图 / 最高码率 mp4——点击直达媒体本体；正文里
@@ -133,7 +134,7 @@ def _lang_name(code: str) -> str:
 
 
 
-def _grok_translation(r: dict) -> str:
+def _grok_translation(r: dict[str, Any]) -> str:
     """Grok 自动译文块：`> **译文**（英语）：内容`；无译文返回空串。
 
     数据随 TweetDetail 响应内嵌（grok_translated_post_with_availability，
@@ -155,7 +156,7 @@ def _grok_translation(r: dict) -> str:
     return t("x.translation_quote", label=label, text=text)
 
 
-def _author(r: dict) -> tuple[str, str]:
+def _author(r: dict[str, Any]) -> tuple[str, str]:
     """推文作者 -> (昵称, handle)；署名格式化 _who 与判残卡共用。
 
     用户对象新旧两态：HomeLatestTimeline 还是 legacy 形态，TweetDetail（2026）
@@ -169,7 +170,7 @@ def _author(r: dict) -> tuple[str, str]:
     return strip_zwsp(name), strip_zwsp(handle)
 
 
-def _who(r: dict) -> str:
+def _who(r: dict[str, Any]) -> str:
     """作者署名「名字 @handle」（X 网页同形）：取作者字段，格式化归 core/display。
 
     昵称常有装饰字符认不出人，handle 才是身份；单露一个（旧版列表只露
@@ -180,17 +181,17 @@ def _who(r: dict) -> str:
 
 
 def _urt_entries_and_cursor(
-    data: dict,
-    urt_of: Callable[[dict], dict],
-    cursor_of: Callable[[dict], str | None],
-) -> tuple[list[dict], str | None]:
+    data: dict[str, Any],
+    urt_of: Callable[[dict[str, Any]], dict[str, Any]],
+    cursor_of: Callable[[dict[str, Any]], str | None],
+) -> tuple[list[dict[str, Any]], str | None]:
     """GraphQL URT 响应 -> (entries, 游标)：instructions 摊平 + 游标扫描的共享骨架。
 
     时间线（home.home_timeline_urt）与详情（threaded_conversation_with_
     injections_v2）同构；容器路径与「哪条算下一页游标」是端点差异，经
     urt_of / cursor_of 注入（见 _entries_and_cursor / _detail_entries_and_cursor）。
     """
-    entries: list[dict] = []
+    entries: list[dict[str, Any]] = []
     for ins in urt_of(data).get("instructions") or []:
         if ins.get("type") == "TimelineAddEntries":
             entries.extend(ins.get("entries") or [])
@@ -201,7 +202,7 @@ def _urt_entries_and_cursor(
     return entries, cursor
 
 
-def _entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
+def _entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
     """从 GraphQL 响应提取全部 entries 与下一页游标（cursor-bottom 条目的 value）。
 
     For You（HomeTimeline）与 Following（HomeLatestTimeline）同容器
@@ -210,7 +211,7 @@ def _entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     （顶部的 cursor-top 是「回到顶部」，不算下一页）。
     """
 
-    def _bottom(e: dict) -> str | None:
+    def _bottom(e: dict[str, Any]) -> str | None:
         if (e.get("entryId") or "").startswith("cursor-bottom"):
             return (e.get("content") or {}).get("value")
         return None
@@ -222,7 +223,7 @@ def _entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     )
 
 
-def _iter_tweet_results(entries: list[dict]) -> Iterator[dict]:
+def _iter_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
     """把 entries 里的推文摊平成 result dict 流：跳广告与关注推荐模块。"""
     for e in entries:
         content = e.get("content") or {}
@@ -246,7 +247,7 @@ def _iter_tweet_results(entries: list[dict]) -> Iterator[dict]:
                     yield res
 
 
-def _quote_snippet(r: dict) -> str:
+def _quote_snippet(r: dict[str, Any]) -> str:
     """引用片段（列表与回复楼层缀尾）：「 ▸ 引用 名字 @handle：内容（≤80 格）」。
 
     被引推文常是引用推文的实质内容（评论可能只有一句），不缀则完全不可见；
@@ -263,7 +264,7 @@ def _quote_snippet(r: dict) -> str:
     return t("x.quote_line", who=_who(q), body=body)
 
 
-def _tweet_from_result(r: dict) -> FeedItem | None:
+def _tweet_from_result(r: dict[str, Any]) -> FeedItem | None:
     """单条推文 result -> FeedItem；拿不到 id 或作者的残卡返回 None（调用方丢弃）。
 
     换行压成空格（列表标题是扫描用的单段文本）；图片/视频在列表只换 [图片 N]/
@@ -310,7 +311,7 @@ def _tweet_from_result(r: dict) -> FeedItem | None:
 # ---- 详情（TweetDetail 响应：threaded_conversation_with_injections_v2）----
 
 
-def _detail_entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
+def _detail_entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
     """TweetDetail 响应 -> (entries, 回复翻页 cursor)。
 
     与 _entries_and_cursor 同构（共享 _urt_entries_and_cursor 骨架），游标取
@@ -319,7 +320,7 @@ def _detail_entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     即阅读序（祖先推文混在最前，v1 当上下文读，不单独标注）。
     """
 
-    def _any_cursor(e: dict) -> str | None:
+    def _any_cursor(e: dict[str, Any]) -> str | None:
         if (e.get("entryId") or "").startswith("cursor-"):
             item = (e.get("content") or {}).get("itemContent") or {}
             return item.get("value") or (e.get("content") or {}).get("value")
@@ -332,7 +333,7 @@ def _detail_entries_and_cursor(data: dict) -> tuple[list[dict], str | None]:
     )
 
 
-def _unwrap(res: dict | None) -> dict:
+def _unwrap(res: dict[str, Any] | None) -> dict[str, Any]:
     """TweetWithVisibilityResults 拆包：受限推文的 result 套一层 .tweet。"""
     if not res:
         return {}
@@ -341,7 +342,7 @@ def _unwrap(res: dict | None) -> dict:
     return res
 
 
-def _ordered_results(entries: list[dict], seen: set[str]) -> list[dict]:
+def _ordered_results(entries: list[dict[str, Any]], seen: set[str]) -> list[dict[str, Any]]:
     """entries 里的推文按条目序摊平，rest_id 去重并直接登记进 seen（持久集）。
 
     tweetdetailrelatedtweets-* 模块是「相关推文」推荐（详情页尾部），不是回复，
@@ -360,7 +361,9 @@ def _ordered_results(entries: list[dict], seen: set[str]) -> list[dict]:
     )
 
 
-def _focal_and_replies(entries: list[dict], rest_id: str) -> tuple[dict, dict | None, list[dict]]:
+def _focal_and_replies(
+    entries: list[dict[str, Any]], rest_id: str
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """首批 entries -> (焦点推文, 父推「原推」, 回复列表)。
 
     焦点按 rest_id 匹配，匹配不到时退第一条（接口异常形态，保底不空屏）。
@@ -379,7 +382,7 @@ def _focal_and_replies(entries: list[dict], rest_id: str) -> tuple[dict, dict | 
     return focal, parent, replies
 
 
-def _quote_context(r: dict, label: str) -> str:
+def _quote_context(r: dict[str, Any], label: str) -> str:
     """引用块（详情）：label「原推」= 回复的父推（置正文上方），「被引推文」= quote（置正文下方）。
 
     换行压成单段（块引用逐行加 > 不值当），带作者署名（名字 @handle）与媒体
@@ -394,7 +397,7 @@ def _quote_context(r: dict, label: str) -> str:
     return out
 
 
-def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
+def _detail_doc(focal: dict[str, Any], parent: dict[str, Any] | None) -> tuple[str, str, str, str]:
     """焦点推文 -> (title, meta, description_md, time)。
 
     title 取正文首行截 _DETAIL_TITLE_CELLS 格（详情屏标题行与 Header 副标题共用，标题保持
@@ -431,7 +434,7 @@ def _detail_doc(focal: dict, parent: dict | None) -> tuple[str, str, str, str]:
     return title, meta, "" if desc == title else desc, fmt_twitter(legacy.get("created_at"))
 
 
-def _visible_text(r: dict) -> str:
+def _visible_text(r: dict[str, Any]) -> str:
     """推文可见文本：用 display_text_range 藏掉开头的 @ 提及与结尾的媒体
     t.co 短链（详情里焦点与回复楼层都要；索引按 UTF-16 码元，先转码再切，
     emoji 不偏移），再把正文里的内联 t.co 短链展开成 X 网页同款 display_url。
@@ -455,7 +458,7 @@ def _visible_text(r: dict) -> str:
     return _strip_trailing_media(expanded, legacy)
 
 
-def _strip_trailing_media(text: str, legacy: dict) -> str:
+def _strip_trailing_media(text: str, legacy: dict[str, Any]) -> str:
     """剥结尾的媒体 t.co 短链（媒体已有 [图片 N]/[视频] 记号代偿，X 网页也不显示它）。
 
     display_text_range 通常已把它排除，但实测个别推文会把它划进显示区（索引
@@ -473,7 +476,7 @@ def _strip_trailing_media(text: str, legacy: dict) -> str:
     return text
 
 
-def _expand_urls(text: str, legacy: dict, offset: int = 0) -> str:
+def _expand_urls(text: str, legacy: dict[str, Any], offset: int = 0) -> str:
     """正文内联 t.co 短链 -> display_url（如 wapo.st/4zmXHM1，X 网页同款）。
 
     索引按 UTF-16 码元（与 display_text_range 同规则），offset 是裁剪掉的
@@ -511,7 +514,7 @@ def _expand_urls(text: str, legacy: dict, offset: int = 0) -> str:
         return text
 
 
-def _reply_answer(r: dict) -> Answer | None:
+def _reply_answer(r: dict[str, Any]) -> Answer | None:
     """一条回复推文 -> Answer；残卡（无 id 或作者）返回 None（调用方丢弃）。
 
     内容序：正文（换行保留）→ 媒体地址 → 引用片段 → Grok 译文块（外文回复，

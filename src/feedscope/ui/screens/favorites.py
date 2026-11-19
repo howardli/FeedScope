@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.events import Resize
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, Label, ListView
@@ -125,7 +126,7 @@ class FavoritesScreen(Screen[None]):
         if self._prev_sub_title is not None:
             self.app.sub_title = self._prev_sub_title
 
-    def on_resize(self, event) -> None:  # noqa: ANN001 - Textual Resize 事件
+    def on_resize(self, event: Resize) -> None:
         """改宽防抖重建（标题折行算术依赖宽度；首布局前 region 为 0，首个 Resize 自愈）。"""
         if event.size.width in (self._last_width, 0):
             self._last_width = event.size.width

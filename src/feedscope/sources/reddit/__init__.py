@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json as _json
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from feedscope.core import config
 from feedscope.core.i18n import t
@@ -72,12 +72,12 @@ def _token_logged_in(token_v2: str | None) -> bool:
         payload = token_v2.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         claims = _json.loads(base64.urlsafe_b64decode(payload))
-        return claims.get("sub") == "user"
+        return bool(claims.get("sub") == "user")
     except (IndexError, ValueError):
         return False
 
 
-async def _login_verified(ctx) -> bool:
+async def _login_verified(ctx: Any) -> bool:
     """登录成功的浏览器级判据（login.py 轮询 login_verify）：token_v2 解码出登录态。
 
     读登录窗口上下文的 cookie、本地解码 JWT（见 _token_logged_in）——零网络

@@ -19,13 +19,13 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
-from feedscope.core.models import Comment, FeedItem
-from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.core.i18n import t
+from feedscope.core.models import Answer, Comment, FeedItem
+from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.reading import (
-    PagedReadingScreen,
     READING_CSS,
+    PagedReadingScreen,
     dim_line,
     divider,
     floor_head,
@@ -84,7 +84,7 @@ class AnswerScreen(PagedReadingScreen):
         self._comments_error: str | None = None  # 首载失败文案（resize 重排时保持失败态）
 
     @property
-    def _answer(self):
+    def _answer(self) -> Answer:
         return self.qloader.doc.answers[self.index]
 
     @property

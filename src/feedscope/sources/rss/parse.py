@@ -11,12 +11,13 @@ import calendar
 import html as html_mod
 import re
 from time import struct_time
+from typing import Any
 from urllib.parse import urljoin
 
 import feedparser
 
-from feedscope.core.models import FeedItem
 from feedscope.core.i18n import t
+from feedscope.core.models import FeedItem
 from feedscope.core.text import strip_zwsp
 
 SOURCE_ID = "rss"
@@ -41,13 +42,15 @@ def _epoch(st: object) -> float:
     return float(calendar.timegm(st)) if isinstance(st, struct_time) and st.tm_year > 1 else 0.0
 
 
-def _content_html(entry: dict) -> str:
+def _content_html(entry: dict[str, Any]) -> str:
     """正文 HTML：优先 content（多为全文），退 summary（多为摘要）。"""
     content = entry.get("content")
     if isinstance(content, list) and content:
         first = content[0]
-        if isinstance(first, dict) and isinstance(first.get("value"), str):
-            return first["value"]
+        if isinstance(first, dict):
+            value = first.get("value")  # 捕获收窄：get 的 isinstance 守卫不传导到下标访问
+            if isinstance(value, str):
+                return value
     summary = entry.get("summary")
     return summary if isinstance(summary, str) else ""
 
@@ -68,7 +71,7 @@ def discover_feed_link(html: str, base_url: str) -> str:
             continue
         m = _HREF.search(tag)
         if m and m.group(2):
-            return urljoin(base_url, m.group(2))
+            return urljoin(base_url, str(m.group(2)))  # group() 存根是 Any，str() 收口
     return ""
 
 

@@ -12,6 +12,8 @@ Access Token）与 v1 的 node_name 查询，本层不做。
 
 from __future__ import annotations
 
+from typing import Any
+
 from feedscope.core import http
 from feedscope.core.i18n import t
 
@@ -24,13 +26,15 @@ FEEDS: dict[str, str] = {
 }
 
 
-async def _get_list(url: str, source: str, params: dict[str, str] | None = None) -> list[dict]:
+async def _get_list(
+    url: str, source: str, params: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     """GET 一个返回数组的端点 -> 原始 dict 列表（解析/校验见 http.get_json；非 dict 成员剔除）。"""
     data = await http.get_json(url, source=source, params=params, expect=list)
     return [d for d in data if isinstance(d, dict)]
 
 
-async def fetch_topics(name: str, label: str) -> list[dict]:
+async def fetch_topics(name: str, label: str) -> list[dict[str, Any]]:
     """一个信息流的全部主题（v1 一页全量，无翻页）。"""
     try:
         url = FEEDS[name]
@@ -39,7 +43,7 @@ async def fetch_topics(name: str, label: str) -> list[dict]:
     return await _get_list(url, t("sources.v2ex.with_label", label=label))
 
 
-async def fetch_replies(topic_id: str) -> list[dict]:
+async def fetch_replies(topic_id: str) -> list[dict[str, Any]]:
     """一条主题的全部回复（v1 端点一次给全量，page 参数形同虚设）。"""
     return await _get_list(
         f"{_API}/replies/show.json", t("sources.v2ex.replies"), params={"topic_id": topic_id}

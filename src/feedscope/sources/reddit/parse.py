@@ -33,12 +33,12 @@ from urllib.parse import urljoin
 
 from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count, votes_text
+from feedscope.core.i18n import t
 from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
-from feedscope.core.i18n import t
-from feedscope.core.tree import deleted_author, deleted_body, TreeAccessors, build_floors
+from feedscope.core.tree import TreeAccessors, build_floors, deleted_author, deleted_body
 
 SOURCE_ID = "reddit"
 

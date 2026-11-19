@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -57,7 +57,9 @@ def global_rows() -> list[tuple[str, str]]:
     ]
 
 
-def screen_rows(holder, *extra, skip: set[str] | None = None) -> list[tuple[str, str, str]]:  # noqa: ANN001
+def screen_rows(  # holder/extra：屏或控件，只要有 _bindings
+    holder: Any, *extra: Any, skip: set[str] | None = None
+) -> list[tuple[str, str, str]]:
     """收本项目声明的键（holder 与 extra 控件都扫），(键, 文案, 动作) 按首见序。
 
     同一个键在活注册表里可能是**列表**（Textual 继承默认与我们的声明并存，
@@ -102,7 +104,7 @@ def group_rows(rows: list[tuple[str, str, str]]) -> list[tuple[str, list[tuple[s
     ]
 
 
-def _declared_bindings(holder) -> list[Binding]:  # noqa: ANN001
+def _declared_bindings(holder: Any) -> list[Binding]:
     """沿 MRO 收 feedscope.* 类声明的键位（声明序、按键去重），滤掉继承默认。
 
     只认类自己 __dict__ 里的 BINDINGS：getattr 会在没声明键位的类上顺着

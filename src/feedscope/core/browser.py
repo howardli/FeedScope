@@ -227,7 +227,7 @@ def _read_ua_cache() -> str | None:
     try:
         data = json.loads((PROFILE_DIR.parent / "chrome-ua.json").read_text())
         if data.get("ua") and time.time() - data.get("ts", 0) < _UA_CACHE_TTL:
-            return data["ua"]
+            return str(data["ua"])  # json.loads 是 Any，str() 收口（get 已守卫其确为串）
     except (OSError, ValueError):
         pass
     return None

@@ -20,7 +20,7 @@ def test_require_empty_raises_with_source_and_feed() -> None:
 
 
 def test_require_empty_without_feed_name() -> None:
-    with pytest.raises(SourceError, match="^知乎 解析到 0 条"):
+    with pytest.raises(SourceError, match=r"^知乎 解析到 0 条"):  # ^ 是有意的行首锚
         require_feed_items([], "知乎")
 
 

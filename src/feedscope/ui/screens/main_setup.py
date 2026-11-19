@@ -13,8 +13,7 @@ from abc import abstractmethod
 
 from textual.screen import Screen
 
-from feedscope.core import config
-from feedscope.core import i18n
+from feedscope.core import config, i18n
 from feedscope.core.i18n import t
 from feedscope.core.registry import all_sources, get_class
 from feedscope.core.source import Source

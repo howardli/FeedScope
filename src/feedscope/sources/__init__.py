@@ -29,10 +29,12 @@ import 按 source_id 字母正序书写 = 源选择列表与未配置时的默�
 
 依赖方向只允许 __init__ -> fetch -> parse -> core（parse 永远是最底层叶子）。
 """
-from feedscope.sources import hn  # noqa: F401
-from feedscope.sources import reddit  # noqa: F401
-from feedscope.sources import rss  # noqa: F401
-from feedscope.sources import telegram  # noqa: F401
-from feedscope.sources import v2ex  # noqa: F401
-from feedscope.sources import x  # noqa: F401
-from feedscope.sources import zhihu  # noqa: F401
+from feedscope.sources import (
+    hn,  # noqa: F401
+    reddit,  # noqa: F401
+    rss,  # noqa: F401
+    telegram,  # noqa: F401
+    v2ex,  # noqa: F401
+    x,  # noqa: F401
+    zhihu,  # noqa: F401
+)

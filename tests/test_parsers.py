@@ -11,6 +11,7 @@ import pytest
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import SourceError, dedup_append, merge_feeds
+from feedscope.core.text import display_width
 from feedscope.sources.x.fetch import (
     XFeedLoader,
     XTweetDetailLoader,
@@ -31,7 +32,6 @@ from feedscope.sources.zhihu.parse import (
     _hot_api_items,
 )
 from feedscope.sources.zhihu.parse import _md as _md_zhihu
-from feedscope.core.text import display_width
 
 _TIME_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
 

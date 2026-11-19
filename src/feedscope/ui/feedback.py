@@ -11,6 +11,8 @@ action 是动作文案键（feedback.*）：请求/添加/登出/评论加载/�
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.app import App
 from textual.screen import Screen
 
@@ -43,7 +45,7 @@ def failure_text(source: Source | None, exc: Exception, action: str = ACTION_FET
 
 
 def fail(
-    app: App | Screen, source: Source | None, exc: Exception, action: str = ACTION_FETCH
+    app: App[Any] | Screen[Any], source: Source | None, exc: Exception, action: str = ACTION_FETCH
 ) -> None:
     """失败通知（error 级）。标题跟随动作：登出/加载更多失败别都写成「抓取失败」。"""
     title = (
@@ -54,11 +56,11 @@ def fail(
     app.notify(failure_text(source, exc, action), title=title, severity="error")
 
 
-def warn(app: App | Screen, msg: str, title: str) -> None:
+def warn(app: App[Any] | Screen[Any], msg: str, title: str) -> None:
     """警告通知（warning 级），如需要登录。"""
     app.notify(msg, title=title, severity="warning")
 
 
-def info(app: App | Screen, msg: str) -> None:
+def info(app: App[Any] | Screen[Any], msg: str) -> None:
     """普通通知（info 级），如「没有更多了」。"""
     app.notify(msg)

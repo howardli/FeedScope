@@ -23,6 +23,7 @@ import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_config_path
 
@@ -47,7 +48,7 @@ def config_path() -> Path:
     return user_config_path("feedscope") / "sources.toml"
 
 
-def _read() -> tuple[dict, str]:
+def _read() -> tuple[dict[str, Any], str]:
     """读配置返回 (数据, 状态描述)；不存在 / 坏 = ({}, 原因)，不抛异常。"""
     path = config_path()
     try:
@@ -241,7 +242,7 @@ def _valid_feeds(raw: object) -> list[tuple[str, str, str]]:
     return out
 
 
-def _enabled_from_data(data: dict) -> list[str] | None:
+def _enabled_from_data(data: dict[str, Any]) -> list[str] | None:
     """从配置数据里取出规范化的 enabled（坏值按未配置；空列表是合法的零启用）。"""
     raw = data.get("enabled")
     if not isinstance(raw, list):
@@ -250,7 +251,7 @@ def _enabled_from_data(data: dict) -> list[str] | None:
     return kept if kept or not raw else None
 
 
-def _render_config(ids: list[str] | None, data: dict) -> list[str]:
+def _render_config(ids: list[str] | None, data: dict[str, Any]) -> list[str]:
     """配置全量渲染为 TOML 行；ids 为 None = 不写 enabled 行（缺省 = 全启用）。
 
     只写本工具认识的键：language + theme + enabled + 各源非空 hide 段 + feeds

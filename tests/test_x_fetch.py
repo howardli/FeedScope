@@ -20,10 +20,10 @@ from feedscope.sources import x as x_mod
 from feedscope.sources.x import fetch as x_fetch
 from feedscope.sources.x.fetch import (
     XFeedLoader,
-    fetch_conversation,
-    fetch_entries,
     _Op,
     _parse_graphql_url,
+    fetch_conversation,
+    fetch_entries,
 )
 
 

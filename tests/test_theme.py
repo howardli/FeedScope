@@ -5,15 +5,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from conftest import last_notification, settle, use_config
+from test_tui_smoke import StubSource
 
 from feedscope.core import config
 from feedscope.core.registry import _REGISTRY
 from feedscope.ui import theme as theme_mod
 from feedscope.ui.app import FeedScopeApp
 from feedscope.ui.screens.theme import ThemeScreen
-
-from conftest import last_notification, settle, use_config
-from test_tui_smoke import StubSource
 
 
 @pytest.fixture()
@@ -132,7 +131,7 @@ def test_copy_link_on_three_layers(stub_registry, monkeypatch) -> None:
     """Ctrl+Y 三层：主列表复制当前条目 url；详情层复制 _browser_url（同 Ctrl+O）。"""
     copied: list[str] = []
 
-    def fake_copy(self, text):  # noqa: ANN001 - 同步方法（OSC 52 直写终端）
+    def fake_copy(self: object, text: str) -> None:  # 同步方法（OSC 52 直写终端）
         copied.append(text)
 
     monkeypatch.setattr(FeedScopeApp, "copy_to_clipboard", fake_copy)

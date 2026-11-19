@@ -26,12 +26,11 @@ from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.registry import _REGISTRY
 from feedscope.core.source import DetailLoader, FeedLoader, Source, SourceError
 from feedscope.ui.app import FeedScopeApp
-from feedscope.ui.layout import meta_col_text, score_col_width
-from feedscope.ui.screens.main import MainScreen
-from feedscope.ui.layout import META_COL_MAX
+from feedscope.ui.layout import META_COL_MAX, meta_col_text, score_col_width
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.language import LanguageScreen
+from feedscope.ui.screens.main import MainScreen
 from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
 
 

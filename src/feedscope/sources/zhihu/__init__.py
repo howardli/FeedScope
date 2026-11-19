@@ -14,8 +14,8 @@ from __future__ import annotations
 import re
 from typing import ClassVar
 
-from feedscope.core.models import FeedItem
 from feedscope.core.i18n import t
+from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import (
     DetailLoader,

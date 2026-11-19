@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import re
 
-from feedscope.core.media import html_to_md, mark
 from feedscope.core.i18n import t
+from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import FeedItem
 from feedscope.core.text import truncate_display
 from feedscope.core.timefmt import fmt_iso
@@ -172,10 +172,8 @@ def parse_telegram_input(text: str) -> str:
     if not s:
         return ""
     s = s.removeprefix("@")
-    if m := _LINK_RE.search(s):
-        name = m.group(1)
-    else:
-        name = s.rstrip("/")  # 裸名形态：整个串（去尾斜杠）就是频道名
+    # 链接形态取路径里的频道名；裸名形态：整个串（去尾斜杠）就是频道名
+    name = m.group(1) if (m := _LINK_RE.search(s)) else s.rstrip("/")
     return name.lower() if _NAME_RE.match(name) else ""
 
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from feedscope import login
-from feedscope.core.source import Source
 from feedscope.core.i18n import t
+from feedscope.core.source import Source
 from feedscope.ui import feedback
 from feedscope.ui.dialogs import AccountScreen
 

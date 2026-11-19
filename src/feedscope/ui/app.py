@@ -9,6 +9,7 @@ App 只保留跨屏职责——主题注册、启动序列（注册表检查 + �
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import ClassVar
 
@@ -16,10 +17,9 @@ from textual.app import App
 from textual.binding import Binding
 
 import feedscope.sources  # noqa: F401  import 即注册
-from feedscope.core import config, http
-from feedscope.core import i18n
-from feedscope.core.i18n import t
+from feedscope.core import config, http, i18n
 from feedscope.core.browser import close_session, get_session
+from feedscope.core.i18n import t
 from feedscope.core.registry import source_classes
 from feedscope.core.store import ReadState
 from feedscope.ui import Bindings
@@ -97,10 +97,8 @@ class FeedScopeApp(App[None]):
         知乎/Reddit（通道页签）与 X/Reddit（profile 读 cookie）都要浏览器，
         预热几乎总用得上；失败静默——首次真正取数时自然再试并给正式报错。
         """
-        try:
+        with contextlib.suppress(Exception):
             await get_session().start()
-        except Exception:
-            pass
 
     # ---- 清理 ----
 

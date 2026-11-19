@@ -24,6 +24,7 @@ import tomllib
 from dataclasses import dataclass
 from importlib.resources import files
 from locale import getlocale
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +47,13 @@ class Language:
     name: str
 
 
-def _language_files() -> list[tuple[str, dict]]:
+def _language_files() -> list[tuple[str, dict[str, Any]]]:
     """读包内全部语言 TOML：(code, 数据)，基准语言排最前、其余按文件名稳定排序。
 
     坏文件记警告跳过——新增语言文件写坏不该挡启动（与 core.config 同一
     容错粒度）。
     """
-    out: list[tuple[str, dict]] = []
+    out: list[tuple[str, dict[str, Any]]] = []
     for entry in files("feedscope.core.i18n").iterdir():
         if not entry.name.endswith(".toml"):
             continue
@@ -67,7 +68,7 @@ def _language_files() -> list[tuple[str, dict]]:
     return out
 
 
-def _flatten(table: dict, prefix: str = "") -> dict[str, str]:
+def _flatten(table: dict[str, Any], prefix: str = "") -> dict[str, str]:
     """嵌套表 -> 扁平点分键 -> 文案；非字符串/非表的值不是文案，跳过。"""
     out: dict[str, str] = {}
     for key, value in table.items():

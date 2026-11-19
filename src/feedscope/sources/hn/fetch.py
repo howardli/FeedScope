@@ -9,10 +9,12 @@ HTML 要解析 DOM）；真在意榜序时只换本文件的列表通道，树�
 
 from __future__ import annotations
 
+from typing import Any
+
 from feedscope.core import http
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
-from feedscope.core.i18n import t
 from feedscope.sources.hn.parse import parse_search
 
 _API = "https://hn.algolia.com/api/v1"
@@ -29,7 +31,7 @@ FEEDS: dict[str, tuple[str, dict[str, str]]] = {
 HITS_PER_PAGE = 30  # 与 HN 官方首页同宽（front_page 恰好 30 条，一页装下）
 
 
-async def fetch_feed(name: str, label: str, page: int) -> dict:
+async def fetch_feed(name: str, label: str, page: int) -> dict[str, Any]:
     """一个信息流的一页 search 结果（原始 JSON dict；解析/校验见 http.get_json）。"""
     url, base_params = FEEDS[name]
     return await http.get_json(
@@ -40,7 +42,7 @@ async def fetch_feed(name: str, label: str, page: int) -> dict:
     )
 
 
-async def fetch_item(object_id: str) -> dict:
+async def fetch_item(object_id: str) -> dict[str, Any]:
     """一条 story 的 items/:id 整棵评论树（原始 JSON dict；解析/校验见 http.get_json）。"""
     return await http.get_json(
         f"{_API}/items/{object_id}", source=t("sources.hn.detail"), expect=dict

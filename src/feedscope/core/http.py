@@ -21,7 +21,7 @@ from feedscope.core.const import DESKTOP_UA, HTTP_TIMEOUT
 from feedscope.core.i18n import t
 from feedscope.core.source import SourceError
 
-_J = TypeVar("_J", dict, list)  # get_json 的期望顶层形状（dict / list）
+_J = TypeVar("_J", dict[str, Any], list[Any])  # get_json 的期望顶层形状（dict / list）
 
 _client: httpx.AsyncClient | None = None
 

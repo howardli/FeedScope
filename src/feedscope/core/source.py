@@ -44,7 +44,7 @@ class FeedLoader(ABC):
     async def load_more(self) -> list[FeedItem]:
         """加载下一批条目；空列表 = 没有更多（或暂时没拉到，看 done）。"""
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027 - 可选钩子（docstring 即说明），非漏标 abstract
         """释放资源，幂等，出错自己吞。
 
         默认 no-op：不持资源的源（通道页签/连接池进程级共享）不覆写，
@@ -188,7 +188,7 @@ class DetailLoader(ABC):
         """
         raise NotImplementedError(t("errors.comments_unsupported", name=type(self).__name__))
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027 - 可选钩子，语义同 FeedLoader.close
         """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
 
 
@@ -211,7 +211,7 @@ class CommentLoader(ABC):
     async def load_more(self) -> list[Comment]:
         """加载下一批评论；空列表 = 没有更多（或暂时没拉到，看 done）。"""
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027 - 可选钩子，语义同 FeedLoader.close
         """释放资源，幂等，出错自己吞（默认 no-op，语义同 FeedLoader.close）。"""
 
 

@@ -18,14 +18,14 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
+from feedscope.core.i18n import t
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, LoginRequired, Source
-from feedscope.core.i18n import t
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.screens.answer import AnswerScreen
 from feedscope.ui.screens.reading import (
-    PagedReadingScreen,
     READING_CSS,
+    PagedReadingScreen,
     dim_line,
     divider,
     floor_head,

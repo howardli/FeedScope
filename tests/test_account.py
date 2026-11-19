@@ -376,7 +376,6 @@ async def _run_stale_session_flow(monkeypatch) -> None:
     """知乎 403 形态的闭环：详情撞墙被拒后 Ctrl+U 直接给登录框（不是登出框
     ——判登正被躺着的失效 cookie 骗着），重登成功后失效记忆清零恢复如实分派。"""
     import feedscope.login as login_mod
-
     from feedscope.ui.screens.main import MainScreen
 
     login_calls: list[str] = []

@@ -56,11 +56,20 @@ path = "src/feedscope/__init__.py"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "E501"]
+# 扩面（2026-11）：B 抓常见坑、UP 现代写法、I 导入排序、SIM 冗余写法、RUF 杂项
+# （含 RUF100 未用的 noqa）。BLE001/S110 见 ignore 注释
+select = ["E4", "E7", "E9", "F", "E501", "B", "UP", "I", "SIM", "RUF"]
 ignore = [
   # 抓取/清理路径大量「尽力而为」的宽捕获（关弹窗、关页签、吞渲染抖动），是有意为之
   "BLE001",
   "S110",
+  # 中文项目：注释/文案里的全角标点（，：；）是本意不是「歧义字符」
+  "RUF001",
+  "RUF002",
+  "RUF003",
+  # Source.feeds/feed_labels 的类体可变默认是有意设计：类体写内置默认流、
+  # __init__ 按配置合成实例视图（故不作 ClassVar，见 core/source.py 的说明）
+  "RUF012",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -70,10 +79,11 @@ ignore = [
 "scripts/*" = ["E501"]
 
 [tool.mypy]
-# src 全量零错误（2026-11 起随 ruff/pytest 进 CI）；tests/scripts 的 pytest
-# 动态风格（monkeypatch/fixture）不在检查范围——类型契约由 src 侧保证
+# strict 全量（2026-11 起）：src 零 type: ignore、零错误；tests/scripts 的
+# pytest 动态风格（monkeypatch/fixture）不在检查范围——类型契约由 src 侧保证
 files = ["src/feedscope"]
 python_version = "3.11"
+strict = true
 ignore_missing_imports = true
 
 [tool.coverage.run]

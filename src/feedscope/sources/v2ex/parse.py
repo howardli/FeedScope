@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from feedscope.core.const import safe_int
 from feedscope.core.i18n import t
@@ -40,7 +41,7 @@ def _username(member: object) -> str:
     return str(member.get("username") or "") if isinstance(member, dict) else ""
 
 
-def _meta(topic: dict) -> str:
+def _meta(topic: dict[str, Any]) -> str:
     """一行元信息：节点 · 回复数 · 作者（节点即板块，放最前好扫读）。"""
     parts: list[str] = []
     node = topic.get("node")
@@ -53,7 +54,7 @@ def _meta(topic: dict) -> str:
     return " · ".join(parts)
 
 
-def parse_topics(topics: list[dict]) -> list[FeedItem]:
+def parse_topics(topics: list[dict[str, Any]]) -> list[FeedItem]:
     """列表端点 -> FeedItem 列表（保持返回序，野数据逐条防御）。
 
     整个 topic dict 进 extra：列表正文就是全量，详情打开只再拉回复一个请求。
@@ -88,7 +89,7 @@ class TopicDetail:
     replies: list[Answer] = field(default_factory=list)
 
 
-def parse_detail(topic: dict, replies: list[dict]) -> TopicDetail:
+def parse_detail(topic: dict[str, Any], replies: list[dict[str, Any]]) -> TopicDetail:
     """topic（列表透传）+ 全量回复 -> TopicDetail（楼层 = 回复平铺直出）。"""
     floors: list[Answer] = []
     for r in replies:

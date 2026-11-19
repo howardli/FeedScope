@@ -105,7 +105,9 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     def on_mount(self) -> None:
         self._renumber()  # 初始勾选也要带序号
 
-    def on_selection_list_selection_toggled(self, event: SelectionList.SelectionToggled) -> None:
+    def on_selection_list_selection_toggled(
+        self, event: SelectionList.SelectionToggled[str]
+    ) -> None:
         """维护勾选顺序：勾上排到末尾、取消即移出（再勾上 = 挪到末尾，这就是调序动线）。
 
         _toggle 先改状态后发消息，handler 里 selected 已是新状态，按成员关系

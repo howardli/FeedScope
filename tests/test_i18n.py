@@ -60,7 +60,9 @@ def test_every_entry_is_format_safe() -> None:
             try:
                 text.format()
             except (KeyError, ValueError) as exc:
-                raise AssertionError(f"{lang.code}:{key} 文案含未转义花括号（{text!r}）：{exc}")
+                raise AssertionError(
+                    f"{lang.code}:{key} 文案含未转义花括号（{text!r}）：{exc}"
+                ) from exc
 
 
 def test_t_formats_placeholders_and_escapes_braces() -> None:
@@ -122,7 +124,6 @@ def test_registry_vocabulary_resolves_in_every_language() -> None:
     标签）直通，不算键。
     """
     import feedscope.sources  # noqa: F401  import 即注册
-
     from feedscope.core.registry import all_sources
     from feedscope.core.source import SubscribedSource
 

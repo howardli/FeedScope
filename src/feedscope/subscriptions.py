@@ -22,8 +22,8 @@ from xml.sax.saxutils import escape
 
 from feedscope.core import config
 from feedscope.core.config import Subscription
-from feedscope.core.registry import get_class
 from feedscope.core.i18n import t
+from feedscope.core.registry import get_class
 from feedscope.core.source import SourceError
 
 

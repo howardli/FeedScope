@@ -13,6 +13,7 @@ HN 的结构映射是知乎式三层（词汇重映射，UI 零特判）：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count
@@ -21,11 +22,11 @@ from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
 from feedscope.core.timefmt import fmt_iso
 from feedscope.core.tree import (
-    deleted_author,
-    deleted_body,
     TreeAccessors,
     build_floors,
     count_kept,
+    deleted_author,
+    deleted_body,
 )
 
 SOURCE_ID = "hn"
@@ -39,26 +40,26 @@ def _md(html: object) -> str:
     return text_to_md(html) if isinstance(html, str) else ""
 
 
-def _kids(node: dict) -> list[dict]:
+def _kids(node: dict[str, Any]) -> list[dict[str, Any]]:
     kids = node.get("children")
     return [c for c in kids if isinstance(c, dict)] if isinstance(kids, list) else []
 
 
-def _keep(node: dict) -> bool:
+def _keep(node: dict[str, Any]) -> bool:
     """空壳节点（无正文也无孩子，典型是被删且无回复的评论）整支跳过。"""
     return bool(_md(node.get("text")) or _kids(node))
 
 
-def _author(node: dict) -> str:
+def _author(node: dict[str, Any]) -> str:
     return str(node.get("author") or "") or deleted_author()
 
 
-def _time(node: dict) -> str:
+def _time(node: dict[str, Any]) -> str:
     created = node.get("created_at")
     return fmt_iso(created if isinstance(created, str) else None)
 
 
-def _comment_of(node: dict) -> Comment:
+def _comment_of(node: dict[str, Any]) -> Comment:
     """Algolia 节点 -> Comment 本体（@ 前缀由 core.tree 统一拼装）。"""
     return Comment(
         author=_author(node),
@@ -69,7 +70,7 @@ def _comment_of(node: dict) -> Comment:
     )
 
 
-def _answer_of(node: dict, n: int) -> Answer:
+def _answer_of(node: dict[str, Any], n: int) -> Answer:
     """楼层本体（core.tree.build_floors 注入）：字段来源是站差异，n 为回复数。"""
     cid = str(node.get("id") or "")
     return Answer(
@@ -97,7 +98,7 @@ def _meta(points: int, comments: int, author: str) -> str:
     return " · ".join(parts)
 
 
-def parse_search(hits: list[dict]) -> list[FeedItem]:
+def parse_search(hits: list[dict[str, Any]]) -> list[FeedItem]:
     """search hits -> FeedItem 列表（保持返回序，野数据逐条防御）。"""
     items: list[FeedItem] = []
     for hit in hits:
@@ -134,7 +135,7 @@ class StoryDetail:
     floors: list[Floor] = field(default_factory=list)
 
 
-def parse_story(root: dict) -> StoryDetail:
+def parse_story(root: dict[str, Any]) -> StoryDetail:
     """items/:id 根 -> StoryDetail（story 本体 + 顶层评论楼层与各自回复树）。"""
     blocks = []
     if url := str(root.get("url") or ""):

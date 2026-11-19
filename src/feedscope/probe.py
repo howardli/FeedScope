@@ -21,11 +21,11 @@ from platformdirs import user_cache_path
 import feedscope.sources  # noqa: F401  import 即注册，否则巡检不到任何源
 from feedscope.core import http
 from feedscope.core.browser import close_session
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, LoginRequired, Source, SourceError
 from feedscope.report import line as _line
-from feedscope.core.i18n import t
 
 
 def _classify(exc: BaseException) -> tuple[Literal["SKIP", "FAIL"], str]:

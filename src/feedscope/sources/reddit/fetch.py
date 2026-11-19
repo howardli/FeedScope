@@ -34,9 +34,9 @@ from __future__ import annotations
 import re
 
 from feedscope.core.browser import ChannelTab
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, SourceError, dedup_append
-from feedscope.core.i18n import t
 from feedscope.sources.reddit.parse import (
     parse_next_html,
     parse_posts_html,

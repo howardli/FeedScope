@@ -301,7 +301,7 @@ def test_open_feed_all_with_empty_table_gives_guidance(
     from feedscope.sources.telegram import TelegramSource
 
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(tmp_path / "sources.toml"))
-    for src, label in ((TelegramSource(), "Telegram"), (RssSource(), "RSS")):
+    for src, _label in ((TelegramSource(), "Telegram"), (RssSource(), "RSS")):
         assert src.feeds == []  # 零订阅时「全部」本不该出现在 feeds；防的是删光过渡期的旧实例
         src.feeds = [src.all_feed]  # 模拟旧实例残留的流视图
         with pytest.raises(SourceError, match="还没有订阅"):

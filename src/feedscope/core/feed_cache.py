@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -98,7 +99,6 @@ def _evict() -> None:
         return
     files.sort(key=lambda p: p.stat().st_mtime)  # 调用点已兜 OSError，这里不再拦
     for p in files[: len(files) - _MAX_FEEDS]:
-        try:
+        # 并发/权限抖动：残留一个旧文件无害，下次淘汰再试
+        with contextlib.suppress(OSError):
             p.unlink()
-        except OSError:
-            pass  # 并发/权限抖动：残留一个旧文件无害，下次淘汰再试

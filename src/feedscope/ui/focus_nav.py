@@ -17,13 +17,13 @@ Esc 取消也在这层声明，子类只实现 action_cancel 的取消值。
 
 from __future__ import annotations
 
-from typing import ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from textual.binding import Binding
 from textual.screen import ModalScreen
+from textual.widgets import ListView, SelectionList
 
 from feedscope.ui import Bindings
-from textual.widgets import ListView, SelectionList
 
 T = TypeVar("T")
 
@@ -75,7 +75,7 @@ class ArrowModalScreen(ModalScreen[T]):
         raise NotImplementedError  # 子类声明自己的取消值（False / None / 改动标记）
 
 
-def _exit_at_end(widget, *, at_end: bool) -> None:
+def _exit_at_end(widget: Any, *, at_end: bool) -> None:
     """列表的 ↓ 统一出口：末行（或空表）再 ↓ 出列表进按钮行，否则本列表内下移。
 
     FocusNav 两族列表共用的「到底走出」约定——各列表只判自己的到边条件
@@ -87,7 +87,7 @@ def _exit_at_end(widget, *, at_end: bool) -> None:
         widget.action_cursor_down()
 
 
-class FocusNavSelectionList(SelectionList):
+class FocusNavSelectionList(SelectionList[str]):
     """源勾选列表：末行再 ↓ 移交按钮行（首行 ↑ 留原生夹持——上方无可聚焦）。"""
 
     # ↓ 绑定两族列表各声明一份：裸 mixin 的 BINDINGS 不进 Textual 的合并链

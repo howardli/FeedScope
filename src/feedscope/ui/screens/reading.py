@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import webbrowser
 from abc import abstractmethod
@@ -50,7 +51,7 @@ def divider() -> Static:
     return Static("[dim]" + "─" * 200 + "[/dim]", classes="answer-divider")
 
 
-def dim_line(text: str, **kwargs) -> Static:
+def dim_line(text: str, **kwargs: Any) -> Static:
     """dim 灰的一行尾注（EOF 标记 / 空态等同族）：markup 只写一次。"""
     return Static(f"[dim]{text}[/dim]", **kwargs)
 
@@ -218,10 +219,9 @@ class ReadingScreen(Screen[None]):
     def _remove_hint(self) -> None:
         if self._hint is not None:
             w, self._hint = self._hint, None
-            try:
-                w.remove()  # 同步发起摘除；重复挂载的防护靠 class 不用 id
-            except Exception:
-                pass
+            # 同步发起摘除（屏正被拆除时 remove 抛错就算了）；重复挂载的防护靠 class 不用 id
+            with contextlib.suppress(Exception):
+                w.remove()
 
     # ---- 键位与清理 ----
 

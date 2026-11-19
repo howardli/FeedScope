@@ -19,11 +19,17 @@ login_verify（浏览器级钩子，如 Reddit 的 JWT 解码）> logout_cookies
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from feedscope.core.browser import PROFILE_DIR, close_session, drop_stale_locks
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
 from feedscope.core.i18n import t
+from feedscope.core.source import Source
+
+if TYPE_CHECKING:  # 注解用：运行时保持函数内懒导入 playwright 的惯例
+    from playwright.async_api import BrowserContext
 
 LOGIN_TIMEOUT = 180  # 秒；3 分钟没扫上就退出
 POLL_INTERVAL = 2
@@ -90,7 +96,7 @@ async def login(source_id: str = "zhihu", *, quiet: bool = False) -> bool:
 
 
 async def _await_login(
-    context, source, quiet: bool, window_gone: asyncio.Event | None = None
+    context: BrowserContext, source: Source, quiet: bool, window_gone: asyncio.Event | None = None
 ) -> bool:
     """轮询源声明的判据（口径见 _logged_in）直到成功（True，已报喜）或超时（False）。
 
@@ -110,10 +116,9 @@ async def _await_login(
         if window_gone is not None:
             if window_gone.is_set():
                 raise _LoginAborted
-            try:  # 睡到下个轮询点，关窗信号先到先醒（不等满 POLL_INTERVAL）
+            # 睡到下个轮询点，关窗信号先到先醒（不等满 POLL_INTERVAL）
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(window_gone.wait(), timeout=POLL_INTERVAL)
-            except TimeoutError:
-                pass
         else:
             await asyncio.sleep(POLL_INTERVAL)
     return False
@@ -129,13 +134,15 @@ async def yield_profile() -> None:
     await close_session()
 
 
-async def _present_cookies(context, source) -> list[dict]:
+async def _present_cookies(context: BrowserContext, source: Source) -> list[dict[str, Any]]:
     """读某源登录域下的全部 cookie（本地操作，不导航、不触发反爬）。"""
     domain = urlparse(source.login_url).netloc
-    return await context.cookies(f"https://{domain}")
+    # playwright 存根是 list[Cookie]（TypedDict），与 dict[str, Any] 列表不变性不合——
+    # 逐条 dict() 落回通用形
+    return [dict(c) for c in await context.cookies(f"https://{domain}")]
 
 
-async def _logged_in(context, source) -> bool:
+async def _logged_in(context: BrowserContext, source: Source) -> bool:
     """源声明的判据：login_verify 优先，否则判登 cookie 全集都在。
 
     cookie 全集口径与 login() 轮询一致（Source.judging_cookies：X 要
@@ -151,7 +158,7 @@ async def _logged_in(context, source) -> bool:
     return set(needed) <= names
 
 
-async def _clear_cookies(context, source) -> bool:
+async def _clear_cookies(context: BrowserContext, source: Source) -> bool:
     """清掉源声明的登录 cookie；返回是否确有登录态被清掉。
 
     「确有」与判登共用 _logged_in（login_verify 优先）；半套 cookie

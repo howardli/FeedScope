@@ -15,8 +15,8 @@ import re
 from typing import Any
 
 from feedscope.core.browser import ChannelTab
-from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.i18n import raw, t
+from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.source import (
     CommentLoader,
     DetailLoader,
@@ -126,7 +126,7 @@ def _headers(zse93: bool) -> dict[str, str]:
     return h
 
 
-async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False) -> dict:
+async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False) -> dict[str, Any]:
     """通道页签里 fetch JSON API -> JSON body（dict）；网络/结构失败转 SourceError。
 
     取数原语与解包约定见 ChannelTab.fetch（知乎/Reddit/X 三源共用）。referrer
@@ -161,7 +161,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
         _reauth_if_stale(exc)  # 401/403 = 登录态失效（评论首页与每页翻页同语义）
         raise
 
-    def _gap(r: dict) -> int:
+    def _gap(r: dict[str, Any]) -> int:
         if r.get("is_delete"):
             return 0
         return (r.get("child_comment_count") or 0) - len(r.get("child_comments") or [])
@@ -177,7 +177,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
     ]
     if pending:
         try:
-            filled: dict = await _tab.eval(_COMPLETE_CHILDREN_JS, pending) or {}
+            filled: dict[str, Any] = await _tab.eval(_COMPLETE_CHILDREN_JS, pending) or {}
             for r in data.get("data") or []:
                 kids = filled.get(str(r.get("id"))) or filled.get(r.get("id"))
                 if kids:
@@ -221,7 +221,7 @@ _tab = ChannelTab(
 )  # 单例/重建/在途跳转重试见 core.browser
 
 
-async def _api_json(url: str, referer: str, zse93: bool = False) -> dict:
+async def _api_json(url: str, referer: str, zse93: bool = False) -> dict[str, Any]:
     """API 一次通道页签 fetch -> JSON；401 = 会话过期转 LoginRequired。
 
     信息流 v3 端点的 403 不并入（可能是纯风控，引导重登会误导）；详情族
@@ -388,8 +388,8 @@ class ZhihuQuestionLoader(DetailLoader):
         if (
             not self._next
             or paging.get("is_end")
-            or self._total is not None
-            and len(self.doc.answers) >= self._total
+            or (self._total is not None
+            and len(self.doc.answers) >= self._total)
         ):
             self._done = True
         return new

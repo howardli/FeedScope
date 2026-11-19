@@ -13,9 +13,9 @@ from dataclasses import dataclass
 
 from feedscope.core import http
 from feedscope.core.config import Subscription
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import SourceError, merge_feeds
-from feedscope.core.i18n import t
 from feedscope.sources.rss.parse import parse_feed
 
 # RSS 专用 Accept：部分源对浏览器 UA + */* 的组合反而回 HTML 页，声明清楚要 feed

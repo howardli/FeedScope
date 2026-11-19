@@ -45,9 +45,9 @@ from typing import Any
 from feedscope.core import http
 from feedscope.core.browser import ChannelTab, drop_profile_cookies, get_session, run_page
 from feedscope.core.const import PAGE_TIMEOUT_MS
+from feedscope.core.i18n import t
 from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.source import DetailLoader, FeedLoader, LoginRequired, SourceError, dedup_append
-from feedscope.core.i18n import t
 from feedscope.sources.x.parse import (
     BASE,
     _detail_doc,
@@ -88,8 +88,8 @@ class _Op:
     """一个 GraphQL 端点的请求形状（收割或种子的最新成果）。"""
 
     qid: str
-    variables: dict
-    features: dict | None = None
+    variables: dict[str, Any]
+    features: dict[str, Any] | None = None
 
 
 # 种子（2026-11 抓包快照）：两条收割路都断时的保底，失效自愈会先走收割。
@@ -223,7 +223,7 @@ def _parse_graphql_url(url: str) -> tuple[str, _Op] | None:
         return None
     qs = urllib.parse.parse_qs(parts.query)
 
-    def _json_param(key: str) -> dict:
+    def _json_param(key: str) -> dict[str, Any]:
         try:
             data = json.loads(qs.get(key, ["{}"])[0])
             return (
@@ -347,7 +347,7 @@ async def _deep_capture_detail() -> _Op | None:
     return parsed[1]
 
 
-async def _raw(url: str, *, source: str) -> tuple[int | None, dict]:
+async def _raw(url: str, *, source: str) -> tuple[int | None, dict[str, Any]]:
     """一次页签 fetch -> (状态码或 None, body)；解包/报错/样本落盘见 ChannelTab.fetch。"""
     status, body = await _tab.fetch(
         url, source=source, headers=_GQL_HEADERS, cookie_headers=_CSRF_FROM_COOKIE
@@ -356,7 +356,7 @@ async def _raw(url: str, *, source: str) -> tuple[int | None, dict]:
     return status, (body or {})
 
 
-def _url(op_name: str, op: _Op, extra_vars: dict | None) -> str:
+def _url(op_name: str, op: _Op, extra_vars: dict[str, Any] | None) -> str:
     """operationName + 形状 + 按次变量（cursor/focalTweetId）-> 完整 GraphQL URL。"""
     variables = dict(op.variables, **(extra_vars or {}))
     params = {"variables": json.dumps(variables)}
@@ -365,7 +365,9 @@ def _url(op_name: str, op: _Op, extra_vars: dict | None) -> str:
     return f"{BASE}/i/api/graphql/{op.qid}/{op_name}?{urllib.parse.urlencode(params)}"
 
 
-async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dict:
+async def _graphql(
+    op_name: str, extra_vars: dict[str, Any] | None, *, source: str
+) -> dict[str, Any]:
     """一次 GraphQL 调用 -> body；登录/风控语义转译，形状腐烂自动重割自愈一次。"""
     op = _resolve(op_name)
     if op is None:
@@ -398,7 +400,7 @@ async def _graphql(op_name: str, extra_vars: dict | None, *, source: str) -> dic
     raise SourceError(t("errors.x_shape_stale", source=source))
 
 
-async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict], str | None]:
+async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict[str, Any]], str | None]:
     """时间线一次 GraphQL 调用 -> (entries, 下一页 cursor)；feed 见 _TIMELINE_OPS。"""
     op_name = _TIMELINE_OPS[feed]
     data = await _graphql(
@@ -407,7 +409,9 @@ async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict], str 
     return _entries_and_cursor(data)
 
 
-async def fetch_conversation(rest_id: str, cursor: str | None) -> tuple[list[dict], str | None]:
+async def fetch_conversation(
+    rest_id: str, cursor: str | None
+) -> tuple[list[dict[str, Any]], str | None]:
     """推文会话一次 GraphQL 调用 -> (entries, 回复翻页 cursor)。"""
     extra = {"focalTweetId": rest_id}
     if cursor:
@@ -451,7 +455,7 @@ class XTweetDetailLoader(DetailLoader):
     直接判 done，否则 n 会无休空转。不持有页签（通道进程级共享）。
     """
 
-    def __init__(self, rest_id: str, entries: list[dict], cursor: str | None) -> None:
+    def __init__(self, rest_id: str, entries: list[dict[str, Any]], cursor: str | None) -> None:
         self._rest_id = rest_id
         self._cursor = cursor
         self._seen: set[str] = set()  # 已输出的推文 id（焦点 + 父推 + 回复，跨页去重）
@@ -466,7 +470,7 @@ class XTweetDetailLoader(DetailLoader):
         if not self._answers(replies):
             self._cursor = None  # 首批即无回复：会话确无回复，无谓的游标不再翻
 
-    def _answers(self, results: list[dict]) -> list[Answer]:
+    def _answers(self, results: list[dict[str, Any]]) -> list[Answer]:
         """推文 result 列表 -> Answer 批次（残卡丢弃），写入 doc。
 
         去重登记（rest_id -> self._seen）在 parse._ordered_results 里随

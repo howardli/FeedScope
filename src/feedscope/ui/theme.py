@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from textual.theme import Theme
 
@@ -67,7 +68,7 @@ def available() -> list[Theme]:
     return list(_cache)
 
 
-def _build(data: dict) -> Theme:
+def _build(data: dict[str, Any]) -> Theme:
     return Theme(
         name=str(data["name"]),
         dark=bool(data["dark"]),
@@ -93,6 +94,8 @@ def resolve(name: str | None) -> str:
     return DEFAULT
 
 
-def register_all(app) -> None:  # noqa: ANN001 - Textual App（避免运行时导入成环）
+def register_all(app: Any) -> None:
+    # Any 而非 App：这里只当 duck 收 theme 注册，TYPE_CHECKING 导入 App
+    # 也行，但运行时导入成环的风险不值得为一个方法签名去背
     for theme in available():
         app.register_theme(theme)

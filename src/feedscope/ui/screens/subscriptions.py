@@ -22,12 +22,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, ListItem, ListView, Static
 
 from feedscope.core.config import Subscription  # 仅类型注解用（列表行的 key/label/url 三段）
-from feedscope.subscriptions import SubscriptionError, SubsStore
 from feedscope.core.i18n import t
+from feedscope.subscriptions import SubscriptionError, SubsStore
 from feedscope.ui import Bindings, feedback
-from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
+from feedscope.ui.labels import retranslate_bindings
 
 
 class SubscriptionsScreen(ArrowModalScreen[bool]):

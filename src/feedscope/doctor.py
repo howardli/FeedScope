@@ -7,8 +7,8 @@ import sys
 from feedscope import __version__
 from feedscope.core.browser import PROFILE_DIR
 from feedscope.core.const import find_chrome
-from feedscope.report import line
 from feedscope.core.i18n import t
+from feedscope.report import line
 
 
 def _check(label: str, ok: bool, detail: str = "") -> bool:

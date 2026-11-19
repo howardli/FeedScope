@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from conftest import last_notification, settle
+from test_tui_smoke import StubSource
 from textual.widgets import Label, ListView
 
 from feedscope.core import feed_cache
@@ -19,9 +21,6 @@ from feedscope.ui.app import FeedScopeApp
 from feedscope.ui.list_render import MARK_UNREAD
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.main import MainScreen
-
-from conftest import last_notification, settle
-from test_tui_smoke import StubSource
 
 
 @pytest.fixture()

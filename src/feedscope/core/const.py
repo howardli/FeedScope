@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import html2text
 
@@ -50,7 +51,7 @@ def new_h2t() -> html2text.HTML2Text:
     return h2t
 
 
-def chrome_launch_kwargs() -> dict:
+def chrome_launch_kwargs() -> dict[str, Any]:
     """Chrome persistent context 公共启动参数（channel 固定本机 Chrome，无开关）。
 
     browser.py（TUI 内无头）与 login.py（手动登录有头）共用；headless 由调用方给。

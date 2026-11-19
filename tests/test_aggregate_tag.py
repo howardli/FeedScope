@@ -11,13 +11,12 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import settle
+from test_rss_parse import RSS_XML
 from textual.widgets import Label, ListView
 
 from feedscope.core import http
 from feedscope.ui.app import FeedScopeApp
-
-from conftest import settle
-from test_rss_parse import RSS_XML
 
 _FEEDS = """
 [rss.feeds]

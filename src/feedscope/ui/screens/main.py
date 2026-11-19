@@ -25,11 +25,13 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, ListView, Static
 
 from feedscope.core import config, feed_cache
+from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
-from feedscope.core.i18n import t
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.dialogs import ConfirmScreen
+from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_SPARE,
     RESIZE_DEBOUNCE,
@@ -37,12 +39,10 @@ from feedscope.ui.layout import (
     score_col_width,
     tag_col_width,
 )
-from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
-from feedscope.ui.dialogs import ConfirmScreen
 from feedscope.ui.screens.main_setup import MainSetupScreen
 
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏

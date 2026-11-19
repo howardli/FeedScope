@@ -88,7 +88,7 @@ async def _drive(app_mod: object, emit: Callable[[object, str], None]) -> None:
 
 def main() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ 不是包，按路径借道
-    import screenshot as shots  # noqa: PLC0415  复用 stub 源与栅格化管线，不复制粘贴
+    import screenshot as shots  # 函数内导入：复用 stub 源与栅格化管线，不复制粘贴
 
     from feedscope.core.registry import install_sources, source_classes
     from feedscope.ui import app as app_mod
