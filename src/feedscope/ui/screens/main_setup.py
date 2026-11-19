@@ -2,14 +2,16 @@
 
 从 main.py 拆出的 MainSetupScreen——「配置生效流程」（引导落盘 / 勾选
 重建 / 订阅空源指引）不是主屏的渲染与导航职责，与 source_setup.py 的
-弹层天然配对（行文案 source_entry_text 就住在那边）。MainScreen 继承本
-基类拿到这组流程；编排依赖的协作者（源列表状态与两侧导航的重建、刷新）
+弹层天然配对（行文案 source_entry_text 就住在那边）。继承链四层
+（Setup → Nav → Read → MainScreen）都以本类为根：_tui 收窄属性也在这层，
+任何一族都能用。编排依赖的协作者（源列表状态与两侧导航的重建、刷新）
 以抽象方法显式声明，静态检查从此不需要「mixin 靠子类兜」的约定。
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import TYPE_CHECKING, cast
 
 from textual.screen import Screen
 
@@ -24,6 +26,9 @@ from feedscope.ui.screens.source_setup import (
     OnboardingScreen,
     source_entry_text,
 )
+
+if TYPE_CHECKING:
+    from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
 
 
 class MainSetupScreen(Screen[None]):
@@ -40,6 +45,16 @@ class MainSetupScreen(Screen[None]):
     feed_idx: int
     _feed_memory: dict[str, int]
     _subs_dirty: bool
+
+    @property
+    def _tui(self) -> FeedScopeApp:
+        """self.app 的收窄视图：本应用的 App 恒为 FeedScopeApp。
+
+        账号动线（accounts）等自定义成员经它获得静态类型；不直接覆写
+        Screen.app（MessagePump.app 是可写 property，覆写签名过不了检）。
+        """
+        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
+        return cast("FeedScopeApp", self.app)
 
     @abstractmethod
     async def _render_source_tabs(self) -> None:

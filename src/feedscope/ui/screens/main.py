@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 import webbrowser
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -30,7 +30,6 @@ from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
-from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_SPARE,
@@ -39,11 +38,11 @@ from feedscope.ui.layout import (
     tag_col_width,
     time_col_width,
 )
-from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
+from feedscope.ui.list_render import LIST_ROW_CSS, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
-from feedscope.ui.screens.main_nav import MainNavScreen
+from feedscope.ui.screens.main_read import MainReadScreen
 from feedscope.ui.widgets import (
     FeedListView,
     FeedNavItem,
@@ -57,26 +56,16 @@ _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
+    pass  # 运行时导入会与 app.py 成环
 
 
-class MainScreen(MainNavScreen):
+class MainScreen(MainReadScreen):
     """站点 tab 条 + 信息流边栏 + 条目列表；取数上屏与边栏渲染。
 
-    继承链：MainSetupScreen（源启用编排）→ MainNavScreen（导航）→
-    MainReadScreen（行集与已读/过滤）→ 本类。本类只留渲染、取数与
-    Enter/账号/收藏等转发动作。
+    继承链：MainSetupScreen（源启用编排，_tui 收窄属性也在这层）→
+    MainNavScreen（导航）→ MainReadScreen（行集与已读/过滤）→ 本类。
+    本类只留渲染、取数与 Enter/账号/收藏等转发动作。
     """
-
-    @property
-    def _tui(self) -> FeedScopeApp:
-        """self.app 的收窄视图：本应用的 App 恒为 FeedScopeApp。
-
-        账号动线（accounts）等自定义成员经它获得静态类型；不直接覆写
-        Screen.app（MessagePump.app 是可写 property，覆写签名过不了检）。
-        """
-        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
-        return cast("FeedScopeApp", self.app)
 
     # 导航键位（方向键六件）声明在 MainNavScreen、已读/过滤键位在
     # MainReadScreen——Textual 沿 MRO 合并，帮助页沿 MRO 收集，不因分层丢失。
@@ -90,17 +79,6 @@ class MainScreen(MainNavScreen):
         Binding("f2", "manage_sources", "bindings.manage_sources", show=False),
         Binding("ctrl+u", "account", "bindings.account", show=False),
         Binding("ctrl+n", "more", "bindings.more", show=False),
-        Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
-        Binding("f4", "unread_only", "bindings.unread_only", show=False),
-        # / 标题过滤（newsboat 惯例）：弹输入层，Enter 设词/空清除、Esc 不变；
-        # [/] 环扫跳未读——与回答屏楼层步进（] 下一楼）同键同语义
-        Binding("/", "title_filter", "bindings.title_filter", show=False),
-        Binding("]", "next_unread", "bindings.next_unread", show=False),
-        Binding("[", "prev_unread", "bindings.prev_unread", show=False),
-        # 全部已读用 Ctrl+A 而不是 Ctrl+Shift+R：终端没启用键盘增强协议时
-        # Shift 不可区分（发的是同一个字节）——真终端按 Ctrl+Shift+R 会落成
-        # Ctrl+R 单条切换，Pilot 直注事件测不出来；Ctrl+A 各终端都可靠送达
-        Binding("ctrl+a", "mark_all_read", "bindings.mark_all_read", show=False),
         Binding("ctrl+f", "favorite", "bindings.favorite", show=False),
         Binding("f3", "favorites", "bindings.favorites", show=False),
         # Ctrl+Y 复制当前条目链接（vim 的 yank 惯例），提示在 F1/README
@@ -160,11 +138,7 @@ class MainScreen(MainNavScreen):
         # 的「N 新」计数。行首圆点不看它——未读是持久态，直到打开才消失
         # （传统阅读器语义；「新」是瞬态信息，归状态行）
         self._new_count = 0
-        # F4 只看未读：会话级开关不落盘（重启回全量）；只影响渲染层，
-        # self.items 始终是全量（loader 契约 / Ctrl+N / 收藏快照都不受影响）
-        self._unread_only = False
-        # / 标题过滤（会话级，同 F4 只动渲染层）：None = 未过滤；小写子串匹配
-        self._title_filter: str | None = None
+        # 过滤态（_unread_only/_title_filter）在 MainReadScreen.__init__ 初始化
         # 边栏刷新的合并式调度状态（见 _refresh_sidebar）：在途 + 期间有人再要
         self._sidebar_busy = False
         self._sidebar_dirty = False
@@ -390,24 +364,7 @@ class MainScreen(MainNavScreen):
             self.show_empty(t("main.empty_no_content"))
         self.app.sub_title = sub if sub is not None else self._count_sub()
 
-    def _empty_hint(self) -> str:
-        """过滤态空表的专属指路（F4 与 / 并存时给更具体的标题过滤那条）。"""
-        if self._title_filter:
-            return t("main.empty_filter", q=self._title_filter)
-        if self._unread_only:
-            return t("main.empty_unread_only")
-        return t("main.empty_no_content")
-
-    def _shown(self) -> list[FeedItem]:
-        """当前渲染的行集：全量 / 未读子集（F4）/ 标题过滤（/）的 AND 组合。
-        行↔条目的唯一映射走这里——rebuild/同步/计数全部跟随，无一旁路。"""
-        shown = self.items
-        if self._unread_only:
-            shown = [it for it in shown if not self._tui.state.is_read(it.source, it.id)]
-        if self._title_filter:
-            q = self._title_filter
-            shown = [it for it in shown if q in it.title.lower()]
-        return shown
+    # 行集 _shown 与过滤空态 _empty_hint 在 MainReadScreen（行集族）
 
     def _count_sub(self) -> str:
         """状态行计数文案：本批有「新」带新计数（刷新与 Ctrl+N 共用）。"""
@@ -543,150 +500,6 @@ class MainScreen(MainNavScreen):
             view.index = None
             self.show_empty(self._empty_hint())
         self.app.sub_title = self._count_sub()
-
-    # ---- 已读/未读（状态在 core/store.py，行首圆点见 ui/list_render.py）----
-
-    def _row_mark(self, it: FeedItem) -> str:
-        """行首圆点二态：未读 ●（编辑器蓝）、已读空。
-
-        未读是持久态——刷新/重启/缓存先画共用同一条规则，圆点只随「打开」
-        消失（传统阅读器语义）；「本批新了几条」不进行标记，归状态行计数。
-        """
-        return "" if self._tui.state.is_read(it.source, it.id) else MARK_UNREAD
-
-    def _mark_read(self, item: FeedItem) -> None:
-        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）。"""
-        self._tui.state.mark_read(item.source, item.id)
-        self._sync_after_read(item)
-
-    def _sync_after_read(self, item: FeedItem | None = None) -> None:
-        """已读变化后的行与边栏同步（收藏屏代读也走这里）。
-
-        过滤态整表重画——读过的行直接消失（newsboat 同款语义）并保选中位；
-        全量态就地点一行圆标；边栏角标两种态都要刷新。
-        """
-        self._refresh_sidebar()
-        if self._unread_only:
-            self.run_worker(self.rebuild_items(), exclusive=True)
-        elif item is not None:
-            self._update_row_mark(item)
-
-    def _update_row_mark(self, item: FeedItem) -> None:
-        """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。
-
-        按 (source, id) 在 _shown 里定位而不是对象相等：收藏屏回写主屏时
-        传的是快照副本，等值比对会失配；行身份本来就是键。
-        """
-        idx = next(
-            (
-                i
-                for i, it in enumerate(self._shown())
-                if it.source == item.source and it.id == item.id
-            ),
-            None,
-        )
-        if idx is None:
-            return
-        view = self.query_one("#feed", ListView)
-        if idx >= len(view.children):
-            return  # 行还没画上（在途）：下批渲染自然对
-        row = view.children[idx]
-        mark = self._row_mark(item)
-        row.query_one(".item-mark", Label).update(mark)
-        row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
-
-    # ---- 只看未读（F4）与全部已读（Ctrl+A）----
-
-    def action_unread_only(self) -> None:
-        """F4：只看未读开关（会话级，重启回全量；不影响 loader/Ctrl+N 的全量数据）。"""
-        self._unread_only = not self._unread_only
-        feedback.info(
-            self, t("main.toast_unread_on" if self._unread_only else "main.toast_unread_off")
-        )
-        self.run_worker(self.rebuild_items(), exclusive=True)
-
-    def action_title_filter(self) -> None:
-        """/：标题过滤（newsboat 惯例，会话级）。弹输入层：Enter 设词（大小写
-        不敏感子串）/ 空提交 = 清除 / Esc = 不变。走 worker：wait_for_dismiss
-        只能在 worker 里用（同 _mark_all_flow 的既有形态）。"""
-        self.app.run_worker(self._title_filter_flow(), group="titlefilter")
-
-    async def _title_filter_flow(self) -> None:
-        q = await self.app.push_screen(
-            # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
-            InputScreen(
-                t("main.filter_prompt"), initial=self._title_filter or "", allow_empty=True
-            ),
-            wait_for_dismiss=True,
-        )
-        if q is None:
-            return  # Esc/取消：不动现有过滤（取消输入 ≠ 清除过滤）
-        new = q.lower() or None
-        if new == self._title_filter:
-            return  # 词没变：不重画不弹 toast
-        self._title_filter = new
-        feedback.info(
-            self, t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear")
-        )
-        await self.rebuild_items()
-
-    def action_next_unread(self) -> None:
-        """]：环扫跳到下一条未读（详情屏换楼层同键）。"""
-        self._jump_unread(+1)
-
-    def action_prev_unread(self) -> None:
-        """[：环扫跳到上一条未读。"""
-        self._jump_unread(-1)
-
-    def _jump_unread(self, delta: int) -> None:
-        """沿 delta 方向环扫一圈找首条未读：命中即选中（列表自动滚到行），
-        一圈无未读 toast 收尾。F4 过滤态天然兼容（行集本就是未读）。"""
-        shown = self._shown()
-        if not shown:
-            return
-        view = self.query_one("#feed", ListView)
-        cur = view.index or 0
-        for step in range(1, len(shown) + 1):
-            i = (cur + delta * step) % len(shown)
-            it = shown[i]
-            if not self._tui.state.is_read(it.source, it.id):
-                view.index = i
-                return
-        feedback.info(self, t("main.no_unread"))
-
-    def action_mark_all_read(self) -> None:
-        """Ctrl+Shift+R：当前流全部标已读。过滤态下标的是**全部**（确认文案即全量数）。"""
-        if not self.items:
-            feedback.info(self, t("main.toast_no_selection"))
-            return
-        self.app.run_worker(self._mark_all_flow(), group="markall")
-
-    async def _mark_all_flow(self) -> None:
-        """清仓流：轻确认 → 批量置已读 + 角标清零 → 行圆点全清/过滤态清空。"""
-        ok = await self.app.push_screen(
-            ConfirmScreen(t("main.confirm_mark_all", n=len(self.items))), wait_for_dismiss=True
-        )
-        if not ok:
-            return
-        n = len(self.items)
-        self._tui.state.mark_all_read(self.items, self.current_feed)
-        feedback.info(self, t("main.toast_marked_all", n=n))
-        await self.rebuild_items()
-        self._refresh_sidebar()
-
-    def action_toggle_read(self) -> None:
-        """Ctrl+R：当前条目手动切换已读/未读（想重看的标回未读）。
-
-        统一走 _sync_after_read：过滤态下切成已读 = 行从视图消失 + 角标递减
-        （单行点圆点在过滤态会失配——_shown 已不含刚读的条目）。
-        """
-        item = self.current_item()
-        if item is None:
-            feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按键不无声
-            return
-        read = self._tui.state.toggle_read(item.source, item.id)
-        feedback.info(self, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
-        self._sync_after_read(item)
 
     # ---- 收藏：Ctrl+F 标记 / F3 列表（屏在 ui/screens/favorites.py）----
 
