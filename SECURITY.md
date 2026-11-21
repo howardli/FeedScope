@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest release line (currently `0.1.x`) receives security fixes.
+Only the latest release line receives security fixes.
 
 ## What FeedScope stores on your machine
 

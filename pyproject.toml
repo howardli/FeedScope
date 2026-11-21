@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Terminals",
 ]
 dependencies = [
-    "textual>=1.0",
+    "textual>=8.0",  # theme.py 依赖 Textual 8 的 Theme 数据类语义，1.x-7.x 装出即启动失败
     "rich>=13",
     "playwright>=1.45",
     "platformdirs>=4.0",
@@ -40,7 +40,7 @@ Changelog = "https://github.com/howardli/FeedScope/blob/main/CHANGELOG.md"
 feedscope = "feedscope.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # PEP 639 SPDX license 表达式需要
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

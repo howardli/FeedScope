@@ -37,7 +37,7 @@ src/feedscope/
                browser channel — the foundation everything else builds on
   sources/     one package per site: zhihu / x / reddit / hn / v2ex / rss / telegram
   ui/          Textual screens and widgets
-  cli.py       argparse entry point (tui / login / probe / doctor / rss)
+  cli.py       argparse entry point (tui / login / probe / doctor / cache / rss / favorites)
 tests/         offline suite: fixture-driven parsers, TUI smoke via Textual Pilot,
                plus architecture / i18n / registry guard tests
 scripts/       screenshot.py (README images), demo_gif.py, x_probe.py

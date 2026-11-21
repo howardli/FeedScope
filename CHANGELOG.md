@@ -83,6 +83,8 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.4.0]: https://github.com/howardli/FeedScope/releases/tag/v0.4.0
+[0.3.1]: https://github.com/howardli/FeedScope/releases/tag/v0.3.1
 [0.3.0]: https://github.com/howardli/FeedScope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/howardli/FeedScope/releases/tag/v0.2.0
 [0.1.0]: https://github.com/howardli/FeedScope/releases/tag/v0.1.0

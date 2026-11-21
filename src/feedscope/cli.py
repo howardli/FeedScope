@@ -1,4 +1,5 @@
-"""命令行入口：`feedscope` 启动 TUI；子命令 login / probe / doctor / rss / favorites。"""
+"""命令行入口：`feedscope` 启动 TUI；子命令 tui / login / probe / doctor /
+cache / rss / favorites（注册见 build_parser）。"""
 
 from __future__ import annotations
 
