@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Twelve latent bugs from a full-project audit, each with a reproducing regression test: X detail paging could mount duplicate floors when the API re-delivered first-batch replies (their ids were never registered for dedup); X queryId self-heal was blind to mid-session rotations (harvest only fills gaps — the stale entry is now dropped before re-harvesting); X timeline dropped visibility-wrapped tweets (`TweetWithVisibilityResults`) as broken cards instead of unwrapping them like the detail path; the title filter broke row↔item alignment on `Ctrl+N` (unfiltered rows were appended raw while selection addressed the filtered set); `Ctrl+A` on a mixed list over-decremented the aggregate feed's unread badge for already-read items; a title filter containing `[` could crash or silently restyle toasts / empty hints / the status line (user input is now markup-escaped); a corrupt-but-salvageable `sources.toml` was silently rewritten down to a single managed key by any save (saves now refuse to write and point at `doctor`); a subscription label containing `{` crashed the sidebar (`t()` no longer format-strings passthrough user data); a concurrent `feedscope cache clear` could crash an in-flight refresh (LRU stat failures are tolerated); two concurrent fetches through a rebuilding channel tab leaked an orphan browser page (double-check inside the session lock); a subscription-manager exit via the shared cancel path hit a `NotImplementedError` landmine; a filter-toggle rebuild cancelled an in-flight refresh, leaving the status line stuck on "loading"
+- Zhihu login-state detection no longer string-matches localized error messages: `SourceError` carries a structured HTTP `status` and the 401/403/404 translations key off it — a wording change in either catalog can no longer silently break re-login guidance
+- `update_feeds` aborts atomically on a top-level scalar key conflict (previously it still ran the enabled-linkage and wrote, leaving "enabled lists the source but its feeds table was never written")
+- `test_probe` no longer probes real sources when run in isolation (missing registration import let `probe.py`'s module-level import repopulate the cleared stub registry)
+
+### Changed
+
+- Dependency floors tightened to the tested baseline: `textual>=8.0` (the theme layer rides Textual 8's dataclass `Theme` semantics; `>=1.0` could resolve to versions that fail at startup), `hatchling>=1.27` (PEP 639 SPDX expressions)
+- Internal convergence with zero behavior change (554 tests green throughout): HN/Reddit "N pts · N comments" meta assembly lives once in `core.display`; the coalesced busy/dirty scheduling, `/` filter dialog flow, row-dot update, and login-wall prompting each have a single implementation shared by the main and favorites screens; `F1` help, `Ctrl+N`/`Ctrl+O` bindings and the `_tui` cast are hoisted to their family bases — the favorites help page now lists `Enter`
+- Docs drift cleaned: SECURITY.md no longer hardcodes a version line, CHANGELOG release links for 0.4.0/0.3.1 defined, the "every binding is non-printing" README claim now names the five ASCII keys, `cli.py` docstring and CONTRIBUTING list all seven subcommands, `.gitignore` covers `.mypy_cache/`
+
 ## [0.4.0] - 2026-11-20
 
 ### Added
