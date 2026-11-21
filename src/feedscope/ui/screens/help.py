@@ -19,11 +19,13 @@ from typing import Any, ClassVar
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.screen import Screen
 from textual.widgets import Label
 
 from feedscope.core.i18n import has, t
 from feedscope.ui import Bindings
 from feedscope.ui.focus_nav import ArrowModalScreen
+from feedscope.ui.labels import retranslate_bindings
 
 # 分组排布（组序即展示序）+ 动作名归类。归类挂动作不挂键：换篇/换楼层与
 # 边栏导航键不同但同属「导航」，键改绑（如收藏换键）分组不漂移
@@ -57,6 +59,16 @@ def global_rows() -> list[tuple[str, str]]:
         ("ctrl+q", t("bindings.quit")),
         ("ctrl+c ×2", t("help.ctrl_c_fallback")),
     ]
+
+
+def push_help(holder: Screen[Any], *extra: Any, skip: set[str] | None = None) -> None:
+    """F1 的共享入口（主屏 / 阅读屏 / 收藏屏同一条路）：全局键区 + holder
+    （与 extra 控件，如主列表——tab 键声明在控件上）的声明键区，按任务
+    分组进帮助屏。f1 恒不进自己的帮助页；调用方再要藏键往 skip 加。"""
+    rows = screen_rows(holder, *extra, skip=(skip or set()) | {"f1"})
+    holder.app.push_screen(
+        HelpScreen([(t("help.global_section"), global_rows()), *group_rows(rows)])
+    )
 
 
 def screen_rows(  # holder/extra：屏或控件，只要有 _bindings
@@ -162,8 +174,6 @@ class HelpScreen(ArrowModalScreen[None]):
             yield Label(t("help.close_hint"), id="help-hint")
 
     def on_mount(self) -> None:
-        from feedscope.ui.labels import retranslate_bindings
-
         retranslate_bindings(self)  # 本屏自己的 f1/enter 键式文案解析
         self.query_one("#help-scroll", VerticalScroll).focus()
 

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from textual.screen import Screen
 
@@ -19,7 +19,7 @@ from feedscope.core import config, i18n
 from feedscope.core.i18n import t
 from feedscope.core.registry import all_sources, get_class
 from feedscope.core.source import Source
-from feedscope.ui import feedback
+from feedscope.ui import feedback, tui_of
 from feedscope.ui.screens.language import LanguageScreen
 from feedscope.ui.screens.source_setup import (
     ManageSourcesScreen,
@@ -48,13 +48,8 @@ class MainSetupScreen(Screen[None]):
 
     @property
     def _tui(self) -> FeedScopeApp:
-        """self.app 的收窄视图：本应用的 App 恒为 FeedScopeApp。
-
-        账号动线（accounts）等自定义成员经它获得静态类型；不直接覆写
-        Screen.app（MessagePump.app 是可写 property，覆写签名过不了检）。
-        """
-        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
-        return cast("FeedScopeApp", self.app)
+        """self.app 的收窄视图（cast 与说明收口在 ui.tui_of，全 app 唯一出处）。"""
+        return tui_of(self)
 
     @abstractmethod
     async def _render_source_tabs(self) -> None:

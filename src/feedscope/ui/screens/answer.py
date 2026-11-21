@@ -47,9 +47,9 @@ class AnswerScreen(PagedReadingScreen):
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
         # 原生键，无需声明。标签是占位（空串）：__init__ 按源词汇表换成
         # 「更多{评论词}/下一{楼层词}」（知乎渲染与本列表逐字相同）；
-        # Esc 返回继承自 ReadingScreen。页脚只留 Esc + F1（其余提示退入 F1）
-        Binding("ctrl+n", "more", "", show=False),
-        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        # Esc 返回继承自 ReadingScreen、ctrl+n/ctrl+o 继承自 PagedReadingScreen
+        # （ctrl+n 的描述由 _relabel_bindings 换成楼层词）。页脚只留
+        # Esc + F1（其余提示退入 F1）
         Binding("right", "next_answer", "", show=False),
         Binding("left", "prev_answer", "", show=False),
     ]
@@ -105,6 +105,11 @@ class AnswerScreen(PagedReadingScreen):
 
     async def _mount_body(self) -> None:
         self._body_scroll().focus()
+        await self._start_comments()
+
+    async def _start_comments(self) -> None:
+        """「渲染回答 + 记宽 + 评论 worker」三连：首挂与换楼层同一条路
+        （单次 mount = 单次布局；评论请求晚一拍，占位见 _render_doc）。"""
         await self._render_doc()
         self._render_done()
         self.run_worker(self._load_comments(), group="comments", exclusive=True)
@@ -295,9 +300,7 @@ class AnswerScreen(PagedReadingScreen):
     async def _adopt_target(self, index: int) -> None:
         self.index = index
         self._comments_error = None
-        await self._render_doc()
-        self._render_done()
-        self.run_worker(self._load_comments(), group="comments", exclusive=True)
+        await self._start_comments()  # 渲染三连同首挂（见 _mount_body）
 
     def _browser_url(self) -> str:
         return self._answer.url or self.item.url

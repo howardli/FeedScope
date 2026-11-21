@@ -45,6 +45,16 @@ class AccountFlow:
         """
         self.stale.add(source.source_id)
 
+    async def maybe_prompt(self, source: Source, hint: str) -> bool:
+        """撞墙动线的共享入口（列表屏 / 详情屏同一套）：记会话失效（Ctrl+U
+        此后直给登录框），未拒绝过才弹登录框。返回是否弹了——拒绝过的调用
+        方自行挂常驻提示，不再被追问打断。"""
+        self.mark_stale(source)
+        if source.source_id in self.refused:
+            return False
+        await self.on_login_wall(source, hint)
+        return True
+
     async def on_login_wall(self, source: Source, hint: str) -> None:
         """取数撞登录墙：弹登录框（等用户选「登录」才开浏览器，不擅自弹窗）。
 

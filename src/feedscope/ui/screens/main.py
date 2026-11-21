@@ -22,7 +22,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.widget import Widget
-from textual.widgets import Footer, Header, Label, ListView, Static
+from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from feedscope.core import config, feed_cache
 from feedscope.core.i18n import t
@@ -30,6 +30,7 @@ from feedscope.core.models import FeedItem
 from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.coalesce import CoalescedScheduler
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_SPARE,
@@ -41,8 +42,9 @@ from feedscope.ui.layout import (
 from feedscope.ui.list_render import LIST_ROW_CSS, build_item
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
-from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
+from feedscope.ui.screens.help import push_help
 from feedscope.ui.screens.main_read import MainReadScreen
+from feedscope.ui.screens.theme import ThemeScreen
 from feedscope.ui.widgets import (
     FeedListView,
     FeedNavItem,
@@ -136,9 +138,10 @@ class MainScreen(MainReadScreen):
         # （传统阅读器语义；「新」是瞬态信息，归状态行）
         self._new_count = 0
         # 过滤态（_unread_only/_title_filter）在 MainReadScreen.__init__ 初始化
-        # 边栏刷新的合并式调度状态（见 _refresh_sidebar）：在途 + 期间有人再要
-        self._sidebar_busy = False
-        self._sidebar_dirty = False
+        # 边栏刷新的合并式调度器（见 _refresh_sidebar；alive 守卫 = 收尾期不排程）
+        self._sidebar_sched = CoalescedScheduler(
+            self, self._render_feed_sidebar, group="sidebar", alive=lambda: self.is_running
+        )
         # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
         self._score_width = 1 + META_COL_SPARE
         self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
@@ -203,28 +206,8 @@ class MainScreen(MainReadScreen):
     def _refresh_sidebar(self) -> None:
         """边栏角标随未读数变化重建（抓取后/读到一条/清仓后调用；几项重建无压力）。
 
-        合并式调度：在途时只标脏不并跑——remove_children 的删除异步落地，
-        两个重建交错挂载会撞 DuplicateIds（真机快操作可复现）；跑完那份见
-        脏标志自动再来一轮，最新计数最终生效。exclusive 取消也能防并发，
-        但被取代的协程从未启动会留 never-awaited 警告。收尾期不排程同理。
-        """
-        if not self.is_running:
-            return
-        if self._sidebar_busy:
-            self._sidebar_dirty = True
-            return
-        self._sidebar_busy = True
-        self.run_worker(self._sidebar_cycle(), group="sidebar")
-
-    async def _sidebar_cycle(self) -> None:
-        try:
-            while True:
-                await self._render_feed_sidebar()
-                if not self._sidebar_dirty:
-                    return
-                self._sidebar_dirty = False  # 在途期间又有人要刷新：再来一轮
-        finally:
-            self._sidebar_busy = False
+        合并式调度收口在 ui.coalesce（busy/dirty + 重跑循环的机理说明在彼）。"""
+        self._sidebar_sched.trigger()
 
     async def on_source_tab_pressed(self, event: SourceTabPressed) -> None:
         await self._goto_source(event.idx)
@@ -285,17 +268,12 @@ class MainScreen(MainReadScreen):
             if not self.items:
                 self.app.sub_title = t("main.status_signed_out")
             hint = t("main.hint_login", error=exc)
-            self._tui.accounts.mark_stale(source)  # Ctrl+U 此后直接给登录框（判登正被骗着）
-            if source.source_id in self._tui.accounts.refused:
-                # 用户已拒绝过：不再自动弹框追问，常驻提示保留登录入口
-                if not self.items:
-                    self.show_empty(hint)
-                return
             if not self.items:
-                self.show_empty(str(exc))
-            # 撞墙即给入口：弹登录框与后续动线在 AccountFlow（_refresh 本就
-            # 在 worker 里，其 wait_for_dismiss 合法）
-            await self._tui.accounts.on_login_wall(source, hint)
+                self.show_empty(str(exc))  # 先按原始消息占位（弹框期间屏不空）
+            # 撞墙即给入口：记失效 + 未拒绝过才弹框（动线收口在 AccountFlow；
+            # 拒绝过的留常驻提示——hint 带登录入口，不再被追问打断）
+            if not await self._tui.accounts.maybe_prompt(source, hint) and not self.items:
+                self.show_empty(hint)
             return
         except Exception as exc:
             # 缓存行保留（有内容时不清屏不亮空态）：断网/改版时旧内容仍可翻
@@ -336,22 +314,7 @@ class MainScreen(MainReadScreen):
         self._tag_width = tag_col_width(self.items)  # 聚合流的源名列（单源流 0）
         self._time_width = time_col_width(self.items)  # 相对时间列（无时间批 0）
         shown = self._shown()
-        width = self._wrap_width()
-        await view.extend(
-            [
-                build_item(
-                    it,
-                    width,
-                    self._score_width,
-                    source,
-                    self._row_mark(it),
-                    tag=it.tag,
-                    tag_width=self._tag_width,
-                    time_width=self._time_width,
-                )
-                for it in shown
-            ]
-        )  # 单次挂载 = 单次布局
+        await view.extend(self._build_rows(shown, source))  # 单次挂载 = 单次布局
         if shown:
             view.index = 0  # 自动选中第一条，Enter 可直接进详情
             self._hide_empty()
@@ -438,26 +401,29 @@ class MainScreen(MainReadScreen):
             self._time_width = new_time
             await self.rebuild_items()
         else:
-            width = self._wrap_width()
-            await view.extend(
-                [
-                    build_item(
-                        it,
-                        width,
-                        self._score_width,
-                        self.current_source,
-                        self._row_mark(it),
-                        tag=it.tag,
-                        tag_width=self._tag_width,
-                        time_width=self._time_width,
-                    )
-                    for it in new
-                ]
-            )  # 单次挂载 = 单次布局
+            await view.extend(self._build_rows(new, self.current_source))  # 单次挂载 = 单次布局
         self._hide_empty()
         self.app.sub_title = self._count_sub()
 
     # ---- 列表项构建与折行 ----
+
+    def _build_rows(self, items: list[FeedItem], source: Source) -> list[ListItem]:
+        """条目批 -> 行部件批：列宽三件套（元信息/源名/时间）与折行宽取当前态，
+        首画 / 增量追加 / 过滤重建三条路同一副参数列（漂移即行与列错位）。"""
+        width = self._wrap_width()
+        return [
+            build_item(
+                it,
+                width,
+                self._score_width,
+                source,
+                self._row_mark(it),
+                tag=it.tag,
+                tag_width=self._tag_width,
+                time_width=self._time_width,
+            )
+            for it in items
+        ]
 
     def _wrap_width(self) -> int:
         """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
@@ -475,24 +441,8 @@ class MainScreen(MainReadScreen):
         view = self.query_one("#feed", ListView)
         idx = view.index
         view.clear()
-        width = self._wrap_width()
-        src = self.current_source
         shown = self._shown()
-        await view.extend(
-            [
-                build_item(
-                    it,
-                    width,
-                    self._score_width,
-                    src,
-                    self._row_mark(it),
-                    tag=it.tag,
-                    tag_width=self._tag_width,
-                    time_width=self._time_width,
-                )
-                for it in shown
-            ]
-        )
+        await view.extend(self._build_rows(shown, self.current_source))
         if shown:
             view.index = 0 if idx is None else min(idx, len(shown) - 1)
             self._hide_empty()
@@ -525,8 +475,6 @@ class MainScreen(MainReadScreen):
         self.app.run_worker(self._theme_flow(), group="theme")
 
     async def _theme_flow(self) -> None:
-        from feedscope.ui.screens.theme import ThemeScreen
-
         name = await self.app.push_screen(
             ThemeScreen(highlight=self.app.theme), wait_for_dismiss=True
         )
@@ -546,16 +494,9 @@ class MainScreen(MainReadScreen):
         feedback.info(self, t("main.toast_copied"))
 
     def action_help(self) -> None:
-        """F1：键位帮助（页脚装不下的键都在这里，从本屏声明自动生成、按任务分组）。"""
-        feed_widget = self.query_one("#feed", FeedListView)  # tab 切站声明在控件上
-        self.app.push_screen(
-            HelpScreen(
-                [
-                    (t("help.global_section"), global_rows()),
-                    *group_rows(screen_rows(feed_widget, self, skip={"f1", "ctrl+q"})),
-                ]
-            )
-        )
+        """F1：键位帮助（页脚装不下的键都在这里，从本屏声明自动生成、按任务分组；
+        入口收口在 push_help，主列表控件随行——tab 切站声明在控件上）。"""
+        push_help(self, self.query_one("#feed", FeedListView), skip={"ctrl+q"})
 
     def action_open_browser(self) -> None:
         item = self.current_item()
@@ -598,10 +539,9 @@ class MainScreen(MainReadScreen):
         return shown[view.index]
 
     def _opens_detail(self, item: FeedItem) -> bool:
-        """Enter 的分派谓词：进终端详情屏还是跳浏览器，由源的类型词汇表决定
-        （Source.supports_detail + detail_kinds）。Enter 与 [/] 换篇共用。"""
-        source = self.current_source
-        return source.supports_detail and item.kind in source.detail_kinds
+        """Enter 的分派谓词：进终端详情屏还是跳浏览器（判据收口在
+        Source.opens_detail，与收藏屏共用）。Enter 与 [/] 换篇共用。"""
+        return self.current_source.opens_detail(item)
 
     def step_readable_item(self, delta: int) -> FeedItem | None:
         """列表选中项沿 delta 方向推进到下一篇可进终端详情的条目，并同步列表选中。

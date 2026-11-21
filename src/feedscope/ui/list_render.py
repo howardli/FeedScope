@@ -7,9 +7,11 @@ ui/layout.py，本模块只做组装。
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from rich.markup import escape
 from textual.containers import Horizontal
-from textual.widgets import Label, ListItem
+from textual.widgets import Label, ListItem, ListView
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import Source
@@ -96,3 +98,21 @@ def build_item(
     if not mark:
         item.add_class("row-read")
     return item
+
+
+def update_row_mark(
+    view: ListView, rows: Sequence[FeedItem], item: FeedItem, mark: str
+) -> None:
+    """单行圆点就地重算：按 (source, id) 在 rows 里定位（行号即 view.children
+    下标——行身份是键不是对象，收藏屏回写主屏传的是快照副本，等值比对会
+    失配），更新圆点并随 mark 置灰/恢复标题。主屏与收藏屏共用；行还没画上
+    （在途/未挂载的页）直接返回，下批渲染自然对。"""
+    idx = next(
+        (i for i, it in enumerate(rows) if it.source == item.source and it.id == item.id),
+        None,
+    )
+    if idx is None or idx >= len(view.children):
+        return
+    row = view.children[idx]
+    row.query_one(".item-mark", Label).update(mark)
+    row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退

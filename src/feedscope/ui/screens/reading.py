@@ -25,7 +25,7 @@ import dataclasses
 import webbrowser
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.markup import escape
 from textual.binding import Binding
@@ -38,9 +38,10 @@ from textual.widgets import Label, Static
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, LoginRequired, Source
-from feedscope.ui import Bindings, feedback
+from feedscope.ui import Bindings, feedback, tui_of
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
+from feedscope.ui.screens.help import push_help
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
@@ -155,9 +156,10 @@ class ReadingScreen(Screen[None]):
     async def _close_loader(self) -> None:
         """卸载时关掉持有的 loader（幂等，出错自己吞）。"""
 
+    @abstractmethod
     async def _mount_body(self) -> None:
-        """on_mount 的屏内钩子：聚焦正文容器 + 触发首载（子类覆写，先调 focus）。"""
-        self._body_scroll().focus()
+        """on_mount 的屏内钩子：聚焦正文容器 + 触发首载（两个子类都是先
+        focus 再走各自的首载动线，无共享实现）。"""
 
     async def on_mount(self) -> None:
         retranslate_bindings(self)  # 键式键位文案解析（bindings.*），见 ui/labels.py
@@ -253,15 +255,16 @@ class PagedReadingScreen(ReadingScreen):
     与词汇表键位文案来自源声明（Source 的 *_unit_label）。
     """
 
-    _worker_group: ClassVar[str] = "page"
+    _worker_group: ClassVar[str]  # 本屏取数 worker 的组名（两个子类各声明，无默认）
     source: Source  # 源实例（失败文案与能力判定）
     item: FeedItem  # 正在读的条目（Ctrl+O 与屏间传递）
+    loader: DetailLoader | CommentLoader | None = None
+    _exhausted: bool = False  # 翻页对象已到头，Ctrl+N 不再触发加载
 
     @property
     def _tui(self) -> FeedScopeApp:
-        """self.app 的收窄视图（账号动线等自定义成员经它获得静态类型），同 MainScreen。"""
-        # cast 用字符串形式：FeedScopeApp 只在 TYPE_CHECKING 下导入（运行时导入会成环）
-        return cast("FeedScopeApp", self.app)
+        """self.app 的收窄视图（cast 收口在 ui.tui_of），同主屏家族。"""
+        return tui_of(self)
 
     def _note_auth_failure(self, exc: Exception) -> None:
         """翻页/评论撞 LoginRequired：记会话失效（Ctrl+U 此后直接给登录框）。
@@ -275,39 +278,31 @@ class PagedReadingScreen(ReadingScreen):
 
     # 阅读中随手收藏是主场景：详情 / 评论两屏共用这一份（评论屏的 item 是
     # 问题条目——收藏的语义就是「这一篇」）；列表屏的 Ctrl+F 在 MainScreen。
-    # Ctrl+Y 复制链接与 Ctrl+O 同源（_browser_url——回答屏自动带楼层直达）
-    # 页脚只留 Esc 返回 + F1 帮助（其余键提示退入 F1，绑定照常）
+    # Ctrl+Y 复制链接与 Ctrl+O 同源（_browser_url——回答屏自动带楼层直达）；
+    # ctrl+n / ctrl+o 两屏同键同义，上提到这层（回答屏的源词汇表重标照常
+    # 作用于运行期注册表）。页脚只留 Esc 返回 + F1 帮助（其余键提示退入
+    # F1，绑定照常）
     BINDINGS: ClassVar[Bindings] = [
         Binding("ctrl+f", "favorite", "bindings.favorite", show=False),
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
+        Binding("ctrl+n", "more", "bindings.more", show=False),
+        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
         Binding("f1", "help", "bindings.help"),
     ]
 
     def action_help(self) -> None:
-        """F1：键位帮助（全局 + 本屏，从声明自动生成）。"""
-        from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
-
-        self.app.push_screen(
-            HelpScreen(
-                [
-                    (t("help.global_section"), global_rows()),
-                    *group_rows(screen_rows(self, skip={"f1"})),
-                ]
-            )
-        )
+        """F1：键位帮助（全局 + 本屏，从声明自动生成；入口收口在 push_help）。"""
+        push_help(self)
 
     def action_favorite(self) -> None:
         """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。"""
-        fav = cast("FeedScopeApp", self.app).state.toggle_fav(self.item)
+        fav = tui_of(self).state.toggle_fav(self.item)
         feedback.info(self.app, t("fav.toast_added" if fav else "fav.toast_removed"))
 
     def action_copy_link(self) -> None:
         """Ctrl+Y：复制正在读的条目链接（回答层带楼层直达，同 Ctrl+O 目标）。"""
         self.app.copy_to_clipboard(self._browser_url())
         feedback.info(self.app, t("main.toast_copied"))
-
-    loader: DetailLoader | CommentLoader | None = None
-    _exhausted: bool = False  # 翻页对象已到头，Ctrl+N 不再触发加载
 
     # ---- 翻页（Ctrl+N：加载更多 / 失败态重试）----
 

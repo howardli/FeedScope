@@ -75,7 +75,7 @@ class SourceSetupScreen(ArrowModalScreen[list[str] | None]):
     # 勾选列表的尺寸）
     CSS = """
     #setup-dialog { max-width: 64; }
-    #setup-title { text-style: bold; padding-bottom:  1; }
+    #setup-title { text-style: bold; padding-bottom: 1; }
     #setup-prompt { padding-bottom: 1; }
     #setup-list { width: auto; min-width: 44; height: auto; max-height: 14; margin-bottom: 1; }
     """

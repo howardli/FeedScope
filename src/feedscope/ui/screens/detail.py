@@ -41,11 +41,10 @@ class DetailScreen(PagedReadingScreen):
 
     BINDINGS: ClassVar[Bindings] = [
         # 键位全部非打印键（输入法免疫）：↑/↓ 滚动走焦点容器（VerticalScroll）
-        # 原生键，无需声明；Esc 返回继承自 ReadingScreen
-        Binding("ctrl+n", "more", "bindings.more", show=False),
+        # 原生键，无需声明；Esc 返回继承自 ReadingScreen；ctrl+n/ctrl+o
+        # 继承自 PagedReadingScreen
         # Enter 的标签是占位（空串）：__init__ 换源词汇表；无评论层的源隐藏该键位
         Binding("enter", "pick_answer", "", show=False),
-        Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
         Binding("right", "next_article", "bindings.next", show=False),
         Binding("left", "prev_article", "bindings.prev", show=False),
     ]
@@ -110,13 +109,12 @@ class DetailScreen(PagedReadingScreen):
             self.loader = await self.source.open_detail(self.item)
         except LoginRequired as exc:
             # 会话失效（知乎详情 403 的实测形态：列表 v3 端点照常、v4 详情回绝）：
-            # 与列表屏同一动线给登录引导；拒绝后留常驻提示（重登后 Ctrl+N 重试）
+            # 与列表屏同一动线给登录引导（收口在 AccountFlow.maybe_prompt——记
+            # 失效 + 未拒绝过才弹框）；拒绝后留常驻提示（重登后 Ctrl+N 重试）
             hint = t("main.hint_login", error=exc)
             self.app.sub_title = t("main.status_signed_out")
             loading.update(f"[red]{escape(hint)}[/red]")
-            self._tui.accounts.mark_stale(self.source)  # Ctrl+U 此后直接给登录框
-            if self.source.source_id not in self._tui.accounts.refused:
-                await self._tui.accounts.on_login_wall(self.source, hint)
+            await self._tui.accounts.maybe_prompt(self.source, hint)
             return
         except Exception as exc:
             # notify 给细节（瞬时），屏内留一行常驻失败态：notify 会消失，屏幕不能空着

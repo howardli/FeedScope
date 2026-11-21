@@ -47,10 +47,13 @@ def list_title_width(
 ) -> int:
     """列表标题列的折行可用宽；meta_col_width = 当前批的元信息列宽，
     tag_width = 源名列宽（收藏屏跨源列表用，主列表为 0），
-    time_width = 相对时间列宽（批内有 published 才非 0）。"""
+    time_width = 相对时间列宽（批内有 published 才非 0）。
+
+    首布局前 region.width 为 0：按常规终端 80 先折一版（resize 自愈重排
+    会按真实宽重来，两屏同一策略——兜底收在这里，调用方不再各写各的）。"""
     return max(
         10,
-        container_width
+        (container_width or 80)
         - LIST_ROW_OVERHEAD
         - MARK_COL_WIDTH
         - tag_width

@@ -12,15 +12,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import ClassVar
 
-from rich.markup import escape
 from textual.binding import Binding
-from textual.widgets import Label, ListView
+from textual.widgets import ListView
 
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.ui import Bindings, feedback
-from feedscope.ui.dialogs import ConfirmScreen, InputScreen
-from feedscope.ui.list_render import MARK_UNREAD
+from feedscope.ui.dialogs import ConfirmScreen, ask_title_filter
+from feedscope.ui.list_render import MARK_UNREAD, update_row_mark
 from feedscope.ui.screens.main_nav import MainNavScreen
 
 
@@ -118,27 +117,11 @@ class MainReadScreen(MainNavScreen):
 
     def _update_row_mark(self, item: FeedItem) -> None:
         """单行圆点就地重算（标记/切换不重建整表；重建路径自会走 _row_mark）。
-
-        按 (source, id) 在 _shown 里定位而不是对象相等：收藏屏回写主屏时
-        传的是快照副本，等值比对会失配；行身份本来就是键。
-        """
-        idx = next(
-            (
-                i
-                for i, it in enumerate(self._shown())
-                if it.source == item.source and it.id == item.id
-            ),
-            None,
+        定位与置灰收口在 list_render.update_row_mark——按 (source, id) 寻址
+        而不是对象相等（收藏屏回写传的是快照副本）；收藏屏同名方法同一条路。"""
+        update_row_mark(
+            self.query_one("#feed", ListView), self._shown(), item, self._row_mark(item)
         )
-        if idx is None:
-            return
-        view = self.query_one("#feed", ListView)
-        if idx >= len(view.children):
-            return  # 行还没画上（在途）：下批渲染自然对
-        row = view.children[idx]
-        mark = self._row_mark(item)
-        row.query_one(".item-mark", Label).update(mark)
-        row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
 
     # ---- 动作：过滤与未读导航 ----
 
@@ -158,24 +141,10 @@ class MainReadScreen(MainNavScreen):
         self.app.run_worker(self._title_filter_flow(), group="titlefilter")
 
     async def _title_filter_flow(self) -> None:
-        q = await self.app.push_screen(
-            # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
-            InputScreen(
-                t("main.filter_prompt"), initial=self._title_filter or "", allow_empty=True
-            ),
-            wait_for_dismiss=True,
-        )
-        if q is None:
-            return  # Esc/取消：不动现有过滤（取消输入 ≠ 清除过滤）
-        new = q.lower() or None
+        new = await ask_title_filter(self, self._title_filter)  # 问答与 toast 收口在 dialogs
         if new == self._title_filter:
-            return  # 词没变：不重画不弹 toast
+            return  # Esc/词没变：不动现有过滤（取消输入 ≠ 清除过滤）
         self._title_filter = new
-        feedback.info(
-            self,
-            # notify 解析 markup：用户词过 escape，词里的 "[" 不当样式标签
-            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
-        )
         await self.rebuild_items()
 
     def action_next_unread(self) -> None:

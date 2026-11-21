@@ -500,6 +500,12 @@ class Source(ABC):
             raise ValueError(t("errors.unknown_feed", name=name))
         return t(label)
 
+    def opens_detail(self, item: FeedItem) -> bool:
+        """Enter 分派谓词：进终端详情屏还是跳浏览器——supports_detail 与类型
+        词汇表（detail_kinds）的合成判断。主屏与收藏屏共用（收藏条目的源可能
+        已被 F2 停用，判据仍按源声明走）。"""
+        return self.supports_detail and item.kind in self.detail_kinds
+
     def static_feed(self, items: list[FeedItem], label: str) -> StaticFeedLoader:
         """静态首屏出口：0 条守卫 + 一次性 loader（一次拉全的小流用）。
 

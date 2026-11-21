@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import webbrowser
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -29,8 +29,9 @@ from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
 from feedscope.core.source import FeedLoader, Source
 from feedscope.core.text import display_width
-from feedscope.ui import Bindings, feedback
-from feedscope.ui.dialogs import InputScreen
+from feedscope.ui import Bindings, feedback, tui_of
+from feedscope.ui.coalesce import CoalescedScheduler
+from feedscope.ui.dialogs import ask_title_filter
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.layout import (
     META_COL_MAX,
@@ -40,19 +41,20 @@ from feedscope.ui.layout import (
     meta_col_text,
     time_col_width,
 )
-from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item
+from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item, update_row_mark
 from feedscope.ui.screens.detail import DetailScreen
-from feedscope.ui.screens.help import HelpScreen, global_rows, group_rows, screen_rows
+from feedscope.ui.screens.help import push_help
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
 
 
 class _FavListView(ListView):
-    """Enter 归屏分派（show=False：页脚不露控件级键名，与主列表同一条纪律）。"""
+    """Enter 归屏分派（show=False：页脚不露控件级键名，与主列表同一条纪律；
+    描述给 F1 帮助页——控件要随 action_help 传进 push_help 才被扫到）。"""
 
     BINDINGS: ClassVar[Bindings] = [
-        Binding("enter", "screen.nav_enter", show=False),
+        Binding("enter", "screen.nav_enter", "bindings.open_item", show=False),
     ]
 
 
@@ -112,13 +114,13 @@ class FavoritesScreen(Screen[None]):
         self._prev_sub_title: str | None = None  # 退屏恢复（同 ReadingScreen）
         self._last_width = 0
         self._resize_timer: Timer | None = None
-        self._rebuild_busy = False  # 重建的合并式调度状态（见 _rerender）
-        self._rebuild_dirty = False
+        # 整屏重建的合并式调度器（见 _rerender；机理说明在 ui.coalesce）
+        self._rebuild_sched = CoalescedScheduler(self, self._rebuild)
 
     @property
     def _tui(self) -> FeedScopeApp:
-        """self.app 的收窄视图（同 MainSetupScreen._tui 的既有模式）。"""
-        return cast("FeedScopeApp", self.app)
+        """self.app 的收窄视图（cast 收口在 ui.tui_of），同主屏家族。"""
+        return tui_of(self)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -157,26 +159,9 @@ class FavoritesScreen(Screen[None]):
     def _rerender(self) -> None:
         """请求一次整屏重建（resize / resume / 过滤变化共用入口）。
 
-        合并式调度（同 MainScreen._refresh_sidebar）：在途时只标脏不并跑——
-        clear 的删除异步落地，两个重建的 clear/extend 交错会把同一行挂两遍；
-        exclusive 取消也能防并发，但被取代的协程从未启动会留 never-awaited
-        警告。跑完那份见脏标志自动再来一轮。
-        """
-        if self._rebuild_busy:
-            self._rebuild_dirty = True
-            return
-        self._rebuild_busy = True
-        self.run_worker(self._rebuild_cycle())
-
-    async def _rebuild_cycle(self) -> None:
-        try:
-            while True:
-                await self._rebuild()
-                if not self._rebuild_dirty:
-                    return
-                self._rebuild_dirty = False
-        finally:
-            self._rebuild_busy = False
+        合并式调度收口在 ui.coalesce（同主屏边栏刷新；在途时只标脏不并跑，
+        跑完见脏自动再来一轮——两个重建的 clear/extend 交错会把同一行挂两遍）。"""
+        self._rebuild_sched.trigger()
 
     # ---- 列表 ----
 
@@ -217,7 +202,7 @@ class FavoritesScreen(Screen[None]):
 
     def _build_rows(self, items: list[FeedItem]) -> list[ListItem]:
         width = list_title_width(
-            self.query_one("#fav-list", ListView).region.width or 80,
+            self.query_one("#fav-list", ListView).region.width,
             self._score_width,
             self._tag_w,
             self._time_w,
@@ -320,25 +305,11 @@ class FavoritesScreen(Screen[None]):
             main._sync_after_read(item)
 
     def _update_row_mark(self, item: FeedItem) -> None:
-        """单行圆点就地重算（按 (source, id) 定位行——在已挂载行集里找，
-        行号即 view.children 下标；理由见 MainScreen 同名方法）。"""
-        idx = next(
-            (
-                i
-                for i, it in enumerate(self._mounted())
-                if it.source == item.source and it.id == item.id
-            ),
-            None,
+        """单行圆点就地重算（定位与置灰收口在 list_render.update_row_mark，
+        主屏同名方法同一条路；行集给已挂载的页——未挂载的页没有行可寻）。"""
+        update_row_mark(
+            self.query_one("#fav-list", ListView), self._mounted(), item, self._row_mark(item)
         )
-        if idx is None:
-            return
-        view = self.query_one("#fav-list", ListView)
-        if idx >= len(view.children):
-            return
-        row = view.children[idx]
-        mark = self._row_mark(item)
-        row.query_one(".item-mark", Label).update(mark)
-        row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
 
     # ---- 键位动作 ----
 
@@ -379,35 +350,18 @@ class FavoritesScreen(Screen[None]):
         self.run_worker(self._title_filter_flow(), exclusive=True)
 
     async def _title_filter_flow(self) -> None:
-        q = await self.app.push_screen(
-            # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
-            InputScreen(t("main.filter_prompt"), initial=self._filter or "", allow_empty=True),
-            wait_for_dismiss=True,
-        )
-        if q is None:
-            return  # Esc/取消：不动现有过滤
-        new = q.lower() or None
+        new = await ask_title_filter(self, self._filter)  # 问答与 toast 收口在 dialogs
         if new == self._filter:
             return
         self._filter = new
-        feedback.info(
-            self,
-            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
-        )
-        # 弹层关闭还会触发 on_screen_resume 重建：都走 _rerender 的 exclusive
-        # worker 串行，两路 clear/extend 交错会把同一行挂两遍（sidebar 竞态同族）
+        # 弹层关闭还会触发 on_screen_resume 重建：都走 _rerender 的合并式调度
+        # 串行，两路 clear/extend 交错会把同一行挂两遍（sidebar 竞态同族）
         self._rerender()
 
     def action_help(self) -> None:
-        """F1：键位帮助（全局 + 本屏，从声明自动生成）。"""
-        self.app.push_screen(
-            HelpScreen(
-                [
-                    (t("help.global_section"), global_rows()),
-                    *group_rows(screen_rows(self, skip={"f1"})),
-                ]
-            )
-        )
+        """F1：键位帮助（全局 + 本屏，从声明自动生成；入口收口在 push_help，
+        列表控件随行——Enter 的声明在控件上，缺了它帮助页少一行）。"""
+        push_help(self, self.query_one("#fav-list", _FavListView))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id != "fav-list":
@@ -417,7 +371,7 @@ class FavoritesScreen(Screen[None]):
             return
         self._mark_read(item)
         source = self._source_of(item)
-        if source.supports_detail and item.kind in source.detail_kinds:
+        if source.opens_detail(item):  # 判据收口在 Source.opens_detail（与主屏共用）
             self.app.push_screen(DetailScreen(item, source, self.step_readable))
         else:
             webbrowser.open(item.url)
@@ -432,8 +386,7 @@ class FavoritesScreen(Screen[None]):
             return None
         for idx in range(view.index + delta, len(mounted) if delta > 0 else -1, delta):
             it = mounted[idx]
-            src = self._source_of(it)
-            if src.supports_detail and it.kind in src.detail_kinds:
+            if self._source_of(it).opens_detail(it):
                 view.index = idx
                 self._mark_read(it)
                 return it

@@ -8,13 +8,16 @@ action_cancel，各弹层永远同形），本模块只剩轻弹层自己的增�
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Any, TypeVar
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.screen import Screen
 from textual.widgets import Button, Input, Label
 
 from feedscope.core.i18n import t
+from feedscope.ui import feedback
 from feedscope.ui.focus_nav import ArrowModalScreen
 
 _DialogT = TypeVar("_DialogT")
@@ -134,3 +137,26 @@ class InputScreen(DialogScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+async def ask_title_filter(holder: Screen[Any], current: str | None) -> str | None:
+    """/ 过滤词问答（主屏与收藏屏同一条流）：弹输入层 -> 归一化新词。
+
+    返回 None = 不动现有过滤（Esc 取消 / 词没变——取消输入 ≠ 清除过滤），
+    空串归 None（= 清除）；词变了顺手把 set/clear 的 toast 弹掉（用户词过
+    escape：notify 解析 markup，词里的 "[" 不当样式标签）。
+    """
+    q = await holder.app.push_screen(
+        # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
+        InputScreen(t("main.filter_prompt"), initial=current or "", allow_empty=True),
+        wait_for_dismiss=True,
+    )
+    if q is None:
+        return current
+    new = q.lower() or None
+    if new != current:
+        feedback.info(
+            holder,
+            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
+        )
+    return new
