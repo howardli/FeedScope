@@ -11,6 +11,9 @@ from typing import ClassVar
 
 import pytest
 
+import feedscope.sources  # noqa: F401  import 即注册（单跑本文件时注册表才是满的；
+
+# 否则 probe.py 的模块级导入会在 fake_registry 清空之后把真源回填进注册表）
 from feedscope.core.models import DetailDoc, FeedItem
 from feedscope.core.source import (
     DetailLoader,
