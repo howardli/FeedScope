@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-22
+
 ### Fixed
 
 - Twelve latent bugs from a full-project audit, each with a reproducing regression test: X detail paging could mount duplicate floors when the API re-delivered first-batch replies (their ids were never registered for dedup); X queryId self-heal was blind to mid-session rotations (harvest only fills gaps — the stale entry is now dropped before re-harvesting); X timeline dropped visibility-wrapped tweets (`TweetWithVisibilityResults`) as broken cards instead of unwrapping them like the detail path; the title filter broke row↔item alignment on `Ctrl+N` (unfiltered rows were appended raw while selection addressed the filtered set); `Ctrl+A` on a mixed list over-decremented the aggregate feed's unread badge for already-read items; a title filter containing `[` could crash or silently restyle toasts / empty hints / the status line (user input is now markup-escaped); a corrupt-but-salvageable `sources.toml` was silently rewritten down to a single managed key by any save (saves now refuse to write and point at `doctor`); a subscription label containing `{` crashed the sidebar (`t()` no longer format-strings passthrough user data); a concurrent `feedscope cache clear` could crash an in-flight refresh (LRU stat failures are tolerated); two concurrent fetches through a rebuilding channel tab leaked an orphan browser page (double-check inside the session lock); a subscription-manager exit via the shared cancel path hit a `NotImplementedError` landmine; a filter-toggle rebuild cancelled an in-flight refresh, leaving the status line stuck on "loading"
@@ -96,6 +98,7 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.4.1]: https://github.com/howardli/FeedScope/releases/tag/v0.4.1
 [0.4.0]: https://github.com/howardli/FeedScope/releases/tag/v0.4.0
 [0.3.1]: https://github.com/howardli/FeedScope/releases/tag/v0.3.1
 [0.3.0]: https://github.com/howardli/FeedScope/releases/tag/v0.3.0
