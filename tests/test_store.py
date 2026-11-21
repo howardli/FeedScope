@@ -308,6 +308,21 @@ def test_mark_all_read_zeroes_feed_count() -> None:
     assert ReadState().unread_count("hn", "front") == 0  # 跨实例（重启）持久
 
 
+def test_mark_all_read_skips_read_items_in_decrement() -> None:
+    """全量视图 Ctrl+A 的批里混着已读条目（a 已读）：递减前判已读（同 mark_read
+    守卫）——修复前 a 再减一次，成员流「全部」的角标被多减（c 还没读却归零，
+    要等下次刷新重数才自愈）。"""
+    st = ReadState()
+    a, b = _item("rss", "k/1"), _item("rss", "k/2")
+    c = _item("rss", "other/3")  # 只在聚合流里：k 清仓不该动它的未读
+    st.note_fetched([a, b, c], "all", recount=True)  # 聚合流全量重数：all=3
+    st.note_fetched([a, b], "k", recount=True)  # 成员流全量重数：k=2
+    st.mark_read("rss", "k/1")  # a 已读：all=2(b,c)、k=1(b)
+    st.mark_all_read([a, b], "k")  # 批含已读的 a（全量视图）
+    assert st.unread_count("rss", "k") == 0
+    assert st.unread_count("rss", "all") == 1, "c 未读：只该减 b 一次"
+
+
 def test_old_entries_without_feed_get_backfilled() -> None:
     """角标功能之前建的条目没有 feed 字段：刷新时回填，读它才能递减。
 

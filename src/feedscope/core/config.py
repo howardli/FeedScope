@@ -190,8 +190,13 @@ def get_language() -> str | None:
 
 
 def save_language(code: str) -> None:
-    """保存语言设置（语言选择屏的落盘路径）；其余内容（注释/未知键）原样保留。"""
-    doc = _read()[0]
+    """保存语言设置（语言选择屏的落盘路径）；其余内容（注释/未知键）原样保留。
+
+    坏配置拒绝落盘（_read_writable）：设置只留在本次进程，doctor 修复后重存。
+    """
+    doc = _read_writable()
+    if doc is None:
+        return
     doc["language"] = code
     _write_config(doc)
 
@@ -203,8 +208,13 @@ def get_theme() -> str | None:
 
 
 def save_theme(name: str) -> None:
-    """保存主题设置（Ctrl+T 即时生效 + 这里落盘）；其余内容原样保留。"""
-    doc = _read()[0]
+    """保存主题设置（Ctrl+T 即时生效 + 这里落盘）；其余内容原样保留。
+
+    坏配置拒绝落盘（_read_writable）：主题只在本会话生效，doctor 修复后重选。
+    """
+    doc = _read_writable()
+    if doc is None:
+        return
     doc["theme"] = name
     _write_config(doc)
 
@@ -239,6 +249,24 @@ def _dump(doc: dict[str, Any], *, fresh: bool) -> str:
     return f"{header}\n\n{text}" if text.strip() else header + "\n"
 
 
+def _read_writable() -> dict[str, Any] | None:
+    """写路径专用读档：既有文件解析失败时拒绝落盘（返回 None，调用方放弃保存）。
+
+    坏但可人工抢救的 sources.toml 里可能还有用户手写的订阅与注释——拿空
+    文档继续 _write_config 会把它洗成只剩一个受管键，与 is_configured
+    「坏文件是 doctor 的职责，不重新引导」的哲学冲突。文件不存在（首启
+    保存建新文件）不受影响。
+    """
+    doc, reason = _read()
+    if reason and config_path().exists():
+        logger.warning(
+            "配置文件存在但无法解析，拒绝写入以免覆写（%s）——本次保存未落盘，feedscope doctor 可见",
+            reason,
+        )
+        return None
+    return doc
+
+
 def _write_config(doc: dict[str, Any]) -> None:
     """原子落盘（临时文件 + os.replace）：读者要么旧文件要么新文件，没有半截。"""
     path = config_path()
@@ -250,8 +278,13 @@ def _write_config(doc: dict[str, Any]) -> None:
 
 
 def save_enabled(ids: list[str]) -> None:
-    """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。"""
-    doc = _read()[0]
+    """保存启用的源列表（首启引导 / F2 管理界面的落盘路径）。
+
+    坏配置拒绝落盘（_read_writable）：勾选只留在本次会话，doctor 修复后重存。
+    """
+    doc = _read_writable()
+    if doc is None:
+        return
     doc["enabled"] = list(dict.fromkeys(ids))
     _write_config(doc)
 
@@ -266,8 +299,11 @@ def update_feeds(
     enabled 由 drop_enabled_when_empty 决定：rss / telegram 摘（feeds 全
     来自订阅，没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。
     enabled 未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
+    坏配置拒绝落盘（_read_writable）：订阅变更只在内存，doctor 修复后重做。
     """
-    doc = _read()[0]
+    doc = _read_writable()
+    if doc is None:
+        return
     section = doc.get(source_id)
     if section is not None and not isinstance(section, dict):
         # 顶层已有同名标量（手编冲突）：不能既保它又挂 [source_id] 段——

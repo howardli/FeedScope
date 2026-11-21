@@ -430,9 +430,12 @@ class MainScreen(MainReadScreen):
             or new_tag > self._tag_width
             or new_time > self._time_width
             or self._unread_only
+            or self._title_filter is not None
         ):
             # 新批次带来更长的元信息/源名/成列时间（或过滤态下行集变化）：
-            # 列变宽或行集重算——全量重建，不只是追加新行
+            # 列变宽或行集重算——全量重建，不只是追加新行。F4 与 / 都在：
+            # 行集 = 全量与新过滤词的 AND，直接 extend 未过滤行会让行与
+            # current_item()/_row_mark() 按 _shown() 的寻址从此错位
             self._score_width = new_width
             self._tag_width = new_tag
             self._time_width = new_time

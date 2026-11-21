@@ -114,7 +114,7 @@ async def _get_html(url: str, *, source: str, partial: bool = False) -> str:
                 status, body = await _raw_fetch(url, accept, _version, source=source)
         if status:
             raise SourceError(
-                t("errors.reddit_status_login", source=source, status=status)
+                t("errors.reddit_status_login", source=source, status=status), status=status
             ) from None
     if not partial and (m := _VERSION_RE.search(body)):
         _version = m.group(0)  # 服务端把版本织进每个页面：顺手收割，首批 partial 免一次专割

@@ -130,14 +130,15 @@ def language() -> str:
 def t(key: str, /, **kwargs: object) -> str:
     """查文案并填占位符：当前语言 -> 基准语言 -> 键名（缺键记 warning）。
 
-    无参调用也走 format：{{ }} 转义与占位符同一条规则，行为不随调用方
-    传不传参而变。不含点号的字符串按最终文案直通（不查不警）——文案键
-    恒为点分域，直通语义给测试替身的裸文案与用户数据（订阅名等）留路：
-    源词汇表的值可能是键（真源）也可能是裸文案（stub），统一走 t() 不分叉。
+    不含点号的字符串按最终文案直通（不查不警、也不 format）——文案键恒
+    为点分域，直通语义给测试替身的裸文案与用户数据（订阅名等）留路：源
+    词汇表的值可能是键（真源）也可能是裸文案（stub），统一走 t() 不分叉。
+    直通不 format 是硬约束：用户数据里的花括号是数据不是模板（订阅名写
+    成 "rust {news}" 之类），format 一次 KeyError 就崩侧栏。
     """
     _ensure_loaded()
     if "." not in key:
-        return key.format(**kwargs)
+        return key
     text = _catalogs.get(_current, {}).get(key)
     if text is None and _current != BASE_LANGUAGE:
         text = _catalogs.get(BASE_LANGUAGE, {}).get(key)

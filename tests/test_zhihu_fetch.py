@@ -356,13 +356,16 @@ def test_comments_loader_stale_passes_through(monkeypatch) -> None:
 
 
 def test_question_loader_load_more_stale_403_is_login_required(monkeypatch) -> None:
-    """回答翻页撞会话失效：转 LoginRequired（Ctrl+N 的出口能指引用户重登）。"""
+    """回答翻页撞会话失效：转 LoginRequired（Ctrl+N 的出口能指引用户重登）。
+
+    语义判定走 SourceError.status（结构化字段）——消息文本只是给人看的
+    翻译文案，措辞换掉不该让 403 转译静默失效。"""
     from feedscope.core.source import SourceError
 
     loader = _open_loader(monkeypatch)
 
     async def _stale(url: str, referer: str) -> dict:
-        raise SourceError("接口请求失败（HTTP 403）")
+        raise SourceError("接口请求失败（HTTP 403）", status=403)
 
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._api_json", _stale)
     with pytest.raises(LoginRequired, match="重新登录"):
@@ -380,6 +383,20 @@ def test_question_deleted_404_is_friendly(monkeypatch) -> None:
     monkeypatch.setattr("feedscope.sources.zhihu.fetch._tab", _tab_for(page))
     with pytest.raises(SourceError, match="已被删除或不存在"):
         asyncio.run(open_question("999999999999999999"))
+
+
+def test_reauth_ignores_message_wording() -> None:
+    """401/403 判定只看 SourceError.status：文案里连「403」字符都没有照样转
+    LoginRequired——翻译措辞一变控制流就断的旧机制（消息文本匹配）钉死不复返。"""
+    from feedscope.core.source import SourceError
+    from feedscope.sources.zhihu.fetch import _reauth_if_stale
+
+    with pytest.raises(LoginRequired):
+        _reauth_if_stale(SourceError("服务端回绝了本次请求", status=403))
+    with pytest.raises(LoginRequired):
+        _reauth_if_stale(SourceError("会话需要重新认证", status=401))
+    _reauth_if_stale(SourceError("服务端回绝了本次请求"))  # 无状态：不动作不抛
+    _reauth_if_stale(SourceError("网关超时（HTTP 504）", status=504))
 
 
 def test_api_json_401_is_login_required(monkeypatch) -> None:

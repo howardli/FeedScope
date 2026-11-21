@@ -128,3 +128,15 @@ def test_write_failure_is_silent(monkeypatch) -> None:
     monkeypatch.setattr("feedscope.core.feed_cache.Path.write_text", boom)
     save("stub", "one", _items(1))  # 不抛
     assert load("stub", "one") is None
+
+
+def test_evict_tolerates_unstattable_entries(tmp_path, monkeypatch) -> None:
+    """LRU 排序撞 stat 不了的条目（并发 `cache clear` 抢删 / 悬空软链）：按
+    最旧排、淘汰前缀里 unlink 吞错——不再把 FileNotFoundError 炸进刷新路径。"""
+    monkeypatch.setenv("FEEDSCOPE_FEED_CACHE", str(tmp_path))
+    monkeypatch.setattr(feed_cache, "_MAX_FEEDS", 2)
+    save("stub", "f0", _items(1))
+    save("stub", "f1", _items(1))
+    (tmp_path / "dangling.json").symlink_to(tmp_path / "gone.json")  # stat 即 FileNotFoundError
+    save("stub", "f2", _items(1))  # 触发淘汰：排序会撞悬空链
+    assert len([p for p in tmp_path.iterdir() if p.suffix == ".json"]) == 2

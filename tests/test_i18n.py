@@ -144,3 +144,10 @@ def test_registry_vocabulary_resolves_in_every_language() -> None:
                 assert key in i18n.catalog_keys(lang.code), (
                     f"{lang.code} 缺 {source.source_id} 的词汇键 {key}"
                 )
+
+
+def test_passthrough_text_is_never_formatted() -> None:
+    """无点直通（stub 裸文案 / 用户数据）不做 format：花括号是数据不是模板
+    ——订阅名写成 "rust {news}" 之类不能 KeyError 崩侧栏（带参调用同样直通）。"""
+    assert i18n.t("rust {news}") == "rust {news}"
+    assert i18n.t("a[b]{x}c", n=1) == "a[b]{x}c"

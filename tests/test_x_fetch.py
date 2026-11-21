@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import urllib.parse
+from dataclasses import replace
 
 import pytest
 from conftest import FakeTab
@@ -20,6 +21,7 @@ from feedscope.sources import x as x_mod
 from feedscope.sources.x import fetch as x_fetch
 from feedscope.sources.x.fetch import (
     XFeedLoader,
+    XTweetDetailLoader,
     _Op,
     _parse_graphql_url,
     fetch_conversation,
@@ -157,6 +159,27 @@ def test_shape_rot_self_heals_via_chunk_grep(monkeypatch: pytest.MonkeyPatch) ->
     assert entries
     assert x_fetch._SEEDS["HomeTimeline"].qid in tab.fetches[0].url and fresh in tab.fetches[1].url
     assert tab.resets == 1 and tab.opened == 1  # 重割重开了页签
+
+
+def test_mid_session_qid_rotation_reharvests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """会话中途 queryId 轮换（_harvest 里已有旧条目）：形状腐烂先作废旧条目再
+    重割——修复前收割只补缺口，拿回的还是旧形状，直接报 x_shape_stale。"""
+    fresh = "rotQID7"
+    chunk = "https://abs.twimg.com/responsive-web/client-web/shared~HomeTimeline~a1.js"
+    tab = _mock(monkeypatch, lambda url: (None, _tl_payload(["1"], None)), script_urls=[chunk])
+    _stub_chunks(monkeypatch, {chunk: f'queryId:"{fresh}",operationName:"HomeTimeline"'})
+    stale = replace(x_fetch._SEEDS["HomeTimeline"], qid="staleQID")
+    monkeypatch.setattr(x_fetch, "_harvest", {"HomeTimeline": stale})
+
+    def handler(url: str):
+        if fresh in url:
+            return None, _tl_payload(["1"], None)
+        return None, {"errors": [{"message": "stale shape"}]}
+
+    tab._on_fetch = lambda req: handler(req.url)
+    entries, _cursor = asyncio.run(fetch_entries("foryou", None))
+    assert entries  # 旧形状报错 -> 作废重割拿新 qid -> 重试成功
+    assert "staleQID" in tab.fetches[0].url and fresh in tab.fetches[1].url
 
 
 def test_shape_rot_heals_via_plain_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -317,3 +340,49 @@ def test_feed_loader_cursor_paging(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [it.id for it in asyncio.run(loader.load_more())] == ["status/1", "status/2"]
     assert [it.id for it in asyncio.run(loader.load_more())] == ["status/3"]  # 重复的 2 去重
     assert loader.done and asyncio.run(loader.load_more()) == []
+
+
+# ---- 首批回复的去重登记（修复：首批经 __init__ 进 doc 时也要进 _seen） ----
+
+
+def _detail_page(focal: str, replies: dict[str, str], cursor: str | None) -> dict:
+    """带区分正文的 TweetDetail 响应 fixture（_detail_payload 的文本可辨变体）。"""
+    entries = [
+        _entry(
+            entry_id=f"tweet-{focal}",
+            item_content=_item_content(_tweet_result(focal, new_user=True)),
+        )
+    ]
+    for rid, text in replies.items():
+        entries.append(
+            _entry(
+                entry_id=f"conversationthread-{rid}",
+                items=[{"item": {"itemContent": _item_content(_tweet_result(rid, text=text, new_user=True))}}],
+            )
+        )
+    return _conv_data(entries, cursor=cursor)
+
+
+def test_detail_first_page_replies_register_into_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """首批回复的 rest_id 登记进 _seen：翻页重复交付（同推在顶层与
+    conversationthread 模块各一份）被滤掉——修复前首批只进 doc 不进 _seen，
+    翻页同 id 会再上一层重复楼。"""
+    calls = 0
+
+    def handler(url: str):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None, _detail_page("20", {"101": "回复一", "102": "回复二"}, "more")
+        return None, _detail_page("20", {"102": "回复二", "103": "回复三"}, None)
+
+    _mock(monkeypatch, handler)
+    entries, cursor = asyncio.run(fetch_conversation("20", None))
+    loader = XTweetDetailLoader("20", entries, cursor)
+    assert [a.content_md for a in loader.doc.answers] == ["回复一", "回复二"]
+    new = asyncio.run(loader.load_more())
+    assert [a.content_md for a in new] == ["回复三"]  # 102 重复交付被滤掉
+    assert [a.content_md for a in loader.doc.answers] == ["回复一", "回复二", "回复三"]
+    assert loader.done

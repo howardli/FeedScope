@@ -23,7 +23,15 @@ class SourceError(Exception):
 
     源在取数/解析边界把「自己认识的失败」（HTTP 状态、服务端错误体、超时）
     包成它；UI 出口对它直接展示消息，对其他技术异常才补「源标签 + 失败」前缀。
+
+    status 是引发失败的结构化 HTTP 状态码（无则 None）：语义判定（401/403
+    转登录引导、404 转消亡文案等）只看它，绝不从消息文本猜——消息是给人
+    看的翻译文案，措辞一变控制流就断。
     """
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class LoginRequired(SourceError):

@@ -133,6 +133,43 @@ async def _run_jump() -> None:
         assert view.index == 0, "反向环扫回绕到 0"
 
 
+def test_load_more_under_filter_keeps_rows_aligned(stub_registry) -> None:
+    """过滤态 Ctrl+N：行集重算而不是裸追加——修复前追加分支把不匹配词的新行
+    直接挂上屏，行与 current_item()/_row_mark() 按 _shown() 的寻址从此错位。"""
+    asyncio.run(_run_more_under_filter())
+
+
+async def _run_more_under_filter() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await _filter_by(pilot, "第1条")
+        assert await settle(pilot, lambda: len(app.query_one("#feed", ListView).children) == 1)
+        await pilot.press("ctrl+n")  # 增量批 i10/i11（「第10条」不含子串「第1条」）
+        assert await settle(pilot, lambda: len(app.main.items) == 5)
+        view = app.query_one("#feed", ListView)
+        assert len(view.children) == 1, "新批不匹配词：不该上屏成行"
+        assert len(app.main._shown()) == 1
+        assert app.main.current_item().id == "i1", "选中行仍指向匹配的那条"
+
+
+def test_filter_word_with_markup_chars_is_escaped(stub_registry) -> None:
+    """过滤词含 Rich markup 元字符（"["）：toast/空态原样展示词面——修复前
+    方框对被 notify/Label 当样式标签解析吞掉。"""
+    asyncio.run(_run_markup_word())
+
+
+async def _run_markup_word() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await _filter_by(pilot, "[b]第1条")
+        assert await settle(pilot, lambda: app.main._title_filter == "[b]第1条")
+        assert "[b]第1条" in last_notification(app), "toast 里词面原样"
+        assert "没有匹配" in str(app.main.query_one("#empty-hint", Label).content)
+        assert "[b]第1条" in str(app.main.query_one("#empty-hint", Label).content)
+
+
 def test_favorites_filter_and_status(stub_registry) -> None:
     """收藏屏 /：行集与计数跟随、状态行带过滤词、无匹配给专属空态。"""
     asyncio.run(_run_fav_filter())

@@ -224,7 +224,10 @@ def _entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str
 
 
 def _iter_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
-    """把 entries 里的推文摊平成 result dict 流：跳广告与关注推荐模块。"""
+    """把 entries 里的推文摊平成 result dict 流：跳广告与关注推荐模块。
+
+    逐个过 _unwrap：受限推文的 result 套一层 .tweet（TweetDetail 已确证该
+    形态，时间线同族端点同理）——不拆会被当残卡静默丢弃。"""
     for e in entries:
         content = e.get("content") or {}
         etype = content.get("entryType")
@@ -234,7 +237,7 @@ def _iter_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any
                 continue
             res = (item.get("tweet_results") or {}).get("result")
             if res:
-                yield res
+                yield _unwrap(res)
         elif etype == "TimelineTimelineModule":
             if (e.get("entryId") or "").startswith("who-to-follow"):  # 关注推荐模块
                 continue
@@ -244,7 +247,7 @@ def _iter_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any
                     continue
                 res = (item.get("tweet_results") or {}).get("result")
                 if res:
-                    yield res
+                    yield _unwrap(res)
 
 
 def _quote_snippet(r: dict[str, Any]) -> str:

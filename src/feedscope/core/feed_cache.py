@@ -88,6 +88,14 @@ def load(source_id: str, feed: str) -> list[FeedItem] | None:
     return items or None
 
 
+def _mtime(p: Path) -> float:
+    """文件的 mtime；stat 不动（iterdir 与 sort 之间被并发 `cache clear` 抢删）
+    按最旧排——它本来就该进淘汰前缀，unlink 处自会再吞一次错。"""
+    with contextlib.suppress(OSError):
+        return p.stat().st_mtime
+    return 0.0
+
+
 def _evict() -> None:
     """目录内 .json 超过 _MAX_FEEDS 个时删最旧（mtime = 最近一次 save）。"""
     d = cache_dir()
@@ -97,7 +105,7 @@ def _evict() -> None:
         return  # 目录不存在（还没写过任何缓存）
     if len(files) <= _MAX_FEEDS:
         return
-    files.sort(key=lambda p: p.stat().st_mtime)  # 调用点已兜 OSError，这里不再拦
+    files.sort(key=_mtime)
     for p in files[: len(files) - _MAX_FEEDS]:
         # 并发/权限抖动：残留一个旧文件无害，下次淘汰再试
         with contextlib.suppress(OSError):

@@ -315,3 +315,32 @@ def test_describe_reports_subscriptions(monkeypatch: pytest.MonkeyPatch, tmp_pat
     )
     d = describe()
     assert "2 订阅" in d  # 各源订阅合计（rss 与 reddit 的 feeds 段都算）
+
+
+def test_saves_refuse_when_existing_file_unparsable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """坏但可人工抢救的配置文件：全部写入口拒绝落盘——修复前拿空文档继续写，
+    把手写的订阅/注释洗成只剩一个受管键（与 is_configured「坏文件是 doctor
+    的职责」的哲学冲突）。首启（文件不存在）不受影响。"""
+    import logging
+
+    from feedscope.core.config import save_theme
+
+    path = tmp_path / "sources.toml"
+    broken = 'language = "zh-CN"\n[rss.feeds]  # 手写注释\nbroken [ here'
+    path.write_text(broken, encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(path))
+    with caplog.at_level(logging.WARNING, logger="feedscope.core.config"):
+        save_language("en")
+        save_theme("editor-light")
+        save_enabled(["zhihu"])
+        update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
+    assert path.read_text(encoding="utf-8") == broken, "坏文件分毫未动（doctor 修复后重存）"
+    assert "拒绝写入" in caplog.text
+
+    # 对照：文件不存在（首启）照常新建
+    fresh = tmp_path / "fresh.toml"
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(fresh))
+    save_language("en")
+    assert tomllib.loads(fresh.read_text(encoding="utf-8"))["language"] == "en"

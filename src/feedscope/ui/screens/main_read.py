@@ -12,6 +12,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import ClassVar
 
+from rich.markup import escape
 from textual.binding import Binding
 from textual.widgets import Label, ListView
 
@@ -107,7 +108,11 @@ class MainReadScreen(MainNavScreen):
         """
         self._refresh_sidebar()
         if self._unread_only:
-            self.run_worker(self.rebuild_items(), exclusive=True)
+            # rebuild 走独立组（同组 exclusive 只互相串行）：与 _refresh 共用
+            # default 组会把在途刷新整个取消——状态行卡在「加载中」且无失败
+            # 提示。过滤态重画与刷新的最终 _paint_items 都经 _shown()，并发
+            # 各画各的仍然一致
+            self.run_worker(self.rebuild_items(), group="rebuild", exclusive=True)
         elif item is not None:
             self._update_row_mark(item)
 
@@ -143,7 +148,8 @@ class MainReadScreen(MainNavScreen):
         feedback.info(
             self, t("main.toast_unread_on" if self._unread_only else "main.toast_unread_off")
         )
-        self.run_worker(self.rebuild_items(), exclusive=True)
+        # rebuild 走独立组（组语义见 _sync_after_read 的注释）
+        self.run_worker(self.rebuild_items(), group="rebuild", exclusive=True)
 
     def action_title_filter(self) -> None:
         """/：标题过滤（newsboat 惯例，会话级）。弹输入层：Enter 设词（大小写
@@ -166,7 +172,9 @@ class MainReadScreen(MainNavScreen):
             return  # 词没变：不重画不弹 toast
         self._title_filter = new
         feedback.info(
-            self, t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear")
+            self,
+            # notify 解析 markup：用户词过 escape，词里的 "[" 不当样式标签
+            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
         )
         await self.rebuild_items()
 

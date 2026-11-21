@@ -194,3 +194,8 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     def action_back(self) -> None:
         self.dismiss(self._changed)
+
+    # Esc 改绑 back 了，但 ArrowModalScreen 的 action_cancel 契约仍要实现
+    # （基类默认 raise NotImplementedError，任何共享路径调到就是裸炸）
+    def action_cancel(self) -> None:
+        self.dismiss(self._changed)

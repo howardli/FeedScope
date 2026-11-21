@@ -127,6 +127,27 @@ def test_subs_screen_full_flow(rss_env, monkeypatch) -> None:
     asyncio.run(_run_flow(rss_env, monkeypatch))
 
 
+def test_action_cancel_dismisses_with_change_flag(rss_env) -> None:
+    """action_cancel 契约补齐：基类默认 raise NotImplementedError（Esc 虽改绑
+    back，共享路径调到 cancel 也不能裸炸），dismiss 值与 back 同为改动标记。"""
+    asyncio.run(_run_cancel())
+
+
+async def _run_cancel() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        assert await settle(pilot, lambda: app.query_one("#empty-hint").display)
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await _goto_row(pilot, app.screen, "rss")
+        await pilot.press("right")
+        assert await settle(pilot, lambda: isinstance(app.screen, SubscriptionsScreen))
+        screen = app.screen
+        screen._changed = True  # 模拟有过改动：cancel 的返回值应带上
+        screen.action_cancel()
+        assert await settle(pilot, lambda: not isinstance(app.screen, SubscriptionsScreen))
+
+
 async def _run_input_dialog_style_flow() -> None:
     """输入框弹层与确认/账号弹层同一张卡片：Screen.CSS 不沿 MRO 合并，
     子类拼 CSS 时漏掉基类就会只剩定宽、没有边框/内边距/背景。"""

@@ -246,11 +246,13 @@ class ReadState:
         feeds = self._feeds_data()
         for it in items:
             entry = data.setdefault(it.source, {}).setdefault(it.id, {"seen": now, "read": 0.0})
+            was_unread = not entry.get("read")  # 已读条目不重复递减（同 mark_read 的守卫）
             entry["read"] = now
-            for member in _member_feeds(entry):
-                key = f"{it.source}/{member}"
-                if key in feeds:
-                    feeds[key] = max(0, feeds[key] - 1)
+            if was_unread:
+                for member in _member_feeds(entry):
+                    key = f"{it.source}/{member}"
+                    if key in feeds:
+                        feeds[key] = max(0, feeds[key] - 1)
         if items and feed:
             feeds[f"{items[0].source}/{feed}"] = 0
         self._flush()

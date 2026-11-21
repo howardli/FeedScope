@@ -394,10 +394,15 @@ async def _graphql(
         if status == 403:
             raise SourceError(t("errors.x_403", source=source)) from None
         if status and status not in _SHAPE_ROT:
-            raise SourceError(t("errors.x_status_retry", source=source, status=status)) from None
+            raise SourceError(
+                t("errors.x_status_retry", source=source, status=status), status=status
+            ) from None
         if not status and not body.get("errors"):
             return body
         if attempt == 0:  # 形状腐烂（errors/400/404/422）：重割一次，形状确实换过才重试
+            # 收割只补缺口（missing = not in _harvest）：先作废旧条目，会话中途
+            # 轮换的 queryId 才会被重割——否则 harvest 空转、拿回的还是陈旧形状
+            _harvest.pop(op_name, None)
             healed = await _deep_capture_detail() if op_name == _DETAIL_OP else None
             if healed is None:
                 await harvest()
@@ -481,8 +486,12 @@ class XTweetDetailLoader(DetailLoader):
     def _answers(self, results: list[dict[str, Any]]) -> list[Answer]:
         """推文 result 列表 -> Answer 批次（残卡丢弃），写入 doc。
 
-        去重登记（rest_id -> self._seen）在 parse._ordered_results 里随
-        摊平一起做——残卡也登记过，翻页不会再吐同一条。"""
+        本批去重登记（rest_id -> self._seen）在此完成：首批经 __init__ 与
+        翻页经 load_more 同走这里，残卡也登记（空 id 除外，与 dedup_by 同
+        语义）——conversationthread 重复交付的回复不会再吐成重复楼层。"""
+        for r in results:
+            if rid := str(r.get("rest_id") or ""):
+                self._seen.add(rid)
         new = [a for a in map(_reply_answer, results) if a is not None]
         self.doc.answers.extend(new)
         return new

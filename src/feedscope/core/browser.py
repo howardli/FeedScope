@@ -108,6 +108,12 @@ class ChannelTab:
             return self._page
 
         async def _open(ctx: Any) -> Any:
+            # 双检：get() 的检查与开页不在同一临界区——两个并发取数（刷新与
+            # 开详情）都观察到页签失效时会把 _open 排进 session 锁两次，各自
+            # 开页、后开的覆写 _page、先开的就此泄漏成孤儿页。锁内再看一眼，
+            # 有人开好了就复用它的。
+            if self._page is not None and not self._page.is_closed():
+                return self._page
             page = await ctx.new_page()
             try:
                 await page.goto(

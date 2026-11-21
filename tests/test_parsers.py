@@ -1116,3 +1116,12 @@ def test_x_tweet_detail_loader_empty_page_marks_done(monkeypatch) -> None:
     assert not loader.done
     assert asyncio.run(loader.load_more()) == []
     assert loader.done  # 空页判死
+
+
+def test_x_timeline_unwraps_visibility_results() -> None:
+    """时间线里的受限推文（TweetWithVisibilityResults 套 .tweet）同样上屏——
+    拆包不限于详情路径（同族端点同形态，不拆会被当残卡静默丢弃）。"""
+    wrapped = {"__typename": "TweetWithVisibilityResults", "tweet": _tweet_result("9001")}
+    entries = [_entry(entry_id="tweet-9001", item_content=_item_content(wrapped))]
+    it = _tweet_from_result(next(_iter_tweet_results(entries)))
+    assert it is not None and it.id == "status/9001"

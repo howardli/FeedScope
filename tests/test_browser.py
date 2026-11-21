@@ -57,3 +57,54 @@ def test_ua_cache_corrupt_file_is_miss(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(browser, "PROFILE_DIR", tmp_path / "profile")
     (tmp_path / "chrome-ua.json").write_text("not-json{")
     assert browser._read_ua_cache() is None
+
+
+def test_channel_tab_concurrent_get_opens_one_page(monkeypatch) -> None:
+    """两个并发 get() 都观察到页签失效（get 的检查与开页不在同一临界区）：
+    session 锁内双检复用——修复前各开一页、后写 _page 的覆盖先开的，
+    先开的页签泄漏成孤儿（浏览器会话关闭前一直占内存）。"""
+    import asyncio
+
+    from feedscope.core import browser
+    from feedscope.core.browser import ChannelTab
+
+    opened: list[_RacePage] = []
+
+    class _RacePage:
+        def __init__(self) -> None:
+            self.closed = False
+            opened.append(self)
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        async def goto(self, url: str, **kw: object) -> None:
+            await asyncio.sleep(0.01)  # 拉开窗口：两个 get 都在开页途中
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class _Ctx:
+        async def new_page(self) -> _RacePage:
+            await asyncio.sleep(0)
+            return _RacePage()
+
+    class _Session:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+
+        async def run(self, op, *args, **kwargs):
+            async with self._lock:  # 与 BrowserSession.run 同形：全 app 串行
+                return await op(_Ctx(), *args, **kwargs)
+
+    session = _Session()
+    monkeypatch.setattr(browser, "get_session", lambda: session)
+
+    async def _run() -> None:
+        tab = ChannelTab("https://example.com/", name="race")
+        first, second = await asyncio.gather(tab.get(), tab.get())
+        assert first is second, "并发取到同一页签"
+        assert len(opened) == 1, "只开了一页（无孤儿）"
+        assert not opened[0].closed
+
+    asyncio.run(_run())

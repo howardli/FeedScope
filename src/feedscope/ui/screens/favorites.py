@@ -16,6 +16,7 @@ from __future__ import annotations
 import webbrowser
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.events import Resize
@@ -258,7 +259,9 @@ class FavoritesScreen(Screen[None]):
             view.index = 0 if idx is None else min(idx, len(mounted) - 1)
             empty.display = False
         elif self.items:
-            empty.update(t("fav.empty_filter", q=self._filter or ""))
+            # 用户过滤词过 escape：Label/notify/sub_title 都解析 markup，词里
+            # 的 "[" 会被当样式标签吞掉或炸解析（主屏空态 main.py 同款处理）
+            empty.update(t("fav.empty_filter", q=escape(self._filter or "")))
             empty.display = True  # 有收藏但被过滤光：指路去关过滤
         else:
             empty.update(t("fav.empty"))
@@ -267,7 +270,7 @@ class FavoritesScreen(Screen[None]):
 
     def _update_status(self, total: int, mounted: int) -> None:
         if self._filter:
-            self.app.sub_title = t("fav.status_filtered", n=total, q=self._filter)
+            self.app.sub_title = t("fav.status_filtered", n=total, q=escape(self._filter))
         elif mounted < total:
             self.app.sub_title = t("fav.status_paged", n=total, m=mounted)
         else:
@@ -388,7 +391,8 @@ class FavoritesScreen(Screen[None]):
             return
         self._filter = new
         feedback.info(
-            self, t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear")
+            self,
+            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
         )
         # 弹层关闭还会触发 on_screen_resume 重建：都走 _rerender 的 exclusive
         # worker 串行，两路 clear/extend 交错会把同一行挂两遍（sidebar 竞态同族）

@@ -95,18 +95,16 @@ def _raise_compound_error(data: Any) -> None:
             raise LoginRequired(
                 t("errors.zhihu_session_stale", label=t("sources.zhihu.label"), status=status)
             )
-        raise SourceError(t("errors.zhihu_api_status", status=status))
+        raise SourceError(t("errors.zhihu_api_status", status=status), status=status)
     if err := data.get("__error"):
         raise SourceError(t("errors.zhihu_api_failed", error=err))
-
-
-_STALE_RE = re.compile(r"HTTP (40[13])")
 
 
 def _reauth_if_stale(exc: SourceError) -> None:
     """详情族端点（questions feeds 翻页 / comment_v5）的 401/403 = 登录态失效：
     转 LoginRequired 让 UI 走登录引导；其余状态不动作（调用方随后原样上抛）。
 
+    判定只看结构化 status（消息文本不参与——措辞随翻译变，控制流不能跟着变）。
     2026-11 用户实测：z_c0 服务端过期后列表照常（v3 信息流端点只认
     cookie、宽松放行）、点进详情一律 403、重新登录即恢复——v4 详情端点
     对失效会话的回绝就是 403，与版本门禁的 403 不同（那是 err 10003，
@@ -115,9 +113,9 @@ def _reauth_if_stale(exc: SourceError) -> None:
     与风控彻底区分，会话可能仍有效，清了等于强制重登（X 源 401 清
     cookie 的前提是语义唯一，这里不满足）。
     """
-    if m := _STALE_RE.search(str(exc)):
+    if exc.status in (401, 403):
         raise LoginRequired(
-            t("errors.zhihu_session_stale", label=t("sources.zhihu.label"), status=m.group(1))
+            t("errors.zhihu_session_stale", label=t("sources.zhihu.label"), status=exc.status)
         ) from exc
 
 
@@ -140,7 +138,7 @@ async def _fetch_json(url: str, referrer: str | None = None, zse93: bool = False
         url, source=t("sources.zhihu.label"), headers=_headers(zse93), referrer=referrer
     )
     if status:
-        raise SourceError(t("errors.zhihu_api_status", status=status))
+        raise SourceError(t("errors.zhihu_api_status", status=status), status=status)
     # 顶层不是 JSON 对象（登录墙 HTML 等）由 ChannelTab.fetch 统一报结构异常
     return body or {}
 
@@ -182,7 +180,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
         try:
             filled: dict[str, Any] = await _tab.eval(_COMPLETE_CHILDREN_JS, pending) or {}
             for r in data.get("data") or []:
-                kids = filled.get(str(r.get("id"))) or filled.get(r.get("id"))
+                kids = filled.get(str(r.get("id")))  # JS 侧对象键恒为字符串，无须回退原值
                 if kids:
                     r.setdefault("child_comments", []).extend(kids)
         except Exception:
@@ -235,7 +233,7 @@ async def _api_json(url: str, referer: str, zse93: bool = False) -> dict[str, An
     try:
         return await _fetch_json(url, referrer=referer, zse93=zse93)
     except SourceError as exc:
-        if "HTTP 401" in str(exc):
+        if exc.status == 401:
             raise LoginRequired(
                 t("errors.zhihu_session_expired", label=t("sources.zhihu.label"))
             ) from exc
@@ -306,7 +304,7 @@ async def open_question(qid: str) -> DetailLoader:
     try:
         _raise_compound_error(r["meta"])
     except SourceError as exc:
-        if "404" in str(exc):  # 元信息端点 404 = 问题本身没了，别让用户看 HTTP 码猜
+        if exc.status == 404:  # 元信息端点 404 = 问题本身没了，别让用户看 HTTP 码猜
             raise SourceError(
                 t("errors.zhihu_question_gone", label=t("sources.zhihu.label"))
             ) from exc
