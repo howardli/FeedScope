@@ -344,3 +344,21 @@ def test_saves_refuse_when_existing_file_unparsable(
     monkeypatch.setenv("FEEDSCOPE_CONFIG", str(fresh))
     save_language("en")
     assert tomllib.loads(fresh.read_text(encoding="utf-8"))["language"] == "en"
+
+
+def test_update_feeds_scalar_conflict_aborts_whole_save(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """顶层同名标量（手编冲突）与订阅表互斥：本次保存整体放弃——修复前
+    冲突后仍跑 enabled 联动并落盘，落下「enabled 里补了源、订阅表却没写」
+    的半套用中间态。"""
+    import logging
+
+    path = tmp_path / "sources.toml"
+    original = 'enabled = ["zhihu"]\nrss = "手写标量"\n'
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(path))
+    with caplog.at_level(logging.WARNING, logger="feedscope.core.config"):
+        update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
+    assert path.read_text(encoding="utf-8") == original, "半套用不落盘：文件分毫未动"
+    assert "未写入" in caplog.text

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
 from feedscope.core.const import safe_int
-from feedscope.core.display import fmt_count, votes_text
+from feedscope.core.display import fmt_count, points_comments_meta, votes_text
 from feedscope.core.i18n import t
 from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
@@ -66,16 +66,16 @@ _MEDIA_TYPES = {"image", "video", "gallery"}
 
 
 def _post_meta(a: dict[str, str], *, with_author: bool = False) -> str:
-    """帖子元信息列「N 点 · N 评 · r/版块（· u/作者）」：列表与详情共用。"""
-    parts = [
-        t("words.points", n=fmt_count(safe_int(a.get('score')))),
-        t("words.comments_short", n=fmt_count(safe_int(a.get('comment-count')))),
-    ]
-    if subreddit := str(a.get("subreddit-name") or ""):
-        parts.append(f"r/{subreddit}")
-    if with_author and (author := str(a.get("author") or "")):
-        parts.append(f"u/{author}")
-    return " · ".join(parts)
+    """帖子元信息列「N 点 · N 评 · r/版块（· u/作者）」：列表与详情共用
+    （前缀拼装收口在 core.display.points_comments_meta，与 HN 同形）。"""
+    subreddit = str(a.get("subreddit-name") or "")
+    author = str(a.get("author") or "") if with_author else ""
+    return points_comments_meta(
+        safe_int(a.get("score")),
+        safe_int(a.get("comment-count")),
+        f"r/{subreddit}" if subreddit else "",
+        f"u/{author}" if author else "",
+    )
 
 
 def parse_posts_html(html: str) -> list[FeedItem]:

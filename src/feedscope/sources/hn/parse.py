@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from feedscope.core.const import safe_int
-from feedscope.core.display import fmt_count
+from feedscope.core.display import points_comments_meta
 from feedscope.core.i18n import t
 from feedscope.core.media import text_to_md
 from feedscope.core.models import Answer, Comment, FeedItem, Floor
@@ -46,8 +46,12 @@ def _kids(node: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _keep(node: dict[str, Any]) -> bool:
-    """空壳节点（无正文也无孩子，典型是被删且无回复的评论）整支跳过。"""
-    return bool(_md(node.get("text")) or _kids(node))
+    """空壳节点（无正文也无孩子，典型是被删且无回复的评论）整支跳过。
+
+    只看原始 text 是否存在——跑 _md（html2text）只为判空会在 _comment_of
+    再跑一次，每条评论双倍转换；text 存在但转换后为空的病态节点按「有
+    正文」保底，展示侧自会落到已删除占位。"""
+    return bool(node.get("text") or _kids(node))
 
 
 def _author(node: dict[str, Any]) -> str:
@@ -88,14 +92,9 @@ _ACC = TreeAccessors(keep=_keep, kids_of=_kids, author_of=_author, comment_of=_c
 
 
 def _meta(points: int, comments: int, author: str) -> str:
-    """元信息列「N 点 · N 评 · 作者」：列表 hit 与详情 root 共用。"""
-    parts = [
-        t("words.points", n=fmt_count(points)),
-        t("words.comments_short", n=fmt_count(comments)),
-    ]
-    if author:
-        parts.append(author)
-    return " · ".join(parts)
+    """元信息列「N 点 · N 评 · 作者」：列表 hit 与详情 root 共用（前缀拼装
+    收口在 core.display.points_comments_meta，与 Reddit 同形）。"""
+    return points_comments_meta(points, comments, author)
 
 
 def parse_search(hits: list[dict[str, Any]]) -> list[FeedItem]:

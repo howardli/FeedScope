@@ -60,3 +60,15 @@ def view_count_text(n: int) -> str:
     if _use_wan():
         return t("display.visits_wan", n=n // 10000) if n >= 10000 else t("display.visits", n=n)
     return t("display.visits", n=fmt_count(n))
+
+
+def points_comments_meta(points: int, comments: int, *extra: str) -> str:
+    """元信息列「N 点 · N 评（· 追加段）」：讨论树源（HN / Reddit）同形拼装，
+    词键与计数折法收口在此——源 parse 层只传数值与自己的尾段（作者 / r/版块），
+    空尾段自动丢弃。第三个讨论树源接入时零成本同形。"""
+    parts = [
+        t("words.points", n=fmt_count(points)),
+        t("words.comments_short", n=fmt_count(comments)),
+    ]
+    parts.extend(e for e in extra if e)
+    return " · ".join(parts)

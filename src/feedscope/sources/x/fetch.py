@@ -373,6 +373,19 @@ def _url(op_name: str, op: _Op, extra_vars: dict[str, Any] | None) -> str:
     return f"{BASE}/i/api/graphql/{op.qid}/{op_name}?{urllib.parse.urlencode(params)}"
 
 
+async def _heal_shape(op_name: str, stale: _Op) -> _Op | None:
+    """形状腐烂后的重割：TweetDetail 走懒深度截获（features 只有这条路拿得到），
+    时间线端点作废旧条目后重 grep chunk——收割只补缺口（missing = not in
+    _harvest），不先作废就会话中途轮换的 queryId 永远重割不到。形状确实换过
+    才返回新形状（没换 = 真改版坏了，None 让调用方收口成人话指引）。"""
+    _harvest.pop(op_name, None)
+    healed = await _deep_capture_detail() if op_name == _DETAIL_OP else None
+    if healed is None:
+        await harvest()
+        healed = _resolve(op_name)
+    return None if healed is None or healed == stale else healed
+
+
 async def _graphql(
     op_name: str, extra_vars: dict[str, Any] | None, *, source: str
 ) -> dict[str, Any]:
@@ -399,16 +412,10 @@ async def _graphql(
             ) from None
         if not status and not body.get("errors"):
             return body
-        if attempt == 0:  # 形状腐烂（errors/400/404/422）：重割一次，形状确实换过才重试
-            # 收割只补缺口（missing = not in _harvest）：先作废旧条目，会话中途
-            # 轮换的 queryId 才会被重割——否则 harvest 空转、拿回的还是陈旧形状
-            _harvest.pop(op_name, None)
-            healed = await _deep_capture_detail() if op_name == _DETAIL_OP else None
+        if attempt == 0:  # 形状腐烂（errors/400/404/422）：重割出的新形状原参重试一次
+            healed = await _heal_shape(op_name, op)
             if healed is None:
-                await harvest()
-                healed = _resolve(op_name)
-            if healed is None or healed == op:
-                break
+                break  # 重割也没换形状：不空转重试，人话指引收口
             op = healed
     raise SourceError(t("errors.x_shape_stale", source=source))
 

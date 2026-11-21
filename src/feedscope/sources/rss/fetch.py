@@ -63,7 +63,7 @@ async def fetch_body(feed: Subscription) -> bytes:
         r = await http.get(
             feed.url,
             source=t("sources.rss.with_label", label=feed.label),
-            headers={"Accept": _ACCEPT},
+            headers=_conditional_headers(None),  # 无验证器 = 只有 Accept 的裸头
         )
         if r.status_code == 304:
             raise SourceError(t("errors.rss_304_no_cache", label=feed.label))

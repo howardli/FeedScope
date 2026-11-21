@@ -289,6 +289,25 @@ def save_enabled(ids: list[str]) -> None:
     _write_config(doc)
 
 
+def _sync_enabled_link(
+    doc: dict[str, Any], source_id: str, feeds: list[Subscription], *, drop_when_empty: bool
+) -> None:
+    """enabled 联动（语义见 update_feeds docstring）：订阅非空自动补、删到空按需摘。
+
+    坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，也不把
+    畸形值原样写回去——读侧本来就是当默认全启用；空列表是合法状态（零启用），
+    保留。
+    """
+    enabled = _enabled_from_data(doc)
+    if enabled is None:
+        return  # 未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义
+    if feeds and source_id not in enabled:
+        enabled.append(source_id)
+    if not feeds and drop_when_empty and source_id in enabled:
+        enabled.remove(source_id)
+    doc["enabled"] = enabled
+
+
 def update_feeds(
     source_id: str, feeds: list[Subscription], *, drop_enabled_when_empty: bool = False
 ) -> None:
@@ -298,7 +317,6 @@ def update_feeds(
     → 自动补上（加订阅显然是想用，省掉再开 TUI 勾一次）。删到空是否摘
     enabled 由 drop_enabled_when_empty 决定：rss / telegram 摘（feeds 全
     来自订阅，没订阅就没有任何流）；reddit 不摘（还有首页/热门内置流）。
-    enabled 未配置不动——缺省本就是全启用，写了反而丢失「未配置」语义。
     坏配置拒绝落盘（_read_writable）：订阅变更只在内存，doctor 修复后重做。
     """
     doc = _read_writable()
@@ -306,39 +324,31 @@ def update_feeds(
         return
     section = doc.get(source_id)
     if section is not None and not isinstance(section, dict):
-        # 顶层已有同名标量（手编冲突）：不能既保它又挂 [source_id] 段——
-        # 保用户数据优先，这次订阅落不了盘，日志可见
+        # 顶层已有同名标量（手编冲突）：不能既保它又挂 [source_id] 段——保用户
+        # 数据优先，本次保存整体放弃（早退而不是半套用，否则会落下「enabled
+        # 里补了源、订阅表却没写」的中间态），日志可见、doctor 可修
         logger.warning(
             "配置顶层已存在非表键 %r，%d 条订阅未写入（请手动清理该键）",
             source_id, len(feeds),
         )
+        return
+    if section is None:
+        section = tomlkit.table()
+        doc[source_id] = section
+    if feeds:
+        table = tomlkit.table()
+        for f in feeds:
+            # 内联表一行一条（手编/比对都清爽）；label/url 的引号转义交给 tomlkit
+            row = tomlkit.inline_table()
+            row["url"] = f.url
+            row["label"] = f.label
+            table[f.key] = row
+        section["feeds"] = table
     else:
-        if section is None:
-            section = tomlkit.table()
-            doc[source_id] = section
-        if feeds:
-            table = tomlkit.table()
-            for f in feeds:
-                # 内联表一行一条（手编/比对都清爽）；label/url 的引号转义交给 tomlkit
-                row = tomlkit.inline_table()
-                row["url"] = f.url
-                row["label"] = f.label
-                table[f.key] = row
-            section["feeds"] = table
-        else:
-            section.pop("feeds", None)
-            if not section:  # 没剩任何键：空段不保留（有手编键则连段一起留着）
-                doc.pop(source_id, None)
-    # 坏 enabled（字符串/表/全是非 str）按「未配置」处理：既不参与联动，
-    # 也不把畸形值原样写回去——读侧本来就是当默认全启用；空列表是
-    # 合法状态（零启用），保留
-    enabled = _enabled_from_data(doc)
-    if enabled is not None:
-        if feeds and source_id not in enabled:
-            enabled.append(source_id)
-        if not feeds and drop_enabled_when_empty and source_id in enabled:
-            enabled.remove(source_id)
-        doc["enabled"] = enabled
+        section.pop("feeds", None)
+        if not section:  # 没剩任何键：空段不保留（有手编键则连段一起留着）
+            doc.pop(source_id, None)
+    _sync_enabled_link(doc, source_id, feeds, drop_when_empty=drop_enabled_when_empty)
     _write_config(doc)
 
 

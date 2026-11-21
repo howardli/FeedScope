@@ -142,6 +142,8 @@ async def merge_feeds(
     - 倒序合并用稳定排序：缺时间的条目沉底且保持订阅书写顺序
     - dedup_urls 剔除跨订阅的重复 URL（转载/聚合源常见），保留书写顺序靠前
       的订阅版本；按次注入的差异（怎么拉、怎么排、错误标签叫什么）走参数
+    - sort_key 取各源 extra["published"] 的原生形态（RSS float epoch /
+      Telegram ISO 串）——键类型源内一致即可，不跨源比较（跨源聚合不在功能面）
     - 一次性快照：与各单订阅流的增量 Loader 相对（聚合流不做翻页）
     """
     sem = asyncio.Semaphore(_MERGE_PARALLEL)
@@ -408,7 +410,10 @@ class Source(ABC):
     """
 
     source_id: ClassVar[str]  # 注册键，如 "zhihu"
-    label: ClassVar[str]  # 展示名的文案键（如 "sources.zhihu.label"），展示经 label_text 解析
+    # 展示名：文案键（如知乎 "sources.zhihu.label"，经 label_text 解析）或
+    # ASCII 字面量（HN / Reddit / X / V2EX / RSS / Telegram——专有名词两种
+    # 语言同形，键化六个永不翻译的键是反优雅；t() 对无点字符串直通兜住）
+    label: ClassVar[str]
     # feeds/feed_labels 两形同用（故不作 ClassVar）：类体写内置默认流，
     # __init__ 按配置合成实例视图（hide 剔减 / 订阅拼加），分派读实例
     feeds: list[str] = []  # 命名信息流；空 = 无可选流（不进 Tab）
