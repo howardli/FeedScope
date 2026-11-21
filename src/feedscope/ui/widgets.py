@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 from textual.binding import Binding
 from textual.events import Resize
@@ -16,9 +16,6 @@ from textual.widgets import ListView, Static
 
 from feedscope.ui import Bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE
-
-if TYPE_CHECKING:
-    pass  # 运行时导入会与 main.py 成环
 
 
 class SourceTabPressed(Message):

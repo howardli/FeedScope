@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 import webbrowser
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -54,9 +54,6 @@ from feedscope.ui.widgets import (
 _CJK_HINT_INTERVAL = 30.0  # 中文输入指路提示的节流间隔：连打中文只提示一次，不刷屏
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    pass  # 运行时导入会与 app.py 成环
 
 
 class MainScreen(MainReadScreen):
@@ -165,7 +162,7 @@ class MainScreen(MainReadScreen):
         retranslate_bindings(self)
         retranslate_bindings(self.query_one("#feed", FeedListView))
         self.query_one("#feed", ListView).focus()
-        self.run_worker(self._start())  # 启动序列（首启引导 + 初始渲染）在 MainSetupMixin
+        self.run_worker(self._start())  # 启动序列（首启引导 + 初始渲染）在 MainSetupScreen
 
     # ---- 顶部 tab 条 / 左侧信息流边栏（点击与键盘共用同一条动作路径）----
 

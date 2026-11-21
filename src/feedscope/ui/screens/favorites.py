@@ -117,7 +117,7 @@ class FavoritesScreen(Screen[None]):
 
     @property
     def _tui(self) -> FeedScopeApp:
-        """self.app 的收窄视图（同 MainScreen._tui 的既有模式）。"""
+        """self.app 的收窄视图（同 MainSetupScreen._tui 的既有模式）。"""
         return cast("FeedScopeApp", self.app)
 
     def compose(self) -> ComposeResult:

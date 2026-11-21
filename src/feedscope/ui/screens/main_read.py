@@ -205,7 +205,7 @@ class MainReadScreen(MainNavScreen):
     # ---- 动作：清仓与单条切换 ----
 
     def action_mark_all_read(self) -> None:
-        """Ctrl+Shift+R：当前流全部标已读。过滤态下标的是**全部**（确认文案即全量数）。"""
+        """Ctrl+A：当前流全部标已读。过滤态下标的是**全部**（确认文案即全量数）。"""
         if not self.items:
             feedback.info(self, t("main.toast_no_selection"))
             return

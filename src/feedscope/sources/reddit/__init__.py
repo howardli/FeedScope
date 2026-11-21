@@ -159,7 +159,7 @@ class RedditSource(Source):
         )  # 订阅 key 即 subreddit 名
         await require_login(t("errors.what_feed", label=label))
         loader = RedditFeedLoader(page, label)
-        await loader.load_more()  # 首批（判登在此抛 LoginRequired）
+        await loader.load_more()  # 首批（判登在上一行 require_login 已完成）
         if name == "home" and not loader.items:
             # 首页是账号在 Reddit 站内「关注版块」的聚合：账号没关注任何版块
             # 就是真空（实测新号如此），不是改版——通用 0 条守卫会误导

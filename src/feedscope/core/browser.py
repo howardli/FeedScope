@@ -49,9 +49,9 @@ _HEADLESS_UA_RE = re.compile(r"HeadlessChrome/[\d.]+")
 async def run_page(context: Any, op: Callable[[Any], Awaitable[_T]]) -> _T:
     """开新页执行 op(page) 并保证页签关闭（成功、异常、被取消都关）；页不跨调用存活。
 
-    适用于「开页 → 取数 → 关页」的瞬态操作（知乎热榜）。
-    需要跨多次 load_more 活着的页签不要用它（知乎信息流/详情），
-    那类页签由持有它的 Loader 用 close_page() 负责关闭。
+    适用于「开页 → 取数 → 关页」的瞬态操作（X 详情的懒深度截获）。
+    需要跨调用活着的页签不要用它：常驻通道页签由 ChannelTab 自管（eval
+    弃页即 close_page），Loader 持有的活页签由其 close() 负责。
     """
     page = await context.new_page()
     try:
@@ -232,7 +232,11 @@ def _read_ua_cache() -> str | None:
     """读 UA 缓存（含 Chrome 版本探针的完整结果）；过期/缺失/损坏返回 None。"""
     try:
         data = json.loads((PROFILE_DIR.parent / "chrome-ua.json").read_text())
-        if data.get("ua") and time.time() - data.get("ts", 0) < _UA_CACHE_TTL:
+        if (
+            isinstance(data, dict)
+            and data.get("ua")
+            and time.time() - data.get("ts", 0) < _UA_CACHE_TTL
+        ):
             return str(data["ua"])  # json.loads 是 Any，str() 收口（get 已守卫其确为串）
     except (OSError, ValueError):
         pass
