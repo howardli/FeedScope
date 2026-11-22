@@ -47,7 +47,7 @@ body:
       label: "`feedscope doctor` output / doctor 输出"
       description: Run it in a terminal and paste the whole output — it includes version and environment in one shot.
       placeholder: |
-        FeedScope doctor v0.1.0
+        FeedScope doctor vX.Y.Z
         OK  Python 3.12
         ...
       render: text

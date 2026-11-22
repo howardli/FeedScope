@@ -38,11 +38,11 @@ Nothing to do — `GITHUB_TOKEN` with `contents: write` (declared in
 #    (Keep a Changelog style) and set its date.
 
 # 2. Bump the version — single source of truth:
-#    src/feedscope/__init__.py  (__version__ = "0.2.0")
+#    src/feedscope/__init__.py  (__version__ = "0.x.y")
 
 # 3. Tag and push:
-git commit -am "release: v0.2.0"
-git tag v0.2.0
+git commit -am "release: v0.x.y"
+git tag v0.x.y
 git push origin main --tags
 ```
 

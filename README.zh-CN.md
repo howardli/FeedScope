@@ -9,69 +9,98 @@
 
 **语言**：中文 · [English](README.md)
 
+[安装](#安装) · [键位](#键盘快捷键) · [站点](#站点一览) · [配置](#源与信息流配置) · [路线图](#路线图) · [更新日志](CHANGELOG.md)
+
 ## 动图演示
 
 知乎热榜 → X 时间线 → 推文详情（自动译文、引用块）→ Reddit → 帖子详情 → HN → story 详情 → 回复树 → V2EX → 主题详情——全程只是 `Tab` 与 `Enter`：
 
-![FeedScope 演示](docs/demo.gif)
+![FeedScope 演示](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/demo.gif)
+
+## 快速上手
+
+要求：Python 3.11+、本机已装 Google Chrome；支持 macOS 与 Linux（Windows 暂不支持）。
+
+```bash
+pipx install feedscope   # 或：uv tool install feedscope
+feedscope                # Tab 切站点，Enter 进详情
+```
+
+装完跑 `feedscope doctor` 自检环境。源码安装与镜像配置见[安装](#安装)。
+
+## 为什么选 FeedScope？
+
+- **登录墙源走你自己的浏览器**——知乎、X、Reddit 的取数由常驻页签的真 Chrome 发出：TLS、头序、cookie 与登录会话完全一致，非浏览器画像的封锁根本不适用。与常见终端 RSS 阅读器不同，FeedScope 读的是你真正在刷的那些站——零 API key、零抓取代理
+- **扛得住站点改版**——X 轮换的 GraphQL queryId 失效时自动从当前部署重收割；Reddit 版本头 403 自愈；`feedscope probe` 一条命令定位任何断点
+- **纯本地**——已读、收藏、列表缓存都在本机明文文件里；无账号、无遥测；`feedscope favorites export` 随时把收藏带走（无锁定）
+- **读态不丢**——未读圆点扛过刷新与重启；重启先画缓存秒开列表，断网照样可翻（RSS / Telegram 正文也离线可读）
+- **工程质量打底**——554 个离线测试、全量 mypy strict、中英双语、IME 友好的非打印键位；新主题/新语言都是一个 TOML 文件，放进去即被自动发现
 
 ## 特性
 
-- **多源聚合**：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，Reddit 首页 / 热门 / 自选 subreddit，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，Telegram 频道订阅，一个界面切换
-- **RSS 订阅**：任意 RSS / Atom 源，「全部」流按时间合并（跨订阅去重、单源失败不拖垮），终端内读 feed 自带全文，条件请求刷新对源友好
-- **终端内完整阅读**：信息流 → 问题 → 回答 → 评论，逐层按需加载
-- **已读与未读**：行首 `●` 标未读，打开即灭（`Ctrl+R` 可改回），刷新/重启都不动它；「N 新」计数在顶部状态行；列表缓存本地，重启秒开、断网可翻（RSS / Telegram 详情离线可读）
-- **收藏/稍后读**：`Ctrl+F` 收藏（列表或阅读中都行），`F3` 看跨源收藏列表；存全量快照——条目从热榜流走、回答被删之后仍可读，`feedscope favorites export` 随时带走防锁定
-- **HN 讨论树**：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
-- **X 外文推自动附 Grok 译文**，媒体记号 `[图片]` / `[视频]` 可点击直达原图 / 视频直链
-- **登录闭环**：未登录自动弹 Chrome 扫码 / 输密码，`Ctrl+U` 一键登出换账号
-- **源按需启用**：首启勾选，`F2` 随时增删，站点顺序 = 勾选顺序
-- **中英双语**：首启选语言（跟随系统预选），`Ctrl+L` 随时改（重启生效）；文案按语言分文件维护，新增语言放一个 TOML 即被自动发现
-- **编辑器风双主题**：深色（VS Code Dark+ 取向，默认）与浅色（Light+ 取向），`Ctrl+T` 实时切换；一文件一主题，放一个 TOML 即被自动发现；已读条目标题置灰，扫读一眼分层；`Ctrl+Y` 任意层复制条目链接
-- **键位输入法友好**：主键位均为非打印键（Tab / 方向键 / 功能键），中文状态照常可用；少量列表动作用 ASCII 符号键（`]` `[` `/` `,` `.`）
-- **改版自检**：解析出 0 条立即报「站点可能已改版」，`feedscope probe` 一条命令巡检定位
+**信息源**
+
+- 多源聚合：知乎热榜 / 推荐 / 关注，X 推荐 / 正在关注，Reddit 首页 / 热门 / 自选 subreddit，HN 首页 / 最新 / Ask / Show，V2EX 热门 / 最新，Telegram 频道订阅——一个界面，`Tab` 切换
+- RSS / Atom 订阅：「全部」流按发布时间合并（跨订阅去重、单源失败不拖垮），feed 自带全文终端内读，条件请求刷新对源友好
+- 源按需启用：首启勾选，`F2` 随时增删；站点顺序 = 勾选顺序
+
+**阅读**
+
+- 终端内完整阅读：信息流 → 问题 → 回答 → 评论，逐层按需加载
+- 已读与未读：行首 `●` 标未读、打开即灭（`Ctrl+R` 可改回），刷新/重启都不动它；「N 新」计数在顶部状态行；列表缓存本地——重启秒开、断网可翻（RSS / Telegram 详情离线可读）
+- 收藏/稍后读：`Ctrl+F` 收藏（列表或阅读中都行），`F3` 看跨源收藏列表；存全量快照——条目从热榜流走、回答被删之后仍可读，`feedscope favorites export` 随时带走（防锁定）
+- HN 讨论树：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
+- X 特色：外文推自动附 Grok 译文，`[图片]` / `[视频]` 记号可点击直达原图 / 视频直链
+- 登录闭环：未登录自动弹 Chrome 扫码 / 输密码，`Ctrl+U` 一键登出换账号
+
+**终端原生**
+
+- 中英双语：首启选语言（跟随系统预选），`Ctrl+L` 随时改（重启生效）；文案按语言分文件维护
+- 编辑器风双主题：深色（VS Code Dark+ 取向，默认）与浅色（Light+ 取向），`Ctrl+T` 实时切换；已读条目标题置灰，扫读一眼分层；`Ctrl+Y` 任意层复制条目链接
+- 键位输入法友好：主键位均为非打印键（Tab / 方向键 / 功能键），中文状态照常可用；少量列表动作用 ASCII 符号键（`]` `[` `/` `,` `.`）
+- 改版自检：解析出 0 条立即报「站点可能已改版」，`feedscope probe` 一条命令巡检定位
 
 ## 界面一览
 
 知乎热榜（左侧信息流边栏，元信息列右对齐自适应）：
 
-![知乎热榜列表](docs/screenshot-zhihu.png)
+![知乎热榜列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-zhihu.png)
 
 X 推荐时间线（署名「名字 @handle」完整可见，媒体记号可点击直达原图）：
 
-![X 时间线列表](docs/screenshot-x.png)
+![X 时间线列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-x.png)
 
 X 推文详情（媒体直链、译文块、引用块）：
 
-![X 推文详情](docs/screenshot-detail.png)
+![X 推文详情](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-detail.png)
 
 Reddit 热门（元信息列「N 点 · N 评 · r/版块」，subreddit 订阅在 F2 里加）：
 
-![Reddit 热门列表](docs/screenshot-reddit.png)
+![Reddit 热门列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit.png)
 
 Reddit 帖子详情（markdown 自述正文 + 评论楼层带赞数，「[置顶]」标出版务帖）：
 
-![Reddit 详情](docs/screenshot-reddit-detail.png)
+![Reddit 详情](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit-detail.png)
 
 HN 首页（免登录即用，「N 点 · N 评 · 作者」就是讨论热度雷达）：
 
-![HN 首页列表](docs/screenshot-hn.png)
+![HN 首页列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn.png)
 
 HN story 详情（原文一行 + 顶层评论当楼层，楼层头带「N 条回复」引导）：
 
-![HN 详情](docs/screenshot-hn-detail.png)
+![HN 详情](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn-detail.png)
 
 HN 评论的回复树（深层讨论拍平成两层，隔层回复带 `@父作者` 前缀保住对话指向）：
 
-![HN 回复树](docs/screenshot-hn-thread.png)
+![HN 回复树](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn-thread.png)
 
 V2EX 热门（免登录，元信息列「节点 · N 回复 · 用户名」扫一眼就是板块和热度）：
 
-![V2EX 热门列表](docs/screenshot-v2ex.png)
+![V2EX 热门列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-v2ex.png)
 
 V2EX 主题详情（markdown 正文 + 回复平铺当楼层，楼层号对齐站内楼层文化）：
 
-![V2EX 主题详情](docs/screenshot-v2ex-detail.png)
+![V2EX 主题详情](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-v2ex-detail.png)
 
 ## 安装
 
@@ -104,9 +133,10 @@ feedscope
 
 | 按键 | 功能 |
 | --- | --- |
-| `Tab` / `Shift+Tab` | 切换站点（切后键盘先落在左侧边栏挑流，`Enter` 回列表） |
+| `Tab` / `Shift+Tab` | 切换站点（切后键盘先落在左侧边栏挑流，`Enter` 回列表；焦点已在源栏时，`Tab` 原地连切） |
 | `←` / `→` | 区域移动：列表 `←` 进边栏（停当前流）、`→` 抵右缘；边栏 `→` 回列表、`←` 去源栏；源栏就地切站；详情换上 / 下一篇；回复层换楼层 |
 | `↑` / `↓` | 移动选中项 / 滚动正文；任何区域的首行再 `↑` 都上探顶部源栏 |
+| `Home` / `End` / `PgUp` / `PgDn` | 滚动列表视口（仅列表态生效） |
 | `Enter` | 进详情；详情屏内进「正在阅读」的那个楼层（回答 / 评论）的讨论层；边栏 / 源栏聚焦时回列表 |
 | `Ctrl+N` | 加载更多（列表 / 楼层 / 评论，逐层各自生效） |
 | `Ctrl+O` | 浏览器打开当前条目 |
@@ -122,12 +152,19 @@ feedscope
 | `Ctrl+U` | 账号：登录 / 登出 |
 | `Ctrl+L` | 界面语言：选择后保存，重启 `feedscope` 生效 |
 | `Ctrl+T` | 界面主题：选择后即时生效并保存（无需重启） |
-| `F2` | 源管理：勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS / Reddit / Telegram） |
+| `F2` | 源管理：`Space` / `Enter` 勾选启用 / 停用，保存即生效；`→` 进订阅管理（RSS / Reddit / Telegram） |
 | `Esc` | 逐层返回（边栏 / 源栏聚焦时先回列表） |
-| `F1` | 键位帮助：全局 + 当前屏的完整键位表（页脚只亮 `F1`/`Esc`，其余键都在这里） |
-| `Ctrl+Q` | 退出（`Ctrl+C` 连按两次兜底） |
+| `F1` | 键位帮助：全局 + 当前屏的完整键位表（页脚只亮 `F1`/`Esc`，其余键都在这里；`Enter` / `F1` 关闭） |
+| `Ctrl+Q` | 退出（`Ctrl+C` 只弹提示指向 `Ctrl+Q`，本身不退出） |
 
-键位以非打印键为主，输入法中文状态照常可用（少量 ASCII 符号键动作：`]` `[` `/` `,` `.`）；误把中文打进来会弹提示。顶部 tab 条与左侧边栏可点击，与键盘走同一条路径。方向键按 CLI 惯例处理：`↑`/`↓` 在当前列表里移动选中；任何区域的首行再 `↑` 都上探源栏（顶部区域在所有内容之上），源栏 `↓` 下探边栏（与边栏首流 `↑` 互逆）；其余区域移动走横向——源栏里 `←`/`→` 就地切站，边栏里 `↑`/`↓` 就地切流、`→` 回列表、`←` 去源栏，列表里 `←` 进边栏（停当前流）、`→` 抵右缘；`Enter` / `Esc` 随时回列表。弹层（源管理 / 订阅管理 / 输入 / 确认 / 账号）里方向键同样移动焦点：列表到底再 `↓` 进按钮行、`↑` 返回列表、`←`/`→` 在按钮间平移、`Enter` 按下聚焦的按钮。
+键位以非打印键为主，输入法中文状态照常可用（少量 ASCII 符号键动作：`]` `[` `/` `,` `.`）；误把中文打进来（输入法漏字）会弹提示。顶部 tab 条与左侧边栏可点击，与键盘走同一条路径。
+
+方向键按 CLI 惯例处理：
+
+- `↑`/`↓` 在当前列表里移动选中；任何区域的首行再 `↑` 都上探源栏（顶部区域在所有内容之上），源栏 `↓` 下探边栏（与边栏首流 `↑` 互逆）
+- 其余区域移动走横向：列表里 `←` 进边栏（停当前流）、`→` 抵右缘；边栏里 `↑`/`↓` 就地切流、`→` 回列表、`←` 去源栏；源栏里 `←`/`→` 就地切站
+- `Enter` / `Esc` 随时回列表
+- 弹层（源管理 / 订阅管理 / 输入 / 确认 / 账号）里方向键同样移动焦点：列表到底再 `↓` 进按钮行、`↑` 返回列表、`←`/`→` 在按钮间平移、`Enter` 按下聚焦的按钮
 
 ### 已读与离线
 
@@ -149,13 +186,13 @@ feedscope
 
 ### 界面语言
 
-首启先弹语言选择（预选跟随系统语言，`Enter` 确认、`Esc` 沿用默认），之后 `Ctrl+L` 随时修改；修改保存到配置后**重启 `feedscope` 生效**（数字/单位等文案在抓取时就随语言烙进数据，语言随进程固定是最稳的模型）。**未配置语言时默认英文**——中文用户首启直接回车选简体中文，或 `Ctrl+L` 随时切换。子命令（`doctor` / `probe` / `rss` / `login`）的输出与 TUI 同语言：
+首启先弹语言选择（预选跟随系统语言，`Enter` 确认、`Esc` 沿用默认），之后 `Ctrl+L` 随时修改；修改保存到配置后**重启 `feedscope` 生效**（数字/单位等文案在抓取时就随语言烙进数据，语言随进程固定是最稳的模型）。**未配置语言时默认英文**——中文用户首启直接回车选简体中文，或 `Ctrl+L` 随时切换。子命令（`doctor` / `probe` / `rss` / `login` / `favorites` / `cache`）的输出与 TUI 同语言：
 
 ```toml
 language = "zh-CN"   # 或 "en"（缺省）；删掉这行 = 回到默认英文（只有全新安装会重新弹选）
 ```
 
-新增一种语言：复制 `src/feedscope/core/i18n/zh-CN.toml` 为 `<语言码>.toml`（如 `ja.toml`），改 `[meta]` 里的自称（`name = "日本語"`）并翻译文案——语言选择屏自动发现它，零代码改动。两个语言文件的键树由测试强制一致（`tests/test_i18n.py` 奇偶校验），漏译会红；`src` 里硬编码中文文案同样被测试拦下（`tests/test_i18n_no_hardcoded.py`）。
+新增一种语言：复制 `src/feedscope/core/i18n/en.toml` 为 `<语言码>.toml`（如 `ja.toml`），改 `[meta]` 里的自称（`name = "日本語"`）并翻译文案——语言选择屏自动发现它，零代码改动。各语言目录的键树由测试强制一致（`tests/test_i18n.py`），漏译会红；`src` 里硬编码文案（中英文都算）同样被测试拦下（`tests/test_i18n_no_hardcoded.py`）。
 
 ### 界面主题
 
@@ -173,7 +210,7 @@ timezone = "Asia/Tokyo"   # 任意 IANA 时区名；删掉该行 / 写错 = 回�
 
 ### 登录 / 登出
 
-知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。
+知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。登录会话存在本机 Chrome profile（Linux 为 `~/.cache/feedscope/chromium-profile/`）——详见 [SECURITY](SECURITY.md)。
 
 登录态被服务端吊销（改密码、异地登出、定期轮换）不会让你对着 403 猜：X 的 401 语义唯一（清失效 cookie 后引导重登）；知乎会话半失效时列表照常、详情端点回 403（实测形态），同样在详情/回答/评论层转成登录引导而不是裸 HTTP 码，且失效一旦被记下 Ctrl+U 就直接给登录框（躺着的失效 cookie 会骗过判登，否则得先登出再登录）；知乎、Reddit 与 X 的取数都走常驻浏览器页签的真 Chrome（TLS/头序/cookie 与登录会话完全自洽，不吃非浏览器画像的封锁）。Reddit 的判据是 token_v2 的 JWT 本地解码（登录态 `sub="user"`、匿名态 `sub="loid"`）——它的判登 cookie 匿名流量也发（打开登录页即有，cookie 出现 ≠ 登录完成），而本地解码零网络零伪造，「登录成功」和判登门都以此为准，反复要求登录的循环在结构上不可能。
 
@@ -195,7 +232,7 @@ timezone = "Asia/Tokyo"   # 任意 IANA 时区名；删掉该行 / 写错 = 回�
 feedscope [tui]           # 启动 TUI（默认）
 feedscope login [源 id]   # 弹浏览器登录（默认 zhihu，如 x、reddit）
 feedscope probe [源 id…]  # 全源巡检：定位改版，原始样本落盘
-feedscope doctor          # 环境自检（Chrome / profile / 配置）
+feedscope doctor          # 环境自检（Chrome / profile / 配置 / 状态 / 日志）
 feedscope cache [clear]   # 列表缓存体检 / 清空（纯派生数据，无损）
 feedscope rss add <url> [--key k --label 名]  # 加订阅：feed 直链 / 站点首页（自动发现）/ OPML 路径
 feedscope rss list | remove <key>             # 查看 / 删除订阅
@@ -204,11 +241,15 @@ feedscope rss import <x.opml> | export [x.opml]  # OPML 批量迁入（幂等合
 feedscope favorites [export [x.md]]           # 收藏列表 / 导出 Markdown（防锁定）
 ```
 
-全局旗标：`--verbose`（日志提到 DEBUG，子命令同时镜像 stderr）、`--log-file <路径>`（换日志位置）与 `--version`。
+全局旗标：`--verbose`（日志提到 DEBUG，子命令同时镜像 stderr）、`--log-file <路径>`（换日志位置）与 `--version`。`rss export` / `favorites export` 不带文件参数时输出到 stdout（方便重定向）。
+
+环境变量：`FEEDSCOPE_NO_PREWARM=1` 启动不预拉浏览器（慢机器友好）；`FEEDSCOPE_SAMPLE_DIR=<目录>` 让普通运行也把原始响应落盘（与 `probe` 同款样本）；`FEEDSCOPE_CONFIG` / `FEEDSCOPE_LOG_FILE` 换配置 / 日志位置。
+
+退出码约定（方便脚本分支）：`probe` 巡检有失败退 1、未知源 id 退 2；`rss add` / `rss import` 坏 OPML 退 2，`add` 订阅冲突另退 1；`doctor` 自检有失败退 1。
 
 ### 故障排查与日志
 
-每次运行都会写日志文件（INFO 级），位置见 `feedscope doctor` 的信息行——macOS 是 `~/Library/Logs/feedscope/feedscope.log`，Linux 走 systemd 用户日志目录，1MB 滚动 ×3。出问题时答案多半已经在里面：带异常栈的抓取失败、自愈路径（X queryId 重收割、Reddit 版本头）悄悄回落的过程、登录判据的报错。`--verbose` 提到 DEBUG 看细节；`FEEDSCOPE_LOG_FILE` 永久换位置。TUI 里任何日志都不走 stderr（会打花重绘流），文件是唯一去处。
+每次运行都会写日志文件（INFO 级），位置见 `feedscope doctor` 的信息行——macOS 是 `~/Library/Logs/feedscope/feedscope.log`，Linux 在 `~/.local/state/feedscope/log/feedscope.log`，1MB 滚动 ×3。出问题时答案多半已经在里面：带异常栈的抓取失败、自愈路径（X queryId 重收割、Reddit 版本头）悄悄回落的过程、登录判据的报错。`--verbose` 提到 DEBUG 看细节；`FEEDSCOPE_LOG_FILE` 永久换位置。TUI 里任何日志都不走 stderr（会打花重绘流），文件是唯一去处。
 
 ### 源与信息流配置
 
@@ -300,6 +341,14 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 「全部」流 = 全部频道按发布时间倒序合并，单频道失败只损失自己的条目；每频道也各自成流（可 `hide` 单藏）
 - 元信息列「N 观看」是频道帖的热度雷达；「全部」流里每行带源名列标频道名（与收藏列表同款，出处成列不挤元信息）；正文行内 HTML 转 markdown、图片/视频换 `[图片]` / `[视频]` 记号（视频无直链，记号指向帖子页）
 - 详情读列表自带正文（零请求）；单频道流 `Ctrl+N` 走 `?before=` 游标往回翻历史帖；无评论层（频道讨论组在预览页拿不到）
+
+## 路线图
+
+- Windows 支持（当前为 macOS 与 Linux）
+- 更多源——欢迎到 [discussions](https://github.com/howardli/FeedScope/discussions) 提案；新增一个源被设计成只动一个包的活
+- 本地缓存条目的全文搜索
+
+未排期；0.x 的优先级跟着用户反馈走。
 
 ## 社区
 

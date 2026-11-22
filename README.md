@@ -9,69 +9,98 @@
 
 **Language**: English · [中文](README.zh-CN.md)
 
+[Install](#install) · [Keyboard](#keyboard) · [Sources](#sources) · [Config](#source--feed-config) · [Roadmap](#roadmap) · [Changelog](CHANGELOG.md)
+
 ## Demo
 
 Zhihu Hot → X timeline → post detail (auto translation, quoted post) → Reddit → post detail → HN → story detail → reply tree → V2EX → topic detail — everything below is just `Tab` and `Enter`:
 
-![FeedScope demo](docs/demo.gif)
+![FeedScope demo](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/demo.gif)
+
+## Quick start
+
+Requires Python 3.11+ and a local Google Chrome; macOS and Linux (Windows not yet supported).
+
+```bash
+pipx install feedscope   # or: uv tool install feedscope
+feedscope                # Tab switches site, Enter opens detail
+```
+
+Run `feedscope doctor` afterwards to self-check the environment. From-source install and mirror tips: [Install](#install).
+
+## Why FeedScope?
+
+- **Login-walled sources through your own browser** — Zhihu, X and Reddit fetch through a resident real-Chrome tab: TLS, header order and cookies are identical to your login session, so non-browser-fingerprint blocking simply doesn't apply. Unlike typical terminal RSS readers, FeedScope reads the sources you actually browse — no API keys, no scraping proxies
+- **Survives site churn** — X's rotating GraphQL queryIds are re-harvested automatically from the live deployment on failure; Reddit's client-version header self-heals on 403; `feedscope probe` pinpoints any breakage in one command
+- **Truly local** — read state, favorites and list caches live in plain local files; no account, no telemetry; `feedscope favorites export` takes your saved items anywhere (no lock-in)
+- **Reading state that sticks** — unread dots survive refreshes and restarts; restarts paint the cache instantly, and offline keeps lists (and RSS / Telegram bodies) readable
+- **Built to last** — 554 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
 
 ## Features
 
-- **Multi-source aggregation**: Zhihu Hot / Recommend / Following, X For You / Following, Reddit Home / Popular / custom subreddits, HN Front / New / Ask / Show, V2EX Hot / Latest, Telegram channel subscriptions — one UI, `Tab` to switch
-- **RSS subscriptions**: any RSS / Atom feed; the "All" stream merges by publish time (cross-feed dedup, a dead feed never drags others down); read feed-provided full text in-terminal; conditional requests keep refreshes polite to sources
-- **Full in-terminal reading**: feed → question → answers → comments, loaded per layer on demand
-- **Read state & offline**: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back) — refreshes and restarts never touch it; the "N new" count lives in the status line; lists are cached locally, so restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
-- **Favorites / read-later**: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; a full snapshot is stored — items stay readable after they scroll off hot lists or get deleted, and `feedscope favorites export` takes them with you (no lock-in)
-- **HN discussion tree**: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads are flattened to two levels with `@parent` prefixes preserving who-replies-to-whom
-- **Auto Grok translation for foreign posts on X**; media markers `[图片]` / `[视频]` are clickable links to the original image / video
-- **Login loop**: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
-- **Enable sources on demand**: pick at first launch, `F2` anytime; site order = the order you tick
-- **Bilingual UI (中文 / English)**: pick the language at first launch (pre-selected from your system), change anytime with `Ctrl+L` (applies after restart); message catalogs live in one file per language, and a new language is just one new TOML file
-- **Editor-inspired dual themes**: dark (VS Code Dark+ oriented, the default) and light (Light+ oriented), switched live with `Ctrl+T`; a new theme is one TOML file, auto-discovered; read items get a dimmed title so read/unread separates at a glance, and `Ctrl+Y` copies an item's link from any layer
-- **IME-friendly keys**: primary bindings are non-printing keys (Tab / arrows / function keys), safe while a Chinese IME is active; a few list actions use ASCII keys (`]` `[` `/` `,` `.`)
-- **Layout-change self-check**: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources and drops raw samples
+**Sources**
+
+- Multi-source aggregation: Zhihu Hot / Recommend / Following, X For You / Following, Reddit Home / Popular / custom subreddits, HN Front / New / Ask / Show, V2EX Hot / Latest, Telegram channel subscriptions — one UI, `Tab` to switch
+- RSS / Atom subscriptions: the "All" stream merges by publish time (cross-feed dedup; a dead feed never drags others down), feed-provided full text reads in-terminal, conditional requests keep refreshes polite to sources
+- Enable sources on demand: pick at first launch, `F2` anytime; site order = the order you tick
+
+**Reading**
+
+- Full in-terminal reading: feed → question → answers → comments, each layer loaded on demand
+- Read state & offline: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back); the "N new" count lives in the top status line; lists cache locally — restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
+- Favorites / read-later: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; the full snapshot stays readable after items scroll off hot lists or get deleted, and `feedscope favorites export` takes them with you (no lock-in)
+- HN discussion tree: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads flatten to two levels with `@parent` prefixes preserving who-replies-to-whom
+- X extras: auto Grok translation for foreign posts; `[图片]` / `[视频]` media markers are clickable links to the original image / video
+- Login loop: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
+
+**Terminal-native**
+
+- Bilingual UI (中文 / English): pick the language at first launch (pre-selected from your system), change anytime with `Ctrl+L` (applies after restart); message catalogs live in one file per language
+- Editor-inspired dual themes: dark (VS Code Dark+ oriented, the default) and light (Light+ oriented), switched live with `Ctrl+T`; read items get a dimmed title so read/unread separates at a glance; `Ctrl+Y` copies an item's link from any layer
+- IME-friendly keys: primary bindings are non-printing keys (Tab / arrows / function keys), safe while a Chinese IME is active; a few list actions use ASCII keys (`]` `[` `/` `,` `.`)
+- Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources and drops raw samples
 
 ## Screenshots
 
 Zhihu Hot (feed sidebar on the left, meta column right-aligned and adaptive):
 
-![Zhihu hot list](docs/screenshot-zhihu.png)
+![Zhihu hot list](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-zhihu.png)
 
 X For-You timeline (bylines show "name @handle" in full; media markers link to originals):
 
-![X timeline](docs/screenshot-x.png)
+![X timeline](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-x.png)
 
 X post detail (media links, translation block, quoted post):
 
-![X post detail](docs/screenshot-detail.png)
+![X post detail](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-detail.png)
 
 Reddit Popular (meta column "N pts · N comments · r/sub"; add subreddits in `F2`):
 
-![Reddit popular list](docs/screenshot-reddit.png)
+![Reddit popular list](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit.png)
 
 Reddit post detail (markdown self-text + comment floors with scores; moderator stickies flagged `[置顶]`):
 
-![Reddit post detail](docs/screenshot-reddit-detail.png)
+![Reddit post detail](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit-detail.png)
 
 HN Front page (no login needed; "N pts · N comments · author" doubles as a discussion-heat radar):
 
-![HN front page](docs/screenshot-hn.png)
+![HN front page](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn.png)
 
 HN story detail (one-line article link + top-level comments as floors, each floor headed by "N replies"):
 
-![HN story detail](docs/screenshot-hn-detail.png)
+![HN story detail](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn-detail.png)
 
 HN reply tree of one comment (deep threads flattened to two levels, cross-level replies carry an `@parent` prefix):
 
-![HN reply tree](docs/screenshot-hn-thread.png)
+![HN reply tree](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-hn-thread.png)
 
 V2EX Hot (no login; the "node · N replies · user" meta column scans as board + heat at a glance):
 
-![V2EX hot list](docs/screenshot-v2ex.png)
+![V2EX hot list](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-v2ex.png)
 
 V2EX topic detail (markdown body + replies as floors; floor numbers match the site's floor culture):
 
-![V2EX topic detail](docs/screenshot-v2ex-detail.png)
+![V2EX topic detail](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-v2ex-detail.png)
 
 ## Install
 
@@ -87,7 +116,7 @@ From source (development):
 git clone https://github.com/howardli/FeedScope.git
 cd FeedScope
 uv sync                            # dev / test environment
-uv tool install --editable .       # global `feedscope` command; code edits take effect immediately
+uv tool install --editable .       # global `feedscope` command, works from any directory; code edits take effect immediately
 ```
 
 - Run `feedscope doctor` after install to self-check the environment
@@ -104,9 +133,10 @@ feedscope
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | Switch site (afterwards the keyboard lands in the left sidebar to pick a feed; `Enter` returns to the list) |
+| `Tab` / `Shift+Tab` | Switch site (afterwards the keyboard lands in the left sidebar to pick a feed; `Enter` returns to the list; if focus is already in the source bar, `Tab` keeps switching in place) |
 | `←` / `→` | Region moves: from the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; from the sidebar `→` returns to the list and `←` goes to the source bar; in the source bar switches site in place; prev / next article in details; prev / next floor in reply layers |
 | `↑` / `↓` | Move selection / scroll body; `↑` on the first row of any region climbs to the top source bar |
+| `Home` / `End` / `PgUp` / `PgDn` | Scroll the list viewport (list pane only) |
 | `Enter` | Open detail; inside a detail, open the discussion layer of the floor you are reading; return to the list from the sidebar / source bar |
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
@@ -117,21 +147,28 @@ feedscope
 | `/` | Filter the list by title (case-insensitive substring; empty input clears; also works in the favorites list) |
 | `Ctrl+A` | Mark every item in the current feed as read (with confirmation) |
 | `Ctrl+F` | Favorite / unfavorite the current item (works while reading too) |
-| `F3` | Favorites list: cross-source, newest first; Enter opens detail, Ctrl+F unfavorites |
+| `F3` | Favorites list: cross-source, newest by star time; Enter opens detail, Ctrl+F unfavorites |
 | `F5` | Refresh |
 | `Ctrl+U` | Account: login / logout |
 | `Ctrl+L` | UI language: pick and save; restart `feedscope` to apply |
 | `Ctrl+T` | UI theme: pick, applied instantly and saved (no restart needed) |
-| `F2` | Manage sources: toggle enable / disable, saved on confirm; `→` opens subscription manager (RSS / Reddit / Telegram) |
+| `F2` | Manage sources: `Space` / `Enter` toggles enable / disable, saved on confirm; `→` opens subscription manager (RSS / Reddit / Telegram) |
 | `Esc` | Go back one layer (from the sidebar / source bar, back to the list first) |
-| `F1` | Keybinding help: the full keymap for the global scope and the current screen (the footer shows only `F1` / `Esc`; everything else lives here) |
-| `Ctrl+Q` | Quit (double `Ctrl+C` as fallback) |
+| `F1` | Keybinding help: the full keymap for the global scope and the current screen (the footer shows only `F1` / `Esc`; everything else lives here; `Enter` / `F1` closes it) |
+| `Ctrl+Q` | Quit (`Ctrl+C` shows a hint pointing to `Ctrl+Q`; it does not quit by itself) |
 
-Primary keys are non-printing — they work while a Chinese IME is active (the few ASCII-key actions: `]` `[` `/` `,` `.`); typing printable characters by mistake shows a hint. The top tab bar and the left sidebar are clickable and drive the same code path as the keyboard. Arrow keys follow CLI conventions: `↑`/`↓` move the selection within the current list; `↑` on the first row of any region climbs to the source bar (the top region sits above everything), and `↓` from the source bar descends to the sidebar (inverse of the sidebar's first-feed `↑`); other region moves are horizontal — in the source bar `←`/`→` switches site in place; in the sidebar `↑`/`↓` switches feed in place, `→` returns to the list and `←` goes to the source bar; in the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; `Enter` / `Esc` return to the list at any time. Dialogs (source manager / subscriptions / input / confirm / account) support the same arrow-key focus movement: `↓` past the bottom of the list enters the button row, `↑` returns to the list, `←`/`→` move between buttons, and `Enter` presses the focused button.
+Primary keys are non-printing — they work while a Chinese IME is active (the few ASCII-key actions: `]` `[` `/` `,` `.`). Typing CJK characters by mistake (an IME leak) shows a hint. The top tab bar and the left sidebar are clickable and drive the same code path as the keyboard.
+
+Arrow keys follow CLI conventions:
+
+- `↑` / `↓` move the selection within the current list; `↑` on the first row of any region climbs to the top source bar (the top region sits above everything), and `↓` from the source bar descends to the sidebar (inverse of the sidebar's first-feed `↑`)
+- Other region moves are horizontal: in the list `←` enters the sidebar (staying on the current feed) and `→` hits the right edge; in the sidebar `↑` / `↓` switches feed in place, `→` returns to the list and `←` goes to the source bar; in the source bar `←` / `→` switches site in place
+- `Enter` / `Esc` return to the list at any time
+- Dialogs (source manager / subscriptions / input / confirm / account) support the same arrow-key focus movement: `↓` past the bottom of the list enters the button row, `↑` returns to the list, `←` / `→` move between buttons, and `Enter` presses the focused button
 
 ### Read state & offline
 
-The dot column on each row tracks reading state: `●` unread (editor blue), blank = read. Unread is persistent — refreshes, feed switches and restarts never touch it; the dot only clears when you open the item (`Enter` into detail, `Ctrl+O` to the browser, or `←`/`→` article-stepping inside a detail). `Ctrl+R` toggles the current item — mark it unread to revisit. How many items arrived with this refresh shows as a count in the status line ("N items · M new"), not as row-level marks.
+The dot column on each row tracks reading state: `●` unread (editor blue), blank = read. Unread is persistent — refreshes, feed switches and restarts never touch it; the dot only clears when you open the item (`Enter` into detail, `Ctrl+O` to the browser, or `←`/`→` article-stepping inside a detail). `Ctrl+R` toggles the current item — mark it unread to revisit. How many items arrived with this refresh shows as a count in the top status line ("N items · M new"), not as row-level marks.
 
 The unread-digestion trio: every feed in the sidebar carries an **unread badge** (counted on refresh, decremented live as you read — including reads from the favorites list); `F4` is the **unread-only view** (session toggle, read rows vanish instantly — the main path for working through a backlog); `Ctrl+A` **marks the current feed read** with a light confirmation.
 
@@ -149,7 +186,7 @@ Startup and refresh paint the cache before fetching: restarts show the list inst
 
 ### UI Language
 
-The first launch asks for the language (pre-selected from your system locale; `Enter` to confirm, `Esc` keeps the default). Change it anytime with `Ctrl+L`; the choice is saved to the config and **takes effect when you restart `feedscope`** (counts and unit words are baked into fetched data in the process language, so a fixed-per-process language is the most robust model). **English is the default when no language is configured** — 中文用户在首启回车即选简体中文，或 `Ctrl+L` 随时切换。Subcommands (`doctor` / `probe` / `rss` / `login`) follow the same language as the TUI:
+The first launch asks for the language (pre-selected from your system locale; `Enter` to confirm, `Esc` keeps the default). Change it anytime with `Ctrl+L`; the choice is saved to the config and **takes effect when you restart `feedscope`** (counts and unit words are baked into fetched data in the process language, so a fixed-per-process language is the most robust model). **English is the default when no language is configured** — 中文用户在首启回车即选简体中文，或 `Ctrl+L` 随时切换。Subcommands (`doctor` / `probe` / `rss` / `login` / `favorites` / `cache`) follow the same language as the TUI:
 
 ```toml
 language = "zh-CN"   # or "en" (the default); delete the line to fall back to English (only a fresh install asks again)
@@ -173,7 +210,7 @@ Like language, it is fixed per process (formatted times are baked into the list 
 
 ### Login / Logout
 
-Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`.
+Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`. Login sessions live in a local Chrome profile (`~/.cache/feedscope/chromium-profile/` on Linux) — see [SECURITY](SECURITY.md).
 
 A session revoked server-side (password change, logout elsewhere, periodic rotation) never leaves you guessing: X's 401 is unambiguous (stale cookies dropped, re-login guided); a half-revoked Zhihu session keeps serving the list while detail endpoints answer 403 (observed in the wild), so those endpoints likewise turn it into re-login guidance instead of a bare HTTP code — in the detail, answer and comment layers — and once a stale session has been detected, `Ctrl+U` offers sign-in directly (the leftover cookie would otherwise fool the check into offering logout first); Zhihu, Reddit and X all fetch through resident real-browser channel tabs (TLS, header order and cookies fully consistent with the login session, immune to non-browser-fingerprint blocking). Reddit's criterion is a local JWT decode of token_v2 (logged-in `sub="user"`, anonymous `sub="loid"`) — its login cookies are issued to anonymous traffic too (merely opening the login page sets one, so a cookie appearing ≠ login complete), while a local decode is zero-network and unforgeable. Both "login success" and the login gate use it, making a re-login loop structurally impossible.
 
@@ -195,7 +232,7 @@ A session revoked server-side (password change, logout elsewhere, periodic rotat
 feedscope [tui]           # start the TUI (default)
 feedscope login [source]  # browser login (defaults to zhihu; e.g. x, reddit)
 feedscope probe [source…] # inspect all sources; raw samples saved to disk
-feedscope doctor          # environment self-check (Chrome / profile / config)
+feedscope doctor          # environment self-check (Chrome / profile / config / state / logs)
 feedscope cache [clear]   # list-cache report / wipe it (purely derived, lossless)
 feedscope rss add <url> [--key k --label name]  # add: feed URL / site homepage (auto-discovered) / OPML path
 feedscope rss list | remove <key>               # list / remove subscriptions
@@ -204,11 +241,15 @@ feedscope rss import <x.opml> | export [x.opml] # bulk import (idempotent merge)
 feedscope favorites [export [x.md]]             # list favorites / export as Markdown (no lock-in)
 ```
 
-Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to stderr), `--log-file <path>` (write the log elsewhere) and `--version`.
+Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to stderr), `--log-file <path>` (write the log elsewhere) and `--version`. `rss export` / `favorites export` with no file argument print to stdout (redirect-friendly).
+
+Environment variables: `FEEDSCOPE_NO_PREWARM=1` starts up without pre-launching the browser (for slow machines); `FEEDSCOPE_SAMPLE_DIR=<dir>` dumps raw responses to disk during normal runs too (the same samples `probe` collects); `FEEDSCOPE_CONFIG` / `FEEDSCOPE_LOG_FILE` relocate the config / log file.
+
+Exit codes (script-friendly): `probe` exits 1 when a probe fails and 2 on unknown source ids; `rss add` / `rss import` exit 2 on an unreadable OPML, and `add` also exits 1 on a subscription conflict; `doctor` exits 1 when the self-check fails.
 
 ### Troubleshooting & logs
 
-Every run writes a log file (INFO level) at the location `feedscope doctor` reports — `$HOME/Library/Logs/feedscope/feedscope.log` on macOS, the systemd user log dir on Linux — rotated at 1 MB ×3. When something misbehaves, that file usually already holds the answer: fetch failures with tracebacks, self-heal paths (X queryId re-harvest, Reddit version header) that quietly fell back, login-detector errors. `--verbose` raises it to DEBUG for the chatty detail; `FEEDSCOPE_LOG_FILE` relocates it for good. Inside the TUI nothing ever prints to stderr (it would corrupt the redraw), so the file is the one place to look.
+Every run writes a log file (INFO level) at the location `feedscope doctor` reports — `$HOME/Library/Logs/feedscope/feedscope.log` on macOS, `~/.local/state/feedscope/log/feedscope.log` on Linux — rotated at 1 MB ×3. When something misbehaves, that file usually already holds the answer: fetch failures with tracebacks, self-heal paths (X queryId re-harvest, Reddit version header) that quietly fell back, login-detector errors. `--verbose` raises it to DEBUG for the chatty detail; `FEEDSCOPE_LOG_FILE` relocates it for good. Inside the TUI nothing ever prints to stderr (it would corrupt the redraw), so the file is the one place to look.
 
 ### Source & Feed Config
 
@@ -300,6 +341,14 @@ No login; data comes from each channel's public web preview (`t.me/s/<channel>`,
 - The "All" stream merges every channel by publish time (newest first), one dead channel only loses its own items; each channel is also its own feed (individually hideable)
 - Meta column "N views" is the channel-post heat radar; the "All" stream labels each row's origin in a dedicated source-tag column (same as the favorites list); inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
 - Details read list-carried content (zero requests); `Ctrl+N` in a single-channel feed pages back through history via the `?before=` cursor; no comment layer (channel discussion groups aren't in the preview)
+
+## Roadmap
+
+- Windows support (macOS and Linux today)
+- More sources — propose yours in [discussions](https://github.com/howardli/FeedScope/discussions); a new source is designed to be a one-package change
+- Full-text search across locally cached items
+
+Nothing here is scheduled; 0.x priorities follow user feedback.
 
 ## Community
 

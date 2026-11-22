@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- README (both languages) restructured for scannability: a Quick start block and a "Why FeedScope?" section now lead, the feature list is grouped into Sources / Reading / Terminal-native, the keyboard-conventions paragraph became a list, a Roadmap section was added, and images switched to absolute URLs so the PyPI page renders them; previously undocumented keys (`Home`/`End`/`PgUp`/`PgDn`), env vars (`FEEDSCOPE_NO_PREWARM`, `FEEDSCOPE_SAMPLE_DIR`), exit-code conventions, and the browser-profile path holding login sessions are now listed, and `rss`/`favorites export`-to-stdout is spelled out
+
+### Fixed
+
+- Docs-vs-code drift from a full audit: the nonexistent "double Ctrl+C quits" fallback claim removed (Textual 8's Ctrl+C only hints at Ctrl+Q), the stray-key hint is correctly scoped to CJK input, the Linux log path written out explicitly, the favorites list ordering stated as by-star-time, the new-language copy base unified to `en.toml` across both READMEs and CONTRIBUTING, the language-following subcommand list completed, `wrap` re-homed to `ui/` in CONTRIBUTING's layout, and stale version strings dropped from the bug template and release doc
+
 ## [0.4.1] - 2026-11-22
 
 ### Fixed

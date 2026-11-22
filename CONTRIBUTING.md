@@ -33,10 +33,10 @@ uv run pytest tests/ --cov   # coverage floor: 80%
 
 ```
 src/feedscope/
-  core/        models, config, registry, i18n, text/wrap/timefmt, tree,
+  core/        models, config, registry, i18n, text/timefmt, tree,
                browser channel — the foundation everything else builds on
   sources/     one package per site: zhihu / x / reddit / hn / v2ex / rss / telegram
-  ui/          Textual screens and widgets
+  ui/          Textual screens and widgets (wrap lives here, next to its consumers)
   cli.py       argparse entry point (tui / login / probe / doctor / cache / rss / favorites)
 tests/         offline suite: fixture-driven parsers, TUI smoke via Textual Pilot,
                plus architecture / i18n / registry guard tests
@@ -100,8 +100,8 @@ Step by step:
      single implementation)
 5. **Register it** by adding one import line to `sources/__init__.py`, in
    **alphabetical order by `source_id`** — import order = source-picker row
-   order = default Tab order. `tests/test_source_caps.py` and
-   `tests/test_registry_order_is_tab_order` go red if you get this wrong.
+   order = default Tab order. `tests/test_source_caps.py` (its
+   `test_registry_order_is_tab_order` case included) goes red if you get this wrong.
 6. **All UI copy through i18n** (`core/i18n.t()`) — never hardcode user-visible
    strings; `tests/test_i18n_no_hardcoded.py` blocks it in CI. Source
    vocabulary words (unit labels like "回复" / "comment") go through the same

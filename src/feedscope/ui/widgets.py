@@ -53,7 +53,7 @@ class SourceTab(Static):
 
 
 class FeedNavItem(Static):
-    """左侧信息流项：流名 + 未读角标，点击切流（键盘走 ←/→）；高亮由 CSS class 决定。"""
+    """左侧信息流项：流名 + 未读角标，点击切流（键盘走边栏态 ↑/↓）；高亮由 CSS class 决定。"""
 
     def __init__(self, idx: int, label: str, active: bool, unread: int = 0) -> None:
         # 角标是纯数字不进 i18n；≥1000 显示 999+ 防撑爆 16 宽边栏，0 不占位

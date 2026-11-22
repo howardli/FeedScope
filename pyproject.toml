@@ -47,7 +47,8 @@ build-backend = "hatchling.build"
 packages = ["src/feedscope"]
 
 [tool.hatch.build.targets.sdist]
-# README 在 PyPI 上不渲染相对路径图片：截图 / GIF 留在 repo 即可，不进下载负担
+# README 的截图 / GIF 走 GitHub raw 绝对 URL（PyPI 页面照样渲染），
+# 图片本体留在 repo 即可，不进下载负担
 exclude = ["docs/*.png", "docs/*.gif"]
 
 [tool.hatch.version]

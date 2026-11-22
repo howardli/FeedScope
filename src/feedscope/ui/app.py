@@ -53,8 +53,8 @@ class FeedScopeApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
 
     # 键位全部非打印键：字母/数字会被中文输入法拦进候选框，一个动作只留
-    # 一个键，不给字母留别名。全局只剩退出（Ctrl+C 连按退出是 Textual 自带
-    # 兜底，不占页脚）；主屏键（刷新/翻页/导航/F2/Ctrl+U）在 MainScreen——
+    # 一个键，不给字母留别名。全局只剩退出（Textual 8 的 Ctrl+C 只弹提示
+    # 指向 Ctrl+Q、本身不退出）；主屏键（刷新/翻页/导航/F2/Ctrl+U）在 MainScreen——
     # 屏级绑定只在该屏前台时命中，App 级动作不再需要「是否在主屏」守卫。
     BINDINGS: ClassVar[Bindings] = [
         Binding("ctrl+q", "quit", "bindings.quit", priority=True),
