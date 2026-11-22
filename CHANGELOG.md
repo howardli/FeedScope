@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-23
+
 ### Changed
 
 - README (both languages) restructured for scannability: a Quick start block and a "Why FeedScope?" section now lead, the feature list is grouped into Sources / Reading / Terminal-native, the keyboard-conventions paragraph became a list, a Roadmap section was added, and images switched to absolute URLs so the PyPI page renders them; previously undocumented keys (`Home`/`End`/`PgUp`/`PgDn`), env vars (`FEEDSCOPE_NO_PREWARM`, `FEEDSCOPE_SAMPLE_DIR`), exit-code conventions, and the browser-profile path holding login sessions are now listed, and `rss`/`favorites export`-to-stdout is spelled out
@@ -106,6 +108,7 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.4.2]: https://github.com/howardli/FeedScope/releases/tag/v0.4.2
 [0.4.1]: https://github.com/howardli/FeedScope/releases/tag/v0.4.1
 [0.4.0]: https://github.com/howardli/FeedScope/releases/tag/v0.4.0
 [0.3.1]: https://github.com/howardli/FeedScope/releases/tag/v0.3.1
