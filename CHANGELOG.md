@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
 ### Added
 
 - Local search (`F6`): searches every cached list and your favorites as you type — titles for all sources, bodies for RSS / Telegram — with zero requests. Title hits come first, each group newest first; ↑↓ picks, Enter opens the detail through the item's own source, and ←/→ plus `]`/`[` step through the results. This is the roadmap's "full-text search across locally cached items"
@@ -142,6 +144,7 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.5.0]: https://github.com/howardli/FeedScope/releases/tag/v0.5.0
 [0.4.2]: https://github.com/howardli/FeedScope/releases/tag/v0.4.2
 [0.4.1]: https://github.com/howardli/FeedScope/releases/tag/v0.4.1
 [0.4.0]: https://github.com/howardli/FeedScope/releases/tag/v0.4.0
