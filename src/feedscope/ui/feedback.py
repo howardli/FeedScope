@@ -7,6 +7,11 @@
 
 action 是动作文案键（feedback.*）：请求/添加/登出/评论加载/加载更多失败
 各有一键，标题跟随动作——登出失败别写成「抓取失败」。
+
+三个出口一律 markup=False：toast 正文会拼入订阅名、过滤词、异常消息等
+用户与第三方数据，而 notify 默认解析 markup（'[AI] 周刊' 被当样式标签吞掉、
+含闭合标记的抛 MarkupError）。纯文本出口按构造即安全，调用方不必逐处
+转义（tests/test_markup_sinks.py 守着这条约定）。
 """
 
 from __future__ import annotations
@@ -53,14 +58,14 @@ def fail(
         if action == ACTION_FETCH
         else _action_text(action)
     )
-    app.notify(failure_text(source, exc, action), title=title, severity="error")
+    app.notify(failure_text(source, exc, action), title=title, severity="error", markup=False)
 
 
 def warn(app: App[Any] | Screen[Any], msg: str, title: str) -> None:
     """警告通知（warning 级），如需要登录。"""
-    app.notify(msg, title=title, severity="warning")
+    app.notify(msg, title=title, severity="warning", markup=False)
 
 
 def info(app: App[Any] | Screen[Any], msg: str) -> None:
     """普通通知（info 级），如「没有更多了」。"""
-    app.notify(msg)
+    app.notify(msg, markup=False)

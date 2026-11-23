@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Local search (`F6`): searches every cached list and your favorites as you type — titles for all sources, bodies for RSS / Telegram — with zero requests. Title hits come first, each group newest first; ↑↓ picks, Enter opens the detail through the item's own source, and ←/→ plus `]`/`[` step through the results. This is the roadmap's "full-text search across locally cached items"
+- Keyboard link following (`Ctrl+G`): the links in what you are reading (`[image]`, `[video]`, `@mentions`, the original article) are listed in order — ↑↓ pick, Enter opens in the browser. They used to be mouse-only (Textual renders them as click actions)
+- The unread keys work where you read: `]` / `[` inside a detail load the next / previous unread article (newsboat's next-unread) and `Ctrl+R` marks the one being read as unread; `]` / `[` / `Ctrl+R` are also available on the favorites list
+- Starring from a reading screen archives the detail you had loaded (body, answers and reply trees). When the original can later no longer be opened — deleted, offline, the source is gone — Enter on that favorite shows the saved copy with a notice instead of a dead end; the login-expired flow is unchanged (sign in to see the latest). Favorites saved before this keep working
+- `feedscope doctor` now really checks the config. An unparsable `sources.toml` is a `FAIL` (it printed `[OK] … unreadable` and exited 0, while saves refused to write and pointed at doctor), and settings that would silently not take effect are listed one per line: unknown `language` / `timezone` values, unknown source ids in `enabled`, `hide` names matching no feed (subscription keys count as feed names), malformed `enabled` / `hide` / `feeds`, subscription entries without a url or with a non-text label, non-string `browser` / `clipboard`. Data files kept aside by the fix below are reported as a `[WARN]` reminder (a new non-failing state)
+- New config keys `browser` and `clipboard`: the command used to open links (`%u` is replaced by the URL; default `webbrowser`) and the command used to copy text (reads stdin; default auto-detects `pbcopy` / `wl-copy` / `xclip` / `xsel` when a graphical session exists, then falls back to the terminal's OSC 52)
+- JSON Feed subscriptions are now parsed: auto-discovery and the Accept header already accepted `feed+json`, but the parser only understood XML. `content_text` is rendered as paragraphs and `attachments` appear as links
+- RSS / Atom enclosures (podcasts, video feeds) appear after the body as `[audio]` / `[video]` / `[file]` links instead of being dropped
+- Relative URLs inside RSS bodies (images and links) are resolved against the entry's own page
+
+### Changed
+
+- CI runs on Python 3.11–3.15 (the classifiers now list 3.14 and 3.15; the suite passes on both ends) with least-privilege permissions, per-job timeouts and per-branch concurrency cancellation; the build job installs the wheel in a clean environment and smoke-tests it, and the release pipeline gained a test gate before anything reaches PyPI
+- Coverage floor raised from 80% to 88% (measured ~92%): the browser session start-up path — the lowest-covered infrastructure at 60% — is now exercised through a fake Playwright module (94%)
+- README no longer claims that Reddit moderator stickies are flagged `[置顶]`. That prefix was lost when the Reddit source moved to the HTML channel (8d3a87b), and the README screenshot was generated from a stub that hand-wrote it; the stub is now honest and the screenshot regenerated. Restoring the flag needs a real thread sample to confirm the markup
+- During an in-app sign-in only the browser-backed sources (Zhihu / X / Reddit) are blocked: HN / V2EX / RSS / Telegram keep refreshing, and switching to a browser-backed source is refused with a hint instead of leaving the tab and sidebar highlight out of step with the list
+
+### Fixed
+
+- Subscription names were interpreted as Rich markup in the sidebar and in the list's source-tag column (`[AI] Weekly` showed as ` Weekly`; a name containing a closing tag raised `MarkupError`), and the same happened in the remove-subscription confirm dialog — which made such a subscription impossible to remove from the TUI — and in the add / remove / rename toasts. Plain-text outputs (dialog prompts, toasts, empty-state hints) are now `markup=False` by construction, and a new AST guard (`tests/test_markup_sinks.py`) requires every markup-enabled sink to be safe by construction or explicitly exempt with a reason
+- `rich.markup.escape` does not escape upper-case bracketed words (`[AI]`, `[PDF]`, `[Discussion]`) although Textual's parser treats them as tags, so titles in the main list lost them. The UI now uses its own exhaustive `escape` (`feedscope.ui.markup`)
+- The Reddit feed loader could issue requests without bound: the top-up loop only checked whether 20 *new* posts had been collected, so a load-after chain that looped or kept re-delivering seen posts never ended. Each load is now capped and a revisited URL ends the chain. Other non-2xx statuses (429 / 5xx) are translated into an error instead of being parsed as HTML and reported as "the site may have changed"
+- A damaged `state.json` / `favorites.json` was overwritten in place by the next ordinary write (a single new star turned a library of saved items into one entry). A file that is readable but unparsable is now renamed to `*.corrupt-<timestamp>` first, never overwriting an earlier kept-aside copy
+- Hand-written comments and custom keys *inside* a `[….feeds]` table were dropped by any save from the subscription manager, `rss rename` or `rss add`; the table is now merged in place, so the "preserved verbatim" promise holds inside the table too
+- In-page fetches through the resident browser tab had no timeout (neither `fetch` nor `page.evaluate` times out): a stalled request waited forever while holding the browser session lock. They now abort after 30 seconds and report a timeout
+- `Ctrl+O` ignored the result of opening the browser — on SSH or headless hosts the item was marked read and nothing happened; it now warns and points at `Ctrl+Y` and the `browser` setting. `Ctrl+Y` relied on OSC 52 only (not supported by macOS Terminal) while always toasting "copied"
+- A second `feedscope` instance deleted the live Chrome profile lock of the running one (`drop_stale_locks` removed any existing lock), which led to two Chromes on one profile. The lock is now inspected: a lock owned by a live process on this machine refuses to start and names the pid. A second TUI instance on the same state is warned that the two will overwrite each other
+- Switching sources while a sign-in was in progress left the tab and sidebar highlight on the new source while the list still showed the previous one, so Enter dispatched the old item through the new source
+- Lazy-loaded images (`data-src` / `data-original`) linked to the placeholder instead of the real image
+- The favorites status line escaped the title filter for a header that does not parse markup, showing stray backslashes
+- Stepping through favorites across sources (←/→ in a detail opened from the favorites list) opened the next item through the *previous* item's source; the detail screen now resolves the source per item (search results get the same)
+
 ## [0.4.2] - 2026-11-23
 
 ### Changed

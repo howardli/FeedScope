@@ -12,10 +12,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import socket
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, TypeVar
 
 from platformdirs import user_cache_path
@@ -23,15 +26,51 @@ from platformdirs import user_cache_path
 from feedscope.core import samples
 from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
 from feedscope.core.i18n import t
-from feedscope.core.source import LoginRequired, SourceError
+from feedscope.core.source import SourceError
 
 logger = logging.getLogger(__name__)
 
 PROFILE_DIR = user_cache_path("feedscope") / "chromium-profile"
 
 
+class ProfileInUse(SourceError):
+    """浏览器 profile 正被另一个活着的进程使用（Chrome 的 SingletonLock 属于它）。"""
+
+
+def _lock_owner_pid(lock: Path) -> int | None:
+    """SingletonLock 属于的本机活进程的 pid；不是这种情形回 None。
+
+    锁是指向「主机名-pid」的符号链接（Chromium ProcessSingleton 的约定）。
+    主机名对不上（profile 是从别的机器拷来的）、解析不出 pid、进程已不在，
+    都谈不上「有人在用」。"""
+    try:
+        target = os.readlink(lock)
+    except OSError:
+        return None  # 不是符号链接 / 读不了：无从判断，按残留处理
+    host, sep, pid = target.rpartition("-")
+    if not sep or not pid.isdigit() or host != socket.gethostname():
+        return None
+    try:
+        os.kill(int(pid), 0)  # 只探测存在性，不发信号
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # 别的用户的进程：活着，只是无权给它发信号
+    except OSError:
+        return None
+    return int(pid)
+
+
 def drop_stale_locks() -> None:
-    """异常退出残留的 Singleton* 锁会让 Chrome 拒绝启动，启动前清掉。"""
+    """异常退出残留的 Singleton* 锁会让 Chrome 拒绝启动，启动前清掉。
+
+    「残留」要真判断：锁属于一个还活着的进程 = 另一个 feedscope（另一个终端的
+    TUI / feedscope login / probe）正在用这个 profile——它的锁不能删，删了随后
+    就是两个 Chrome 共用一个 profile（登录态互相覆盖、数据库损坏）。这种情况
+    抛 ProfileInUse，启动失败并把 pid 说清楚。"""
+    owner = _lock_owner_pid(PROFILE_DIR / "SingletonLock")
+    if owner is not None:
+        raise ProfileInUse(t("errors.profile_in_use", pid=owner))
     for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         lock = PROFILE_DIR / name
         try:
@@ -173,15 +212,25 @@ class ChannelTab:
             data = await self.eval(
                 _FETCH_JS, [url, headers or {}, cookie_headers or {}, referrer, as_text]
             )
-        except LoginRequired:
-            # 开页校验钩子（check，如知乎登录墙）抛的语义优先：原样穿透，
-            # 不被通用包装降级成 SourceError——否则源的登录引导全被吞掉
+        except SourceError:
+            # 已是面向用户的文案，原样穿透，不被通用包装再套一层「请求失败：」——
+            # 开页校验钩子（check，如知乎登录墙）抛的 LoginRequired 语义优先，
+            # 否则源的登录引导全被吞掉；会话启动撞上的 ProfileInUse 同理
             raise
         except Exception as exc:  # Playwright 层失败（重建重试也没救回来）
             raise SourceError(t("errors.http_failed", source=source, error=exc)) from exc
         if not isinstance(data, dict):
             raise SourceError(t("errors.bad_structure_short", source=source))
         if err := data.get("__error"):
+            if err == _TIMEOUT_MARK:
+                raise SourceError(
+                    t(
+                        "errors.http_timeout",
+                        source=source,
+                        seconds=_FETCH_TIMEOUT_MS // 1000,
+                        url=url,
+                    )
+                ) from None
             raise SourceError(t("errors.http_failed", source=source, error=err))
         status = data.get("__status")
         body = data.get("__body")
@@ -202,6 +251,13 @@ class ChannelTab:
         self._page = None
 
 
+# 页内 fetch 的超时（毫秒），与页面导航超时同值。fetch 自身不超时、
+# page.evaluate 也不超时：网络挂起时协程会无限等待，并一直持有 BrowserSession
+# 的锁——判登与其它源的取数全部排队。到点 AbortSignal 以 TimeoutError 中止，
+# JS 按约定回 _TIMEOUT_MARK，Python 侧转成与 httpx 同款的超时文案
+_FETCH_TIMEOUT_MS = 30_000
+_TIMEOUT_MARK = "__timeout__"
+
 # 页签里执行的统一 fetch：失败按约定回 __status（非 2xx）/__error（网络或
 # 解析异常），成功回 __body（文本或 JSON）。cookie_headers 把指定 cookie 的
 # 值就地提升为请求头（页内读永远新鲜）；不抛 JS 异常穿过 evaluate
@@ -215,14 +271,20 @@ async ([url, headers, cookieHeaders, referrer, asText]) => {
       const v = (document.cookie.match(new RegExp("(?:^|;\\\\s*)" + esc + "=([^;]+)")) || [])[1];
       if (v) h[name] = decodeURIComponent(v);
     }
-    const opts = { headers: h, credentials: "include" };
+    const opts = {
+      headers: h,
+      credentials: "include",
+      signal: AbortSignal.timeout(__TIMEOUT_MS__),
+    };
     if (referrer) opts.referrer = referrer;
     const r = await fetch(url, opts);
     if (!r.ok) return { __status: r.status };
     return { __body: asText ? await r.text() : await r.json() };
-  } catch (e) { return { __error: String(e) }; }
+  } catch (e) {
+    return { __error: e.name === "TimeoutError" ? "__TIMEOUT_MARK__" : String(e) };
+  }
 }
-"""
+""".replace("__TIMEOUT_MS__", str(_FETCH_TIMEOUT_MS)).replace("__TIMEOUT_MARK__", _TIMEOUT_MARK)
 
 
 _UA_CACHE_TTL = 7 * 24 * 3600  # Chrome 版本几天到几周才变，探针结果落盘缓存

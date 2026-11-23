@@ -5,9 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+# 最小权限：CI 只读仓库；并发组让同一分支上的新推送取消还在跑的旧一轮
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -19,30 +28,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # classifiers 声明支持的平台都在矩阵里被真跑过（macOS 的 Chrome 路径 /
+        # classifiers 声明支持的版本都在矩阵里被真跑过（macOS 的 Chrome 路径 /
         # platformdirs 目录差异以前只有本机验证）；playwright 只装包不装浏览器，
         # 测试基线全离线，hosted runner 直接可跑
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --python ${{ matrix.python-version }}
-      - run: uv run pytest tests/ --cov --cov-fail-under=80
+      # 不带 --cov-fail-under：命令行的值会盖过 pyproject，门槛只留一处出处（fail_under）
+      - run: uv run pytest tests/ --cov
         # 测试基线全离线（解析 fixture / TUI 冒烟 / 登录流程），hosted runner 直接可跑；
         # feedscope probe 巡检需要真实登录态与 Chrome，只能挂 self-hosted runner 定时跑（见 README）
-        # coverage 门槛在 pyproject（fail_under=80，当前实测 ~89%）：防倒退，新增模块应抬高它
 
   build:
     # 打包配置随时可构建：pyproject 的 packaging 回归在这里红，而不是发版当天才炸
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv build
+      # 装上构建产物冒烟（干净环境，只有这个 wheel）：语言目录 / 主题 TOML 有没有
+      # 进包、入口点能不能起——以前是发版时人工做的一步（docs/release.md）
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          uv run --no-project --python 3.12 --with "$(ls dist/*.whl)" feedscope --version
+          uv run --no-project --python 3.12 --with "$(ls dist/*.whl)" feedscope rss list
       - uses: actions/upload-artifact@v7
         with:
           name: dist-preview

@@ -213,6 +213,61 @@ def test_favorites_bad_file_tolerated() -> None:
     assert len(ReadState().favorites()) == 1
 
 
+def _parked(path) -> list:
+    return sorted(path.parent.glob(f"{path.name}.corrupt-*"))
+
+
+def test_corrupt_state_file_is_kept_aside() -> None:
+    """坏文件不被下一次写入洗掉：原内容改名留底（*.corrupt-*），新写入落在新文件上。"""
+    st = ReadState()
+    st.mark_read("hn", "1")
+    good = state_path().read_text(encoding="utf-8")
+    truncated = good[: len(good) // 2]
+    state_path().write_text(truncated, encoding="utf-8")
+    again = ReadState()
+    assert not again.is_read("hn", "1")  # 内存照旧按空态继续
+    again.mark_read("hn", "2")  # 一次最普通的写入
+    kept = _parked(state_path())
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == truncated
+    assert state_path().exists() and state_path().read_text(encoding="utf-8") != truncated
+
+
+def test_corrupt_favorites_file_is_kept_aside() -> None:
+    """收藏是用户自选数据：损坏的那份必须留底，不能被「再收藏一条」洗成只剩新条目。"""
+    st = ReadState()
+    st.toggle_fav(_item("rss", "a", "带正文的旧收藏"))
+    st.toggle_fav(_item("rss", "b"))
+    raw = favorites_path().read_text(encoding="utf-8")
+    truncated = raw[: len(raw) // 3]
+    favorites_path().write_text(truncated, encoding="utf-8")
+    again = ReadState()
+    assert again.favorites() == []  # 列表读的是快照文件；is_fav 的判据在 state.json，不在此列
+    again.toggle_fav(_item("rss", "c"))
+    kept = _parked(favorites_path())
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == truncated
+    assert [it.id for _, it in ReadState().favorites()] == ["c"]
+
+
+def test_wrong_shape_file_is_kept_aside_but_empty_object_is_not() -> None:
+    """合法 JSON 但结构不对（items 不是表 / 顶层不是对象）同样留底，同一秒内两份互不覆盖；
+    缺键的空对象是正常空态，不动。"""
+    state_path().write_text(json.dumps({"version": 1, "items": 42}), encoding="utf-8")
+    assert not ReadState().is_read("hn", "1")
+    state_path().write_text("[1, 2]", encoding="utf-8")
+    assert not ReadState().is_read("hn", "1")
+    assert len(_parked(state_path())) == 2
+    state_path().write_text("{}", encoding="utf-8")
+    assert not ReadState().is_read("hn", "1")
+    assert len(_parked(state_path())) == 2 and state_path().read_text(encoding="utf-8") == "{}"
+
+
+def test_unreadable_state_file_is_left_alone() -> None:
+    """读不了的（这里用目录占位）不动：内容是什么都不知道，谈不上「损坏」。"""
+    state_path().mkdir()
+    assert not ReadState().is_read("hn", "1")
+    assert state_path().is_dir() and _parked(state_path()) == []
+
+
 # ---- 每流未读计数（边栏角标）----
 
 

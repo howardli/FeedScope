@@ -46,9 +46,11 @@ git tag v0.x.y
 git push origin main --tags
 ```
 
-Pushing the tag triggers `.github/workflows/release.yml`: build (sdist +
-wheel) → publish to PyPI → GitHub Release with generated notes and the
-artifacts attached.
+Pushing the tag triggers `.github/workflows/release.yml`: test gate (ruff +
+mypy + pytest on the tagged commit) → build (sdist + wheel) → publish to PyPI →
+GitHub Release with generated notes and the artifacts attached. A red test gate
+stops the pipeline before anything reaches PyPI — fix `main`, delete the tag
+and re-tag the fixed commit.
 
 Verify after the run:
 

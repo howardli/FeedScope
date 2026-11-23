@@ -21,7 +21,7 @@ from feedscope.core import config, http, i18n, timefmt
 from feedscope.core.browser import close_session, get_session
 from feedscope.core.i18n import t
 from feedscope.core.registry import source_classes
-from feedscope.core.store import ReadState
+from feedscope.core.store import ReadState, StateLock
 from feedscope.ui import Bindings
 from feedscope.ui.account import AccountFlow
 from feedscope.ui.labels import retranslate_bindings
@@ -77,6 +77,8 @@ class FeedScopeApp(App[None]):
         self.accounts = AccountFlow(self)
         # 已读/已见状态（● 新 / ○ 未读 / 空已读 的判据）：惰性加载，见 core/store.py
         self.state = ReadState()
+        # 单实例提醒：同一份已读/收藏只该有一个 feedscope 在写（整文件覆写会互相洗掉）
+        self.state_lock = StateLock()
 
     @property
     def main(self) -> MainScreen | None:
@@ -89,6 +91,9 @@ class FeedScopeApp(App[None]):
     def on_mount(self) -> None:
         self.title = t("app.title")
         retranslate_bindings(self)  # App 级键位（ctrl+q）的键式文案解析，见 ui/labels.py
+        if not self.state_lock.try_acquire():
+            # 不挡使用（多套配置并行的用户有自己的理由），但要让用户知道风险
+            self.notify(t("app.state_shared"), severity="warning", markup=False, timeout=15)
         if not source_classes():
             self.exit(message=t("app.exit_no_sources"))
             return
@@ -111,5 +116,6 @@ class FeedScopeApp(App[None]):
     # ---- 清理 ----
 
     async def on_unmount(self) -> None:
+        self.state_lock.release()
         await close_session()
         await http.close()

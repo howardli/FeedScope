@@ -110,6 +110,16 @@ def _no_browser_prewarm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FEEDSCOPE_NO_PREWARM", "1")
 
 
+@pytest.fixture(autouse=True)
+def _no_system_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测试不碰系统剪贴板（pbcopy 等）：自动探测的候选表清空，Ctrl+Y 走 OSC 52
+    回退——替身拦 app.copy_to_clipboard 即可断言（见 test_theme）。探测逻辑
+    本身与配置命令的测试在 test_desktop.py 里自己给候选表 / 替身。"""
+    from feedscope.core import desktop
+
+    monkeypatch.setattr(desktop, "_CLIPBOARD_TOOLS", ())
+
+
 # ---- 敌意源（知乎/Reddit/X）共用的通道页签测试替身 ----
 # 与生产侧 ChannelTab 对齐：统一取数原语（_FETCH_JS，含 "fetch("）走
 # on_fetch 路由，其余脚本（X 的 chunk 收集、知乎的复合脚本）按 markers

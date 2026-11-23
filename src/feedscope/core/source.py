@@ -685,3 +685,25 @@ class SubscribedSource(Source):
     def _detail_body(self, extra: dict[str, Any]) -> str:
         """extra 里的正文 -> markdown（源差异：content_html 转 / content_md 直取）。"""
         raise NotImplementedError
+
+
+class PlaceholderSource(Source):
+    """注册表里已不存在的源的占位（源下架后，收藏 / 列表缓存里还留着它的条目）：
+    详情能力全关、没有任何流——行照常显示（源名列落回裸 id），Enter 走浏览器。
+    跨源列表（收藏屏 / 搜索结果）共用一个实例（UNKNOWN_SOURCE）。
+
+    跳过 Source.__init__：占位源不读配置不进任何流（空 feeds 走父类会误报
+    「信息流已被全部隐藏」的警告，import 期还可能被真实配置触发）。
+    """
+
+    source_id = ""
+    label = ""
+
+    def __init__(self) -> None:
+        self.feeds = []
+
+    async def open_feed(self, name: str) -> FeedLoader:
+        raise NotImplementedError
+
+
+UNKNOWN_SOURCE = PlaceholderSource()

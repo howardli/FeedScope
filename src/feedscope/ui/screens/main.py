@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import logging
 import time
-import webbrowser
 from typing import ClassVar
 
-from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -32,6 +30,7 @@ from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.coalesce import CoalescedScheduler
 from feedscope.ui.labels import retranslate_bindings
+from feedscope.ui.launch import copy_link, open_link
 from feedscope.ui.layout import (
     META_COL_SPARE,
     list_title_width,
@@ -40,10 +39,12 @@ from feedscope.ui.layout import (
     time_col_width,
 )
 from feedscope.ui.list_render import LIST_ROW_CSS, build_item
+from feedscope.ui.markup import escape
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import push_help
 from feedscope.ui.screens.main_read import MainReadScreen
+from feedscope.ui.screens.search import SearchScreen
 from feedscope.ui.screens.theme import ThemeScreen
 from feedscope.ui.widgets import (
     FeedListView,
@@ -80,6 +81,7 @@ class MainScreen(MainReadScreen):
         Binding("ctrl+n", "more", "bindings.more", show=False),
         Binding("ctrl+f", "favorite", "bindings.favorite", show=False),
         Binding("f3", "favorites", "bindings.favorites", show=False),
+        Binding("f6", "search", "bindings.search", show=False),
         # Ctrl+Y 复制当前条目链接（vim 的 yank 惯例），提示在 F1/README
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
         # description 存文案键、挂载时解析（见 ui/labels.py）：类体求值时语言未定
@@ -200,7 +202,7 @@ class MainScreen(MainReadScreen):
             hint = (
                 t("main.sidebar_no_sources") if not self.sources else t("main.sidebar_no_feeds")
             )
-            items.append(Static(f"[dim]{hint}[/dim]"))
+            items.append(Static(f"[dim]{escape(hint)}[/dim]"))
         await nav.mount(*items)
 
     def _refresh_sidebar(self) -> None:
@@ -218,10 +220,10 @@ class MainScreen(MainReadScreen):
     # ---- 数据加载（当前源/流属性与切站回停在 MainNavScreen）----
 
     def action_refresh(self) -> None:
-        if self._tui.accounts.in_progress:
-            feedback.info(
-                self, t("account.login_refresh_later")
-            )  # 有头登录独占 profile，此时别碰浏览器
+        # 有头登录独占 profile：走浏览器通道的源（声明了登录页的那些）此时别碰
+        # 浏览器；纯 httpx 的源（HN / V2EX / RSS / Telegram）不受登录影响，照常刷新
+        if self.sources and self.current_source.login_url and self._tui.accounts.in_progress:
+            feedback.info(self, t("account.login_refresh_later"))
             return
         # 详情屏在前台时不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
         if not self.is_current:
@@ -469,6 +471,11 @@ class MainScreen(MainReadScreen):
         """F3：收藏列表（读本地快照零请求，见 ui/screens/favorites.py）。"""
         self.app.push_screen(FavoritesScreen())
 
+    def action_search(self) -> None:
+        """F6：本地搜索——跨全部列表缓存与收藏找条目（标题，以及 RSS / Telegram
+        的正文），零请求；见 ui/screens/search.py。"""
+        self.app.push_screen(SearchScreen())
+
     def action_theme(self) -> None:
         """Ctrl+T：主题选择。纯显示层即时生效（对照 Ctrl+L 语言的重启模型），
         选完当场换肤 + 落盘；wait_for_dismiss 要在 worker 里（语言屏同款）。"""
@@ -490,8 +497,7 @@ class MainScreen(MainReadScreen):
         if item is None:
             feedback.info(self, t("main.toast_no_selection"))
             return
-        self.app.copy_to_clipboard(item.url)
-        feedback.info(self, t("main.toast_copied"))
+        copy_link(self, item.url)
 
     def action_help(self) -> None:
         """F1：键位帮助（页脚装不下的键都在这里，从本屏声明自动生成、按任务分组；
@@ -504,7 +510,7 @@ class MainScreen(MainReadScreen):
             feedback.info(self, t("main.toast_no_selection"))  # 空态/加载中按 Ctrl+O 也绝不无声
             return
         self._mark_read(item)  # Ctrl+O 也是「打开了这条」：与 Enter 的浏览器兜底同语义
-        webbrowser.open(item.url)
+        open_link(self, item.url)
 
     def action_more(self) -> None:
         if self.feed_loader is None:
@@ -546,22 +552,35 @@ class MainScreen(MainReadScreen):
     def step_readable_item(self, delta: int) -> FeedItem | None:
         """列表选中项沿 delta 方向推进到下一篇可进终端详情的条目，并同步列表选中。
 
-        详情屏 [/] 换篇的供给端：跳过 Enter 会跳浏览器的类型（阅读流要留在终端里，
-        阅读中突然弹出浏览器是事故）；沿方向没有可读条目时不动选中、返回 None。
-        推进沿 _shown（过滤态下跳过已读行——它们本来就不在屏上）。
+        详情屏 ←/→ 换篇的供给端：跳过 Enter 会跳浏览器的类型（阅读流要留在
+        终端里，阅读中突然弹出浏览器是事故）；沿方向没有可读条目时不动选中、
+        返回 None。推进沿 _shown（过滤态下跳过已读行——它们本来就不在屏上）。
         """
+        return self._step_item(delta, unread_only=False)
+
+    def step_unread_item(self, delta: int) -> FeedItem | None:
+        """同上，但只停在「未读」的可读条目上：详情屏 ]/[ 换未读篇的供给端
+        （newsboat 的 next-unread：读着一篇直接跳到下一篇没读过的，不必退回
+        列表）。注意不能拿 step_readable_item 一篇篇试——它推进一篇就标一篇
+        已读，扫过去未读态全被抹掉了。"""
+        return self._step_item(delta, unread_only=True)
+
+    def _step_item(self, delta: int, *, unread_only: bool) -> FeedItem | None:
         view = self.query_one("#feed", ListView)
         shown = self._shown()
         if not shown or view.index is None:
             return None
         for idx in range(view.index + delta, len(shown) if delta > 0 else -1, delta):
             it = shown[idx]
-            if self._opens_detail(it):
-                view.index = idx
-                # ←/→ 换篇的静默推进同样计已读：详情屏拿目标必经这里，主屏
-                # 上下文里就地清圆点，不必跨屏回写
-                self._mark_read(it)
-                return it
+            if not self._opens_detail(it):
+                continue
+            if unread_only and self._tui.state.is_read(it.source, it.id):
+                continue
+            view.index = idx
+            # 换篇的静默推进同样计已读：详情屏拿目标必经这里，主屏上下文里
+            # 就地清圆点，不必跨屏回写
+            self._mark_read(it)
+            return it
         return None
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -572,9 +591,16 @@ class MainScreen(MainReadScreen):
             return
         self._mark_read(item)  # 打开即已读：进详情与浏览器兜底都是「打开」
         if self._opens_detail(item):
-            self.app.push_screen(DetailScreen(item, self.current_source, self.step_readable_item))
+            self.app.push_screen(
+                DetailScreen(
+                    item,
+                    self.current_source,
+                    self.step_readable_item,
+                    step_unread=self.step_unread_item,
+                )
+            )
         else:
-            webbrowser.open(item.url)
+            open_link(self, item.url)
 
     # ---- 输入法没切英文的自救指路 ----
 

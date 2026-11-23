@@ -26,7 +26,7 @@ The full quality gate (same as CI):
 ```bash
 uv run ruff check src/ tests/ scripts/
 uv run mypy             # src/ is typed and held at zero errors
-uv run pytest tests/ --cov   # coverage floor: 80%
+uv run pytest tests/ --cov   # coverage floor: 88% (measured ~92%)
 ```
 
 ## Project layout
@@ -53,6 +53,18 @@ ui → top-level business (cli / login / subscriptions / probe / doctor / report
 Dependencies only point downward; `parse.py` modules are pure leaves (no IO);
 UI never reads source-private keys. If the guard blocks you, read its
 docstring — the exceptions are documented there.
+
+User-controlled text (titles, subscription names, filter words) must never be
+parsed as Rich markup — Textual's `Label` / `Static` / `notify` do that by
+default, and `[AI] Weekly` loses its bracketed word while a stray closing tag
+raises `MarkupError`. `tests/test_markup_sinks.py` enforces the two safe forms:
+
+- a plain-text output passes `markup=False` (dialog prompts, toasts, hints), or
+- a markup-enabled output escapes every dynamic value with
+  `feedscope.ui.markup.escape` — never `rich.markup.escape`, which lets
+  upper-case bracketed words through
+
+Anything else has to be listed in that test's exemption table with a reason.
 
 ## Adding a new source
 
@@ -135,7 +147,7 @@ the images together with the code.
 - New behavior needs tests (offline; fixture-driven — look at existing
   `tests/test_*_parse.py` for the pattern)
 - User-facing changes get a `CHANGELOG.md` entry under `[Unreleased]`
-- CI (ruff + mypy + pytest on Python 3.11–3.13, macOS & Linux) must be green
+- CI (ruff + mypy + pytest on Python 3.11–3.15, macOS & Linux) must be green
 - Match the existing style: Chinese comments that explain *why*, ruff's
   line-length 100 in `src/`
 

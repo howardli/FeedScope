@@ -90,6 +90,8 @@ class MainNavScreen(MainSetupScreen):
         target %= len(self.sources)
         if target == self.source_idx:
             return
+        if self._login_blocks(self.sources[target]):
+            return
         self.source_idx = target
         self._restore_feed_idx()  # 回到该站上次的信息流
         await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
@@ -97,6 +99,15 @@ class MainNavScreen(MainSetupScreen):
         if self._pane != Pane.TABS:
             self._enter_pane(Pane.SIDEBAR)  # 切站落边栏：先挑流再回列表（源栏态连切不被拽走）
         self.action_refresh()
+
+    def _login_blocks(self, source: Source) -> bool:
+        """有头登录进行中且目标源走浏览器通道（声明了登录页）：切过去也刷不出来
+        （profile 被登录窗口独占，action_refresh 会挡），列表却停在上一个流的
+        内容上——tab/边栏高亮与列表错位，回车还会拿新源去开旧条的详情。干脆不切。"""
+        if self._tui.accounts.in_progress and source.login_url:
+            feedback.info(self, t("account.login_switch_later", label=source.label_text))
+            return True
+        return False
 
     async def action_next_source(self) -> None:
         await self._goto_source(self.source_idx + 1)
@@ -114,6 +125,8 @@ class MainNavScreen(MainSetupScreen):
             return
         if self.feed_idx == idx:
             return  # 已在该流，不重复刷新
+        if self._login_blocks(self.current_source):  # 同站切流同样刷不出来：不动选中
+            return
         self.feed_idx = idx
         self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
         await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）

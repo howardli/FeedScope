@@ -196,6 +196,79 @@ def test_feed_loader_incremental_pages_when_batch_enough(monkeypatch: pytest.Mon
     assert calls[1].headers["x-reddit-client-version"] == _VERSION  # 片段带收割来的版本头
 
 
+def _looping_chain(seq) -> str:
+    """每页都是同一帖（去重后不算新增）+ 指向 seq 里下一个游标的 load-after 链。"""
+    src = f"{_PARTIAL_PATH}?after={seq}" if seq else ""
+    link = (
+        f'<faceplate-partial slot="load-after" src="{src}"></faceplate-partial>'
+        if src
+        else ""
+    )
+    return "<html><body>" + _post("1same0", "Same post") + link + "</body></html>"
+
+
+def test_feed_loader_caps_requests_when_chain_never_tops_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """链一直往后走却始终回已见帖：凑批循环只看「新增够不够」，没有页数上限就会
+    无休止发请求（登录账号的风控放大器）。单次 load_more 最多 _MAX_PAGES_PER_LOAD 个请求。"""
+    cursors = ["1", "2", "3", "4", "5", "6", "7"]
+
+    def route(req: FetchReq) -> tuple[int | None, str]:
+        if req.path == "/r/popular/":
+            return None, _page(_looping_chain(cursors.pop(0)))
+        return None, _looping_chain(cursors.pop(0) if cursors else "")
+
+    calls = _mock(monkeypatch, route)
+    _fake_login(monkeypatch)
+    loader = asyncio.run(get_source("reddit").open_feed("popular"))
+    try:
+        cap = reddit_fetch._MAX_PAGES_PER_LOAD
+        assert len(calls) == cap  # 首页 + 4 个片段后止步，哪怕一批都没凑够
+        assert [it.id for it in loader.items] == ["1same0"]
+        assert not loader.done  # 链并没尽：下次 Ctrl+N 还能从断点继续（又是一个有上限的批）
+        before = len(calls)
+        assert asyncio.run(loader.load_more()) == []
+        assert loader.done  # 剩余游标用完 → 链尽；这一批同样没超过上限
+        assert before < len(calls) <= before + cap
+    finally:
+        asyncio.run(loader.close())
+
+
+def test_feed_loader_stops_when_cursor_loops_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """游标打环（绕回拉过的地址）：按到底处理，不重复请求。"""
+
+    def route(req: FetchReq) -> tuple[int | None, str]:
+        if req.path == "/r/popular/":
+            return None, _page(_looping_chain("a"))
+        return None, _looping_chain("a")  # 任何片段都指回第一个片段
+
+    calls = _mock(monkeypatch, route)
+    _fake_login(monkeypatch)
+    loader = asyncio.run(get_source("reddit").open_feed("popular"))
+    try:
+        assert [it.id for it in loader.items] == ["1same0"]
+        assert loader.done
+    finally:
+        asyncio.run(loader.close())
+    assert [c.url.removeprefix("https://www.reddit.com") for c in calls] == [
+        "/r/popular/",
+        f"{_PARTIAL_PATH}?after=a",
+    ]
+
+
+def test_listing_error_status_is_translated_not_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """429/5xx 的错误页不能当正常 HTML 进解析器（0 条会被首屏守卫误报成站点改版）。"""
+
+    def route(req: FetchReq) -> tuple[int | None, str]:
+        return (429, "") if req.path == "/r/popular/" else (None, _page(LISTING_HTML))
+
+    _mock(monkeypatch, route)
+    _fake_login(monkeypatch)
+    with pytest.raises(SourceError) as info:
+        asyncio.run(get_source("reddit").open_feed("popular"))
+    assert info.value.status == 429
+    assert "429" in str(info.value)
+
+
 def test_open_feed_unknown_name_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_login(monkeypatch)
     with pytest.raises(ValueError, match="未知信息流"):

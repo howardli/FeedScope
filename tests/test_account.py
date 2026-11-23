@@ -229,6 +229,40 @@ def test_refusal_survives_source_switch(anon_login_registry) -> None:
     asyncio.run(_run_refusal_survives_switch_flow())
 
 
+async def _run_login_in_progress_switch_flow() -> None:
+    """有头登录进行中（最长 3 分钟）：纯 httpx 的源照常切、照常刷新；走浏览器通道的源
+    切不过去——修复前 tab/边栏高亮照切、列表却停在旧内容上（刷新被挡），回车会拿
+    新源去开旧条的详情。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        assert await settle(
+            pilot, lambda: app.main.current_source.source_id == "anon" and len(app.main.items) == 1
+        ), "匿名源正常出内容"
+        await pilot.click("#source-tab-1")  # 切到登录源：撞墙弹登录框
+        assert await settle(pilot, lambda: isinstance(app.screen, AccountScreen))
+        app.accounts.in_progress = True  # 相当于用户选了「登录」，有头窗口开着
+
+        await pilot.press("escape")  # 关掉弹框；登录窗口仍在（in_progress 不变）
+        assert await settle(pilot, lambda: not isinstance(app.screen, AccountScreen))
+        main = app.main
+        await pilot.press("tab")  # 往回切到匿名源：不碰浏览器，应当放行
+        assert await settle(pilot, lambda: main.current_source.source_id == "anon"), "匿名源不受登录影响"
+        assert await settle(pilot, lambda: len(main.items) == 1)
+        await pilot.press("tab")  # 再切回登录源：被挡，高亮与列表都停在匿名源
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+        assert main.current_source.source_id == "anon" and len(main.items) == 1
+        assert "暂不能切到" in last_notification(app)
+
+        app.accounts.in_progress = False  # 登录流程结束：恢复可切
+        await pilot.press("tab")
+        assert await settle(pilot, lambda: main.current_source.source_id == "loginsrc")
+
+
+def test_switch_during_login_only_blocks_browser_sources(anon_login_registry) -> None:
+    asyncio.run(_run_login_in_progress_switch_flow())
+
+
 async def _run_failed_login_flow() -> None:
     app = FeedScopeApp()
     async with app.run_test(size=(80, 30)) as pilot:

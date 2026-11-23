@@ -17,7 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from platformdirs import user_cache_path
 
@@ -74,12 +74,35 @@ def save(source_id: str, feed: str, items: list[FeedItem]) -> None:
 
 def load(source_id: str, feed: str) -> list[FeedItem] | None:
     """读缓存；不存在/坏/形状不符 = None（调用方当作「无缓存」走正常空态）。"""
+    return _read(_file(source_id, feed))
+
+
+def load_all() -> list[tuple[str, str, list[FeedItem]]]:
+    """全部已缓存的流 -> [(source, feed, 条目)]：本地搜索的数据源。
+
+    文件名是 quote(f"{source}__{feed}")，解码后按第一个 __ 切开即还原键
+    （超长名截断加散列的那批还原不出原 feed 名——搜索不关心流名，条目照读）。
+    单个文件坏了只跳过它（_read 已记警告）。"""
     try:
-        raw = json.loads(_file(source_id, feed).read_text(encoding="utf-8"))
+        files = sorted(cache_dir().glob("*.json"))
+    except OSError:
+        return []  # 目录不存在 / 读不了 = 没有可搜的缓存
+    out: list[tuple[str, str, list[FeedItem]]] = []
+    for path in files:
+        items = _read(path)
+        if items:
+            source, _, feed = unquote(path.stem).partition("__")
+            out.append((source, feed, items))
+    return out
+
+
+def _read(path: Path) -> list[FeedItem] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.warning("列表缓存读取失败（%s/%s，忽略）：%s", source_id, feed, exc)
+        logger.warning("列表缓存读取失败（%s，忽略）：%s", path.name, exc)
         return None
     rows = raw.get("items") if isinstance(raw, dict) else None
     if not isinstance(rows, list):

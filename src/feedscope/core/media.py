@@ -13,6 +13,7 @@ import html as _html
 import re
 import threading
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 if TYPE_CHECKING:
     import html2text
@@ -87,9 +88,26 @@ class Tokens:
         return _TOKEN_RE.sub(lambda m: self._texts[int(m.group(1))], text)
 
 
+# 带协议头的绝对地址（http: / mailto: / data: …）
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+_HREF_RE = re.compile(r"""\bhref=(["'])(.*?)\1""", re.IGNORECASE)
+
+
+def absolute(url: str, base: str) -> str:
+    """相对地址按 base 绝对化：base 为空 / 纯锚点 / 已带协议头的原样返回。
+
+    RSS 正文里的 /static/a.png、?p=1 这类相对地址不绝对化的话，终端里的
+    「图片链接」点开指向本机根路径。协议相对（//host/x）一并补全协议。"""
+    if not base or not url or url.startswith("#") or _SCHEME_RE.match(url):
+        return url
+    return urljoin(base, url)
+
+
 # img 标签（要求带 src）：进 html2text 前先 stash 成 [图片](src) 记号——
-# ignore_images 会连 src 一起丢，原图直链就没；绕行也防 & 被实体转义
+# ignore_images 会连 src 一起丢，原图直链就没；绕行也防 & 被实体转义。
+# 取址顺序上懒加载属性（data-src 等）优先于 src：懒加载站的 src 多半是占位图
 IMG_RE = re.compile(r"""<img[^>]*?src=(["'])([^"']+)\1[^>]*>""", re.IGNORECASE)
+_IMG_URL_ATTRS = ("data-src", "data-original", "data-actualsrc", "data-lazy-src", "src")
 
 # 只包一张图的锚点（V2EX 自动内联 / 博客 lightbox）：整个 <a> 塌缩成那个
 # 图片记号。不塌的话外层 <a> 会被 html2text 再转一层链接，生成
@@ -124,13 +142,21 @@ def text_to_md(html: str) -> str:
     return strip_zwsp(h2t().handle(html)).strip()
 
 
-def html_to_md(html: str) -> str:
-    """整段 HTML -> markdown：img 换 [图片](原图直链)。RSS 与 V2EX 同管线。
+def html_to_md(html: str, base: str = "") -> str:
+    """整段 HTML -> markdown：img 换 [图片](原图直链)。
 
     图片必须 stash 成 NUL 记号绕过 html2text 而不是先变 <a> 再转：链接文字
     若带字面方括号（<a>[图片]</a>），html2text 会生成 [[图片]](url) 双层括号，
     markdown 渲染不了；URL 里的 & 也会被它实体转义弄坏。
+
+    base 是条目自己页面的地址：给了就把正文里的相对地址（图片与链接）绝对化；
+    不给（站内 HTML 本就是绝对地址的源）行为同前。
     """
+
+    def _abs_href(m: re.Match[str]) -> str:
+        # 属性值先反转义再绝对化，写回时 & 重新转义（HTML 属性的合法形态）
+        url = absolute(_html.unescape(m.group(2)), base)
+        return f'href={m.group(1)}{url.replace("&", "&amp;")}{m.group(1)}'
 
     def _unwrap_anchor(m: re.Match[str]) -> str:
         # 外层 <a> 的 href 是绝对地址时优先：lightbox 场景它指向原图，
@@ -142,9 +168,14 @@ def html_to_md(html: str) -> str:
 
     if not html:
         return ""
+    if base:
+        html = _HREF_RE.sub(_abs_href, html)
     tok = Tokens()
     stashed = IMG_RE.sub(
-        lambda m: tok.stash(mark(t("media.image"), pick_url(m.group(0), ("src",)))), html
+        lambda m: tok.stash(
+            mark(t("media.image"), absolute(pick_url(m.group(0), _IMG_URL_ATTRS), base))
+        ),
+        html,
     )
     stashed = _ANCHOR_IMG_RE.sub(_unwrap_anchor, stashed)
     return strip_zwsp(tok.expand(h2t().handle(stashed))).strip()

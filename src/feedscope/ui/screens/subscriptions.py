@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -28,6 +27,7 @@ from feedscope.ui import Bindings, feedback
 from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
 from feedscope.ui.labels import retranslate_bindings
+from feedscope.ui.markup import escape
 
 
 class SubscriptionsScreen(ArrowModalScreen[bool]):
@@ -59,10 +59,13 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="subs-dialog", classes="modal-card"):
-            yield Label(t("subscriptions.title", label=self._store.label), id="subs-title")
+            # 标题与提示是纯文案出口（markup=False，见 tests/test_markup_sinks.py）
+            yield Label(
+                t("subscriptions.title", label=self._store.label), id="subs-title", markup=False
+            )
             yield FocusNavListView(id="subs-list")
             yield Label("", id="subs-empty")
-            yield Label(self._store.hint, id="subs-hint")
+            yield Label(self._store.hint, id="subs-hint", markup=False)
             with Horizontal(id="subs-actions"):
                 yield Button(t("subscriptions.add"), id="subs-add", variant="primary")
                 yield Button(t("subscriptions.rename"), id="subs-rename")

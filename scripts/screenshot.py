@@ -507,7 +507,12 @@ class _DemoCommentsLoader(CommentLoader):
 
 
 class DemoRedditDetail(DetailLoader):
-    """Reddit 帖子详情 stub：markdown 自述正文 + 评论楼层（赞数/回复数/置顶）。"""
+    """Reddit 帖子详情 stub：markdown 自述正文 + 评论楼层（赞数/回复数）。
+
+    这里不手写「[置顶]」前缀：stub 的文案会被拍进 README 截图，而真实解析器
+    目前产不出这个标记（JSON 通道时代的置顶前缀在 8d3a87b 改 HTML 通道时
+    丢失，待真实样本确认 HTML 里的标记后才能补回）——截图不能展示产不出的东西。
+    """
 
     def __init__(self) -> None:
         self._floors = [
@@ -515,7 +520,7 @@ class DemoRedditDetail(DetailLoader):
                 Answer(
                     author="rust-mod-team",
                     votes="赞 156",
-                    content_md="[置顶] 1.85 discussion megathread — keep release questions here.",
+                    content_md="1.85 discussion megathread — keep release questions here.",
                     time="2026-11-03 09:02",
                     url="https://www.reddit.com/r/rust/comments/demo/x/c_mod/",
                     comment_count="4 条回复",
@@ -774,7 +779,7 @@ async def _shots() -> None:
             await pilot.pause()
         await _demo_read_mix(app, pilot)
         _emit(app, "screenshot-reddit")
-        await pilot.press("enter")  # 进帖子详情（markdown 自述 + 置顶/赞数评论楼层）
+        await pilot.press("enter")  # 进帖子详情（markdown 自述 + 带赞数的评论楼层）
         for _ in range(8):
             await pilot.pause()
         _emit(app, "screenshot-reddit-detail")

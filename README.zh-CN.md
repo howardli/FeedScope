@@ -34,7 +34,7 @@ feedscope                # Tab 切站点，Enter 进详情
 - **扛得住站点改版**——X 轮换的 GraphQL queryId 失效时自动从当前部署重收割；Reddit 版本头 403 自愈；`feedscope probe` 一条命令定位任何断点
 - **纯本地**——已读、收藏、列表缓存都在本机明文文件里；无账号、无遥测；`feedscope favorites export` 随时把收藏带走（无锁定）
 - **读态不丢**——未读圆点扛过刷新与重启；重启先画缓存秒开列表，断网照样可翻（RSS / Telegram 正文也离线可读）
-- **工程质量打底**——554 个离线测试、全量 mypy strict、中英双语、IME 友好的非打印键位；新主题/新语言都是一个 TOML 文件，放进去即被自动发现
+- **工程质量打底**——622 个离线测试、全量 mypy strict、中英双语、IME 友好的非打印键位；新主题/新语言都是一个 TOML 文件，放进去即被自动发现
 
 ## 特性
 
@@ -47,8 +47,11 @@ feedscope                # Tab 切站点，Enter 进详情
 **阅读**
 
 - 终端内完整阅读：信息流 → 问题 → 回答 → 评论，逐层按需加载
+- 正文链接键盘跟进：`Ctrl+G` 列出正在读的内容里的链接（`[图片]`、`@提及`、原文……），↑↓ 选、Enter 在浏览器打开，不用碰鼠标
+- 本地搜索：`F6` 输入即搜，范围是全部列表缓存与收藏（标题对所有源生效，RSS / Telegram 连正文），零请求
+- 读到哪都能清未读：`]` / `[` / `Ctrl+R` 在详情屏里同样可用（跳到下一篇未读、把当前这篇标回未读），收藏列表上也有
 - 已读与未读：行首 `●` 标未读、打开即灭（`Ctrl+R` 可改回），刷新/重启都不动它；「N 新」计数在顶部状态行；列表缓存本地——重启秒开、断网可翻（RSS / Telegram 详情离线可读）
-- 收藏/稍后读：`Ctrl+F` 收藏（列表或阅读中都行），`F3` 看跨源收藏列表；存全量快照——条目从热榜流走、回答被删之后仍可读，`feedscope favorites export` 随时带走（防锁定）
+- 收藏/稍后读：`Ctrl+F` 收藏（列表或阅读中都行），`F3` 看跨源收藏列表；存全量快照——条目从热榜流走之后仍可读；在阅读屏里收藏时连已读到的详情一起存，原帖被删 / 之后打不开时就显示这份存档，而不是一条死链。`feedscope favorites export` 随时带走（防锁定）
 - HN 讨论树：顶层评论当楼层、回复树再深一层（`Enter`），深层嵌套拍平两层、`@父作者` 标出回复指向
 - X 特色：外文推自动附 Grok 译文，`[图片]` / `[视频]` 记号可点击直达原图 / 视频直链
 - 登录闭环：未登录自动弹 Chrome 扫码 / 输密码，`Ctrl+U` 一键登出换账号
@@ -78,7 +81,7 @@ Reddit 热门（元信息列「N 点 · N 评 · r/版块」，subreddit 订阅�
 
 ![Reddit 热门列表](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit.png)
 
-Reddit 帖子详情（markdown 自述正文 + 评论楼层带赞数，「[置顶]」标出版务帖）：
+Reddit 帖子详情（markdown 自述正文 + 评论楼层带赞数）：
 
 ![Reddit 详情](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit-detail.png)
 
@@ -141,14 +144,16 @@ feedscope
 | `Ctrl+N` | 加载更多（列表 / 楼层 / 评论，逐层各自生效） |
 | `Ctrl+O` | 浏览器打开当前条目 |
 | `Ctrl+Y` | 复制当前条目链接（详情/回答层复制的是正在读的那篇，回答层带楼层直达） |
-| `Ctrl+R` | 当前条目已读 / 未读切换（想重看的标回未读） |
+| `Ctrl+G` | 打开正文里的链接：列出正在读的内容里的链接（`[图片]`、`@提及`、原文），↑↓ 选择、Enter 在浏览器打开 |
+| `Ctrl+R` | 当前条目已读 / 未读切换（想重看的标回未读；详情屏与收藏列表上同样可用） |
 | `F4` | 只看未读：列表只显示未读条目（会话级开关，读过的行即时消失） |
-| `]` / `[` | 跳到下一条 / 上一条未读（当前流内环扫回绕） |
+| `]` / `[` | 跳到下一条 / 上一条未读（当前流内环扫回绕；详情屏里直接换到下一篇未读，收藏列表与搜索结果上同样可用） |
 | `/` | 按标题过滤列表（大小写不敏感子串；空输入清除；收藏列表同款） |
 | `Ctrl+A` | 当前信息流全部标为已读（带确认） |
 | `Ctrl+F` | 收藏 / 取消收藏当前条目（阅读中也生效） |
 | `F3` | 收藏列表：跨源按收藏时间倒序，Enter 进详情，Ctrl+F 取消 |
 | `F5` | 刷新 |
+| `F6` | 本地搜索：输入即搜全部列表缓存与收藏（标题对所有源生效，RSS / Telegram 连正文）；↑↓ 选择、Enter 打开、Esc 返回 |
 | `Ctrl+U` | 账号：登录 / 登出 |
 | `Ctrl+L` | 界面语言：选择后保存，重启 `feedscope` 生效 |
 | `Ctrl+T` | 界面主题：选择后即时生效并保存（无需重启） |
@@ -172,17 +177,18 @@ feedscope
 
 消化未读的三件套：左侧边栏每个流带**未读角标**（抓取时清点、读一条减一条，在收藏屏里读也同步减主场的数）；`F4` **只看未读**（会话级开关，读过的行即时从视图消失——清积压的主路径）；`Ctrl+A` **当前流全部标已读**（带轻确认）。
 
-收藏（`Ctrl+F`）存的是**收藏那一刻的全量快照**（标题/链接/元信息，RSS / Telegram 连正文一起）——条目从热榜流走、回答被删之后收藏仍可读；`F3` 列表读快照零请求、离线可用，Enter 才按原源在线抓最新评论。收藏条目豁免已读状态的淘汰；`feedscope favorites` 终端看列表、`feedscope favorites export [x.md]` 导出 Markdown 随时带走。
+收藏（`Ctrl+F`）存的是**收藏那一刻的全量快照**（标题/链接/元信息，RSS / Telegram 连正文一起）——条目从热榜流走、回答被删之后收藏仍可读。在阅读屏里收藏时还会存下**已读到的详情**（正文、回答与回复树）：原帖之后打不开——被删、离线、源已下架——Enter 就显示这份存档并注明，而不是一条死路。`F3` 列表读快照零请求、离线可用，Enter 先按原源在线抓最新内容，抓不到再退回存档。收藏条目豁免已读状态的淘汰；`feedscope favorites` 终端看列表、`feedscope favorites export [x.md]` 导出 Markdown 随时带走。
 
 状态与缓存都是本机纯文本文件（删掉即重置，不含任何凭据）：
 
 | 文件 | 内容 |
 | --- | --- |
 | `state.json`（状态目录，Linux 为 `~/.local/state/feedscope/`） | 已读/已见/收藏条目 id、时间戳与每流未读计数（上限一万条按最旧淘汰；收藏条目豁免） |
-| `favorites.json`（同状态目录） | 收藏条目的全量快照（用户数据，永不淘汰） |
+| `favorites.json`（同状态目录） | 收藏条目的全量快照（用户数据，永不淘汰），以及在阅读屏收藏时存下的详情 |
+| `feedscope.lock`（同状态目录） | 空的锁文件：让同一份状态上的第二个 `feedscope` 提醒两边会互相覆盖已读标记（不挡使用） |
 | `feeds/`（缓存目录，Linux 为 `~/.cache/feedscope/feeds/`） | 每流一个 JSON 的列表缓存（每流 200 条、留最近 60 流） |
 
-启动或刷新先画缓存再抓新数据：重启秒开列表；断网或站点改版时旧内容保留可翻，RSS / Telegram 的详情正文随列表缓存离线可读。`feedscope doctor` 会列出状态文件位置。
+启动或刷新先画缓存再抓新数据：重启秒开列表；断网或站点改版时旧内容保留可翻，RSS / Telegram 的详情正文随列表缓存离线可读。`feedscope doctor` 会列出状态文件位置。`state.json` / `favorites.json` 读不出来（截断、手编坏了）时不会被直接覆盖，而是先改名为 `<文件名>.corrupt-<时间戳>` 留底，应用按空态继续；`feedscope doctor` 会列出这些留底文件，方便手工找回。
 
 ### 界面语言
 
@@ -210,7 +216,7 @@ timezone = "Asia/Tokyo"   # 任意 IANA 时区名；删掉该行 / 写错 = 回�
 
 ### 登录 / 登出
 
-知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。登录会话存在本机 Chrome profile（Linux 为 `~/.cache/feedscope/chromium-profile/`）——详见 [SECURITY](SECURITY.md)。
+知乎、X 与 Reddit 需要登录（无匿名流）；HN、V2EX、RSS 与 Telegram 免登录开箱即用。未登录打开源会自动弹登录框，选「登录」弹 Chrome 完成后自动刷新，不用退出 TUI；取消后本次运行不再追问（`Ctrl+U` 仍可手动登录）。已登录按 `Ctrl+U` 登出换账号。纯命令行：`feedscope login [zhihu|x|reddit]`。登录会话存在本机 Chrome profile（Linux 为 `~/.cache/feedscope/chromium-profile/`）——详见 [SECURITY](SECURITY.md)。登录窗口开着期间 HN / V2EX / RSS / Telegram 照常可用，知乎 / X / Reddit 暂停到窗口关闭。
 
 登录态被服务端吊销（改密码、异地登出、定期轮换）不会让你对着 403 猜：X 的 401 语义唯一（清失效 cookie 后引导重登）；知乎会话半失效时列表照常、详情端点回 403（实测形态），同样在详情/回答/评论层转成登录引导而不是裸 HTTP 码，且失效一旦被记下 Ctrl+U 就直接给登录框（躺着的失效 cookie 会骗过判登，否则得先登出再登录）；知乎、Reddit 与 X 的取数都走常驻浏览器页签的真 Chrome（TLS/头序/cookie 与登录会话完全自洽，不吃非浏览器画像的封锁）。Reddit 的判据是 token_v2 的 JWT 本地解码（登录态 `sub="user"`、匿名态 `sub="loid"`）——它的判登 cookie 匿名流量也发（打开登录页即有，cookie 出现 ≠ 登录完成），而本地解码零网络零伪造，「登录成功」和判登门都以此为准，反复要求登录的循环在结构上不可能。
 
@@ -245,11 +251,13 @@ feedscope favorites [export [x.md]]           # 收藏列表 / 导出 Markdown�
 
 环境变量：`FEEDSCOPE_NO_PREWARM=1` 启动不预拉浏览器（慢机器友好）；`FEEDSCOPE_SAMPLE_DIR=<目录>` 让普通运行也把原始响应落盘（与 `probe` 同款样本）；`FEEDSCOPE_CONFIG` / `FEEDSCOPE_LOG_FILE` 换配置 / 日志位置。
 
-退出码约定（方便脚本分支）：`probe` 巡检有失败退 1、未知源 id 退 2；`rss add` / `rss import` 坏 OPML 退 2，`add` 订阅冲突另退 1；`doctor` 自检有失败退 1。
+退出码约定（方便脚本分支）：`probe` 巡检有失败退 1、未知源 id 退 2；`rss add` / `rss import` 坏 OPML 退 2，`add` 订阅冲突另退 1；`doctor` 自检有失败退 1——没装 Chrome、`sources.toml` 解析不了，或有不生效的设置（`enabled` 里有不存在的源 id、`hide` 里的名字对不上任何流、未知的 `language` / `timezone`、缺 url 的订阅条目……），每条问题各占一行。
 
 ### 故障排查与日志
 
 每次运行都会写日志文件（INFO 级），位置见 `feedscope doctor` 的信息行——macOS 是 `~/Library/Logs/feedscope/feedscope.log`，Linux 在 `~/.local/state/feedscope/log/feedscope.log`，1MB 滚动 ×3。出问题时答案多半已经在里面：带异常栈的抓取失败、自愈路径（X queryId 重收割、Reddit 版本头）悄悄回落的过程、登录判据的报错。`--verbose` 提到 DEBUG 看细节；`FEEDSCOPE_LOG_FILE` 永久换位置。TUI 里任何日志都不走 stderr（会打花重绘流），文件是唯一去处。
+
+同一份数据上开两个 `feedscope`：浏览器 profile 是受保护的——发现 profile 锁属于一个活着的进程时，不会启动 Chrome 并报出该进程的 pid；状态文件不加锁，同一份状态上的第二个 TUI 实例会提醒已读与收藏会互相覆盖。
 
 ### 源与信息流配置
 
@@ -257,6 +265,8 @@ feedscope favorites [export [x.md]]           # 收藏列表 / 导出 Markdown�
 
 ```toml
 language = "zh-CN"  # 界面语言（首启 / Ctrl+L 维护）
+browser = "open -a Firefox"   # 可选：打开链接的命令（%u 换成链接）；缺省走系统默认浏览器
+clipboard = "pbcopy"          # 可选：从 stdin 读文本的复制命令；缺省自动探测，都没有再退终端的 OSC 52
 enabled = ["zhihu", "x", "reddit", "hn", "v2ex", "rss"]  # 书写顺序即站点排列顺序；去掉某项 = 停用该源
 
 [zhihu]
@@ -276,7 +286,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label 缺省用 key（�
 hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏单个订阅
 ```
 
-`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`）——0.4.0 起手写的注释与未知键也原样保留（tomlkit 往返）。调整站点顺序：`F2` 里高亮已勾选的源按 `,` / `.` 微调（「取消勾选再重新勾选」仍是移到末尾）。
+`enabled` 缺省 = 全部启用；管理界面保存会保留各源 `hide` 段与 `feeds` 订阅表（`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`）——0.4.0 起手写的注释与未知键也原样保留（tomlkit 往返）。调整站点顺序：`F2` 里高亮已勾选的源按 `,` / `.` 微调（「取消勾选再重新勾选」仍是移到末尾）。SSH / 无桌面环境下缺省值够不着浏览器和剪贴板，`browser` / `clipboard` 就派上用场：配成那边能用的命令（如 `clipboard = "tmux load-buffer -"`），或者用 `Ctrl+Y` 复制链接。不会生效的设置 `feedscope doctor` 会报出来。
 
 ### RSS 订阅
 
@@ -297,6 +307,7 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 - 「全部」流 = 全部订阅按发布时间倒序合并，同文多源（转载 / 聚合）按 URL 去重；单个订阅拉取失败只损失自己的条目，全部失败才报错
 - 详情读 feed 自带正文（`content` 全文优先，`summary` 兜底），图片转原图直链；摘要型源正文短，`Ctrl+O` 跳浏览器读全文
 - 刷新走条件请求（ETag / Last-Modified），源没变不重复传正文
+- 也认 JSON Feed（自动发现本就接纳 `feed+json`）；正文里的相对链接与图片地址按条目自己的页面补全，enclosure（播客、视频源）在正文后以 `[音频]` / `[视频]` / `[附件]` 链接出现
 - RSS 无登录、无评论层
 
 ### Hacker News
@@ -329,7 +340,7 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 
 - 三层结构与 HN 同形：帖子（自述帖 HTML 转 markdown、链接帖原文一行、媒体帖 `[图片]` / `[视频]` 记号直达原图）→ 顶层评论当楼层（`Enter` 进单条评论的回复树）
 - 登录判据：token_v2 的 JWT 本地解码（登录态 `sub="user"`、匿名态 `sub="loid"`）——reddit_session 和 token_v2 的「存在」匿名流量也能造出来，解码才是铁证；登录轮询与判登门共用这一条，零网络零伪造
-- 元信息列「N 点 · N 评 · r/版块」；楼层带赞数、版务置顶评论带 `[置顶]` 前缀；深层讨论拍平两层、`@父作者` 标出指向（同 HN）
+- 元信息列「N 点 · N 评 · r/版块」；楼层带赞数；深层讨论拍平两层、`@父作者` 标出指向（同 HN）
 - 「首页」是账号在 Reddit 站内关注版块的聚合（新账号没关注过版块时为空，属正常）；想看的版块用订阅：`F2` → Reddit 行按 `→`，输入 subreddit 名或地址（`rust`、`r/rust`、站点链接都认）即成单独的流，不必去 Reddit 网站关注
 - 评论树单请求拉全（超大帖截断），截断处显示「另有 N 条未展开」；楼层 / 评论翻页全内存切片零请求
 
@@ -346,7 +357,6 @@ hide = ["all"]       # 可隐藏「全部」聚合流，或填订阅 key 隐藏�
 
 - Windows 支持（当前为 macOS 与 Linux）
 - 更多源——欢迎到 [discussions](https://github.com/howardli/FeedScope/discussions) 提案；新增一个源被设计成只动一个包的活
-- 本地缓存条目的全文搜索
 
 未排期；0.x 的优先级跟着用户反馈走。
 

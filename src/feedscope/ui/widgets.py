@@ -16,6 +16,7 @@ from textual.widgets import ListView, Static
 
 from feedscope.ui import Bindings
 from feedscope.ui.layout import RESIZE_DEBOUNCE
+from feedscope.ui.markup import escape
 
 
 class SourceTabPressed(Message):
@@ -42,7 +43,7 @@ class SourceTab(Static):
 
     def __init__(self, idx: int, label: str, active: bool) -> None:
         super().__init__(
-            label,
+            escape(label),  # 源名是文案键解析值，转义只是与 FeedNavItem 同一口径
             id=f"source-tab-{idx}",
             classes="source-tab" + (" source-tab-active" if active else ""),
         )
@@ -56,8 +57,12 @@ class FeedNavItem(Static):
     """左侧信息流项：流名 + 未读角标，点击切流（键盘走边栏态 ↑/↓）；高亮由 CSS class 决定。"""
 
     def __init__(self, idx: int, label: str, active: bool, unread: int = 0) -> None:
-        # 角标是纯数字不进 i18n；≥1000 显示 999+ 防撑爆 16 宽边栏，0 不占位
-        text = f"{label} [dim]{unread if unread < 1000 else '999+'}[/dim]" if unread else label
+        # 角标是纯数字不进 i18n；≥1000 显示 999+ 防撑爆 16 宽边栏，0 不占位。
+        # 订阅型源的 label 是订阅名（用户数据，Telegram 取自第三方频道名）：
+        # Static 默认解析 markup，'[AI] 周刊' 会被当样式标签吞掉、含闭合标记的
+        # 抛 MarkupError——必须转义后再拼（0.4.1 修的是花括号经 t() 崩溃，这类没盖住）
+        safe = escape(label)
+        text = f"{safe} [dim]{unread if unread < 1000 else '999+'}[/dim]" if unread else safe
         super().__init__(
             text,
             id=f"feed-nav-{idx}",

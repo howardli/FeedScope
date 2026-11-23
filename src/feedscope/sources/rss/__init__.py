@@ -17,13 +17,14 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from feedscope.core.config import Subscription
-from feedscope.core.media import html_to_md
+from feedscope.core.i18n import t
+from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
 from feedscope.core.source import FeedLoader, SubscribedSource
 from feedscope.core.timefmt import fmt_unix
 from feedscope.sources.rss.fetch import fetch_body, fetch_merged
-from feedscope.sources.rss.parse import SOURCE_ID, parse_feed
+from feedscope.sources.rss.parse import SOURCE_ID, enclosure_marks, parse_feed
 
 
 @register
@@ -61,4 +62,8 @@ class RssSource(SubscribedSource):
         return fmt_unix(extra.get("published") or None)
 
     def _detail_body(self, extra: dict[str, Any]) -> str:
-        return html_to_md(str(extra.get("content_html") or ""))
+        # 正文里的相对地址以条目自己的页面为基准绝对化；enclosure（播客/附件）
+        # 在正文之后追加记号链接（记号按当前语言解析，缓存里只存地址与 mime）
+        md = html_to_md(str(extra.get("content_html") or ""), base=str(extra.get("base") or ""))
+        marks = [mark(t(key), url) for key, url in enclosure_marks(extra.get("enclosures"))]
+        return "\n\n".join([md, *marks]) if (md or marks) else ""

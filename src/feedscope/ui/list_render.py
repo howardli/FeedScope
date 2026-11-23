@@ -7,16 +7,17 @@ ui/layout.py，本模块只做组装。
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 
-from rich.markup import escape
 from textual.containers import Horizontal
 from textual.widgets import Label, ListItem, ListView
 
 from feedscope.core.models import FeedItem
 from feedscope.core.source import Source
+from feedscope.core.text import display_width
 from feedscope.core.timefmt import fmt_relative
-from feedscope.ui.layout import meta_col_text
+from feedscope.ui.layout import META_COL_MAX, META_COL_SPARE, meta_col_text
+from feedscope.ui.markup import escape
 from feedscope.ui.wrap import wrap_display
 
 # 行首圆点的二态字符（列宽与折行算术见 layout.MARK_COL_WIDTH）：● 未读
@@ -38,8 +39,8 @@ ListItem.-highlight .item-mark { color: $block-cursor-foreground; }
 /* read rows: title dimmed one level (meta is already dim) so read/unread is
    legible at a glance even where the dot column is subtle (light theme) */
 ListItem.row-read .item-title { color: $text-muted; }
-/* source tag column (favorites only; width set per-batch inline): left-aligned
-   and muted so cross-source rows stay visually uniform */
+/* source tag column (cross-source lists: favorites and search results; width set
+   per-batch inline): left-aligned and muted so cross-source rows stay visually uniform */
 .item-tag { text-wrap: nowrap; color: $text-muted; }
 /* relative-time column (width set per-batch inline, absent when the batch has
    no timestamps): right-aligned so the unit edge lines up into a column */
@@ -84,7 +85,9 @@ def build_item(
     score.styles.width = score_width
     cells: list[Label] = [Label(mark, classes="item-mark")]
     if tag:
-        tag_label = Label(tag, classes="item-tag")
+        # 订阅名/频道名是用户与第三方数据：Label 默认解析 markup，'[AI] 周刊'
+        # 会被当样式标签吞掉、含闭合标记的直接抛 MarkupError（同 FeedNavItem）
+        tag_label = Label(escape(tag), classes="item-tag")
         tag_label.styles.width = tag_width
         cells.append(tag_label)
     if time_width:
@@ -116,3 +119,48 @@ def update_row_mark(
     row = view.children[idx]
     row.query_one(".item-mark", Label).update(mark)
     row.set_class(not mark, "row-read")  # 标题置灰随圆点同进退
+
+
+def jump_unread(
+    view: ListView,
+    rows: Sequence[FeedItem],
+    is_read: Callable[[FeedItem], bool],
+    delta: int,
+) -> bool:
+    """沿 delta 方向环扫一圈找首条未读：命中即选中并返回 True（列表自动滚到行）；
+    一圈无未读 / 空表返回 False（调用方给反馈）。主屏与收藏屏共用。"""
+    if not rows:
+        return False
+    cur = view.index or 0
+    for step in range(1, len(rows) + 1):
+        i = (cur + delta * step) % len(rows)
+        if not is_read(rows[i]):
+            view.index = i
+            return True
+    return False
+
+
+# ---- 跨源列表（收藏屏 / 搜索结果）：源名列文本与两列宽度按「各条目自己的源」算 ----
+
+
+def cross_source_tag(item: FeedItem, sources: Mapping[str, Source]) -> str:
+    """源名列文本：聚合流条目自带更具体的出处（订阅名/频道名）优先，否则用源
+    显示名；注册表里都找不到的落回裸 source id。"""
+    if item.tag:
+        return item.tag
+    src = sources.get(item.source)
+    return src.label_text if src is not None else item.source
+
+
+def cross_source_widths(
+    items: Sequence[FeedItem], sources: Mapping[str, Source]
+) -> tuple[int, int]:
+    """(源名列宽, 元信息列宽)：源名列 = 批内最长 + 1；元信息列按各条目自己的源
+    取最长、封顶 META_COL_MAX（多源版 layout.score_col_width——源名不拼进来，
+    元信息保持各源在主列表的原生形态）。"""
+    tag = max((display_width(cross_source_tag(it, sources)) for it in items), default=0)
+    metas = (
+        meta_col_text(sources[it.source], it) if it.source in sources else it.meta for it in items
+    )
+    score = max((display_width(text) for text in metas), default=1)
+    return tag + 1, min(score, META_COL_MAX) + META_COL_SPARE

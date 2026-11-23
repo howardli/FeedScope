@@ -26,6 +26,7 @@ from feedscope.core.i18n import has, t
 from feedscope.ui import Bindings
 from feedscope.ui.focus_nav import ArrowModalScreen
 from feedscope.ui.labels import retranslate_bindings
+from feedscope.ui.markup import escape
 
 # 分组排布（组序即展示序）+ 动作名归类。归类挂动作不挂键：换篇/换楼层与
 # 边栏导航键不同但同属「导航」，键改绑（如收藏换键）分组不漂移
@@ -39,7 +40,8 @@ _ACTION_GROUP: dict[str, str] = {
     "next_answer": "nav", "prev_answer": "nav", "close": "nav",
     # 内容：取数与外带
     "refresh": "content", "more": "content", "open_browser": "content",
-    "copy_link": "content", "title_filter": "content",
+    "copy_link": "content", "title_filter": "content", "links": "content",
+    "search": "content",
     # 已读与未读
     "toggle_read": "read", "mark_all_read": "read", "unread_only": "read",
     "next_unread": "read", "prev_unread": "read",
@@ -166,10 +168,11 @@ class HelpScreen(ArrowModalScreen[None]):
             with VerticalScroll(id="help-scroll"):
                 yield Label(t("help.title"), id="help-title", classes="help-section")
                 for title, rows in self._sections:
-                    yield Label(title, classes="help-section")
+                    # 分组标题是纯文案：markup=False（行内的键列/说明才带 [b]，逐个转义）
+                    yield Label(title, classes="help-section", markup=False)
                     for key, desc in rows:
                         yield Label(
-                            f"[b]{key.ljust(width)}[/b]  {desc}", classes="help-row"
+                            f"[b]{escape(key.ljust(width))}[/b]  {escape(desc)}", classes="help-row"
                         )
             yield Label(t("help.close_hint"), id="help-hint")
 

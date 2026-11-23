@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
-from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -55,7 +54,9 @@ class ConfirmScreen(DialogScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-card dialog-card"):
-            yield Label(self._prompt, id=self.PROMPT_ID, classes="dialog-prompt")
+            # markup=False：提示是纯文本（会拼入订阅名等用户数据），按构造即不做
+            # 标记解析——调用方不必记得逐处转义（tests/test_markup_sinks.py 守着）
+            yield Label(self._prompt, id=self.PROMPT_ID, classes="dialog-prompt", markup=False)
             with Horizontal(classes="modal-actions"):
                 yield Button(self._confirm_label, id=self.OK_ID, variant="primary")
                 yield Button(t("dialogs.cancel"), id="confirm-cancel")
@@ -113,7 +114,7 @@ class InputScreen(DialogScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-card dialog-card dialog-fixed"):
-            yield Label(self._title, id="input-title", classes="dialog-prompt")
+            yield Label(self._title, id="input-title", classes="dialog-prompt", markup=False)
             yield Input(value=self._initial, placeholder=self._placeholder, id="input-line")
             with Horizontal(classes="modal-actions"):
                 yield Button(t("dialogs.ok"), id="input-ok", variant="primary")
@@ -143,8 +144,8 @@ async def ask_title_filter(holder: Screen[Any], current: str | None) -> str | No
     """/ 过滤词问答（主屏与收藏屏同一条流）：弹输入层 -> 归一化新词。
 
     返回 None = 不动现有过滤（Esc 取消 / 词没变——取消输入 ≠ 清除过滤），
-    空串归 None（= 清除）；词变了顺手把 set/clear 的 toast 弹掉（用户词过
-    escape：notify 解析 markup，词里的 "[" 不当样式标签）。
+    空串归 None（= 清除）；词变了顺手把 set/clear 的 toast 弹掉（toast 出口
+    是纯文本，见 feedback 模块头——用户词原样给，不转义）。
     """
     q = await holder.app.push_screen(
         # allow_empty：空提交回 ""（= 清除过滤），None 只留给 Esc（= 不变）
@@ -157,6 +158,6 @@ async def ask_title_filter(holder: Screen[Any], current: str | None) -> str | No
     if new != current:
         feedback.info(
             holder,
-            t("main.toast_filter_set", q=escape(new)) if new else t("main.toast_filter_clear"),
+            t("main.toast_filter_set", q=new) if new else t("main.toast_filter_clear"),
         )
     return new

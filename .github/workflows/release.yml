@@ -1,9 +1,12 @@
-# Release pipeline: push a tag `v*` → build → publish to PyPI (OIDC trusted
-# publishing, no tokens) → GitHub Release with the artifacts.
+# Release pipeline: push a tag `v*` → test gate → build → publish to PyPI (OIDC
+# trusted publishing, no tokens) → GitHub Release with the artifacts.
 #
 # One-time setup lives in docs/release.md (PyPI pending publisher + the
 # `pypi` GitHub environment). After that, a release is: changelog entry,
 # version bump, `git tag vX.Y.Z && git push --tags`.
+#
+# The test gate is part of the pipeline on purpose: a tag used to go straight to
+# PyPI with nothing green guaranteed about the commit it points at.
 
 name: Release
 
@@ -12,9 +15,26 @@ on:
     tags:
       - "v*"
 
+# 最小权限：只有发布步骤自己提权（下面的 job 级 permissions）
+permissions:
+  contents: read
+
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --python 3.12
+      - run: uv run ruff check src/ tests/ scripts/
+      - run: uv run mypy
+      - run: uv run pytest tests/ -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -28,6 +48,7 @@ jobs:
   publish-pypi:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi    # create this environment once; see docs/release.md
     permissions:
       id-token: write    # OIDC trusted publishing — no PyPI token stored anywhere
@@ -41,6 +62,7 @@ jobs:
   github-release:
     needs: publish-pypi
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

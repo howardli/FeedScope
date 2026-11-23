@@ -8,6 +8,7 @@ ui（sources/x/parse.py 曾为此本地复制这两行），core 是它唯一能
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 # 源码里用转义、别放字面量：字面零宽字符在源码里不可见，极易漏改
@@ -52,3 +53,33 @@ def is_cjk(ch: str) -> bool:
         or "\u3000" <= ch <= "\u303f"
         or "\uff00" <= ch <= "\uffef"
     )
+
+
+# Markdown 行内链接（含图片）与自动链接：[文字](地址 "可选标题") / ![图](地址) /
+# <https://…>。正文里的链接一律由 html_to_md / media.mark 产成行内链接形态，
+# 这里不引 Markdown 解析器——只为「把链接列出来给键盘选」这一件事
+_LINK_RE = re.compile(
+    r"\[((?:\\.|[^\\\[\]])*)\]\(\s*(<[^>\s]*>|[^)\s]+)(?:\s+[\"'][^)]*[\"'])?\s*\)"
+)
+_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
+
+
+def links_in(markdown: str) -> list[tuple[str, str]]:
+    """正文里的链接：(链接文字, 地址)，按出现顺序，同一地址只留首次。
+
+    给阅读屏的链接选择器用——[图片]/[视频]/@提及 这些链接此前只能鼠标点，
+    纯键盘用户跟进不了。行内链接与 <https://…> 自动链接都认；纯锚点（#x）
+    不算（本应用没有文内跳转）。"""
+    found: list[tuple[int, str, str]] = [
+        (m.start(), m.group(1), m.group(2)) for m in _LINK_RE.finditer(markdown)
+    ]
+    found += [(m.start(), m.group(1), m.group(1)) for m in _AUTOLINK_RE.finditer(markdown)]
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for _, text, href in sorted(found):
+        href = href.strip("<>")
+        if href.startswith("#") or href in seen:
+            continue
+        seen.add(href)
+        out.append((text.strip(), href))
+    return out

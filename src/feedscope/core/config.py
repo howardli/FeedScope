@@ -25,6 +25,7 @@ from typing import Any
 import tomlkit
 from platformdirs import user_config_path
 
+from feedscope.core import i18n, timefmt
 from feedscope.core.i18n import t
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,27 @@ def get_timezone() -> str | None:
     return tz if isinstance(tz, str) and tz else None
 
 
+def get_browser() -> str | None:
+    """配置的「打开链接」命令（shell 词法切分，%u 换成链接）；None = 未配置。
+
+    缺省走 webbrowser.open()——SSH / 无桌面环境里它拉不起浏览器。配置示例：
+    browser = "open -a Firefox"      # macOS
+    browser = "firefox %u"           # Linux
+    """
+    cmd = _read()[0].get("browser")
+    return cmd if isinstance(cmd, str) and cmd.strip() else None
+
+
+def get_clipboard() -> str | None:
+    """配置的「复制」命令（从 stdin 读文本）；None = 未配置（自动探测 / OSC 52）。
+
+    缺省探测 pbcopy / wl-copy / xclip / xsel，都没有才退回终端的 OSC 52。
+    配置示例：clipboard = "tmux load-buffer -"
+    """
+    cmd = _read()[0].get("clipboard")
+    return cmd if isinstance(cmd, str) and cmd.strip() else None
+
+
 def _enabled_from_data(data: dict[str, Any]) -> list[str] | None:
     """从配置数据里取出规范化的 enabled（坏值按未配置；空列表是合法的零启用）。"""
     raw = data.get("enabled")
@@ -336,20 +358,36 @@ def update_feeds(
         section = tomlkit.table()
         doc[source_id] = section
     if feeds:
-        table = tomlkit.table()
-        for f in feeds:
-            # 内联表一行一条（手编/比对都清爽）；label/url 的引号转义交给 tomlkit
-            row = tomlkit.inline_table()
-            row["url"] = f.url
-            row["label"] = f.label
-            table[f.key] = row
-        section["feeds"] = table
+        section["feeds"] = _merge_feeds_table(section.get("feeds"), feeds)
     else:
         section.pop("feeds", None)
         if not section:  # 没剩任何键：空段不保留（有手编键则连段一起留着）
             doc.pop(source_id, None)
     _sync_enabled_link(doc, source_id, feeds, drop_when_empty=drop_enabled_when_empty)
     _write_config(doc)
+
+
+def _merge_feeds_table(old: object, feeds: list[Subscription]) -> dict[str, Any]:
+    """订阅表的原位合并：既有的行对象按 key 复用，只改 url / label。
+
+    0.4.0 的 tomlkit 往返保住了文件其余部分的注释与未知键，但订阅表本身
+    仍是整表重建——表内行上/行尾的注释、条目里的自定义键，经订阅管理屏或
+    rss rename 保存一次就没了（README 承诺的「原样保留」在表内并不成立）。
+    原位合并后：改名/改地址只动那两个键，删掉的整行摘除，新增的追加在表尾
+    （内联表一行一条，label/url 的引号转义交给 tomlkit）。old 不是表（首次
+    写入 / 手编坏了，doctor 会报）才新建。
+    """
+    table: dict[str, Any] = old if isinstance(old, dict) else tomlkit.table()
+    wanted = {f.key for f in feeds}
+    for key in [k for k in table if k not in wanted]:
+        del table[key]
+    for f in feeds:
+        row = table.get(f.key)
+        if not isinstance(row, dict):  # 新订阅，或旧条目不是表
+            row = table[f.key] = tomlkit.inline_table()
+        row["url"] = f.url
+        row["label"] = f.label
+    return table
 
 
 def update_rss_feeds(feeds: list[Subscription]) -> None:
@@ -389,3 +427,66 @@ def describe() -> str:
     if n_feeds:
         parts.append(t("config.describe_feeds", n=n_feeds))
     return " · ".join(parts) if parts else t("config.describe_not_created")
+
+
+def parse_error() -> str | None:
+    """配置文件存在却解析不了的原因；不存在 / 正常 = None。
+
+    doctor 据此判 FAIL：保存路径遇到坏文件会拒绝写入并指向 doctor，doctor
+    自己不能对坏文件报 OK。
+    """
+    _, reason = _read()
+    return reason if reason and config_path().exists() else None
+
+
+def lint() -> list[str]:
+    """配置体检（doctor 用）：逐条报「不挡启动、但等于没生效」的问题。
+
+    读取侧对这些全是静默容错（坏值回退默认、坏条目跳过、只记日志）——用户
+    不翻日志就不知道自己的时区/订阅其实没生效。返回的每条都是面向用户的
+    文案。只做文件结构这一层的检查；要认识源词表的部分（未知源 id、hide 名
+    对不上流）在 doctor 里——本模块不认识任何具体的源。
+    """
+    data = _read()[0]
+    problems: list[str] = []
+    enabled = data.get("enabled")
+    if enabled is not None and (
+        not isinstance(enabled, list) or not all(isinstance(i, str) for i in enabled)
+    ):
+        problems.append(t("config.lint_enabled"))
+    lang = data.get("language")
+    if lang is not None and (not isinstance(lang, str) or lang not in _language_codes()):
+        problems.append(t("config.lint_language", lang=str(lang)))
+    tz = data.get("timezone")
+    if tz is not None and (not isinstance(tz, str) or not timefmt.valid_timezone(tz)):
+        problems.append(t("config.lint_timezone", tz=str(tz)))
+    for key in ("browser", "clipboard"):
+        value = data.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            problems.append(t("config.lint_command", key=key))
+    for source, section in data.items():
+        if not isinstance(section, dict):
+            continue
+        hide = section.get("hide")
+        if hide is not None and (
+            not isinstance(hide, list) or not all(isinstance(n, str) for n in hide)
+        ):
+            problems.append(t("config.lint_hide", source=source))
+        feeds = section.get("feeds")
+        if feeds is None:
+            continue
+        if not isinstance(feeds, dict):
+            problems.append(t("config.lint_feeds_table", source=source))
+            continue
+        for key, entry in feeds.items():
+            url = entry.get("url") if isinstance(entry, dict) else None
+            if not isinstance(url, str) or not url:
+                problems.append(t("config.lint_feed_url", source=source, key=str(key)))
+            elif (label := entry.get("label")) is not None and not isinstance(label, str):
+                problems.append(t("config.lint_feed_label", source=source, key=str(key)))
+    return problems
+
+
+def _language_codes() -> set[str]:
+    """随包发行的全部语言代码（set_language 对未知代码静默回退缺省）。"""
+    return {language.code for language in i18n.available()}

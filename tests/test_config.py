@@ -362,3 +362,36 @@ def test_update_feeds_scalar_conflict_aborts_whole_save(
         update_feeds("rss", [Subscription("a", "A", "https://a.test/f")])
     assert path.read_text(encoding="utf-8") == original, "半套用不落盘：文件分毫未动"
     assert "未写入" in caplog.text
+
+
+def test_update_feeds_keeps_comments_and_custom_keys_inside_the_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """「注释与未知键原样保留」在订阅表**内部**也要成立：改名/增删只动受影响的行，
+    行上与行尾的注释、条目里的自定义键都留着（修复前整表重建，保存一次就洗掉）。"""
+    original = (
+        "# 我自己的段注释\n[zhihu]\nhide = [\"follow\"]\n\n"
+        "[rss.feeds]\n"
+        "# weekly digest -- keep on top\n"
+        'ruanyq = { label = "Weekly", url = "https://example.com/a.xml" }   # trailing note\n'
+        'hnrss = { url = "https://example.com/b.xml", my_custom_key = "keep me" }\n'
+        'gone = { url = "https://example.com/c.xml" }  # this row is removed\n'
+    )
+    path = use_config(monkeypatch, tmp_path, original)
+    feeds = rss_feeds()
+    assert [f.key for f in feeds] == ["ruanyq", "hnrss", "gone"]
+
+    renamed = Subscription("ruanyq", "Renamed", "https://example.com/a.xml")
+    added = Subscription("new", "New", "https://example.com/d.xml")
+    update_feeds("rss", [renamed, feeds[1], added])  # 改名 + 删 gone + 新增 new
+
+    text = path.read_text(encoding="utf-8")
+    assert "# 我自己的段注释" in text and "# weekly digest -- keep on top" in text
+    assert "# trailing note" in text and 'my_custom_key = "keep me"' in text
+    assert "gone" not in text and "this row is removed" not in text  # 整行连同它的注释摘除
+    parsed = tomllib.loads(text)
+    assert parsed["rss"]["feeds"] == {
+        "ruanyq": {"label": "Renamed", "url": "https://example.com/a.xml"},
+        "hnrss": {"url": "https://example.com/b.xml", "my_custom_key": "keep me", "label": "hnrss"},
+        "new": {"label": "New", "url": "https://example.com/d.xml"},
+    }

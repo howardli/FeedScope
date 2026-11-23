@@ -13,10 +13,8 @@
 
 from __future__ import annotations
 
-import webbrowser
 from typing import TYPE_CHECKING, ClassVar
 
-from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.events import Resize
@@ -27,21 +25,27 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import all_sources
-from feedscope.core.source import FeedLoader, Source
-from feedscope.core.text import display_width
+from feedscope.core.source import UNKNOWN_SOURCE, Source
 from feedscope.ui import Bindings, feedback, tui_of
 from feedscope.ui.coalesce import CoalescedScheduler
 from feedscope.ui.dialogs import ask_title_filter
 from feedscope.ui.labels import retranslate_bindings
+from feedscope.ui.launch import copy_link, open_link
 from feedscope.ui.layout import (
-    META_COL_MAX,
     META_COL_SPARE,
     RESIZE_DEBOUNCE,
     list_title_width,
-    meta_col_text,
     time_col_width,
 )
-from feedscope.ui.list_render import LIST_ROW_CSS, MARK_UNREAD, build_item, update_row_mark
+from feedscope.ui.list_render import (
+    LIST_ROW_CSS,
+    MARK_UNREAD,
+    build_item,
+    cross_source_tag,
+    cross_source_widths,
+    jump_unread,
+    update_row_mark,
+)
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.help import push_help
 
@@ -58,25 +62,6 @@ class _FavListView(ListView):
     ]
 
 
-class _FallbackSource(Source):
-    """注册表里已不存在的源的占位（未来的源下架）：详情能力全关，Enter 走浏览器。
-
-    跳过 Source.__init__：占位源不读配置不进任何流（空 feeds 走父类会误报
-    「信息流已被全部隐藏」的警告，import 期还可能被真实配置触发）。
-    """
-
-    source_id = ""
-    label = ""
-
-    def __init__(self) -> None:
-        self.feeds = []
-
-    async def open_feed(self, name: str) -> FeedLoader:
-        raise NotImplementedError
-
-
-_FALLBACK = _FallbackSource()
-
 _PAGE = 100  # 分页步长：ListView 没有虚拟化，几千条收藏一次性挂载会冻结秒级
              #（主列表 SliceFeedLoader 同一动机；数据全在本地，Ctrl+N 只是渲染放量）
 
@@ -92,6 +77,10 @@ class FavoritesScreen(Screen[None]):
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
         Binding("ctrl+n", "more", "bindings.more", show=False),
         Binding("/", "title_filter", "bindings.title_filter", show=False),
+        # 稍后读队列的未读三件套在这里最要紧（想回头细看的标回未读）：与主列表同键同义
+        Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
+        Binding("]", "next_unread", "bindings.next_unread", show=False),
+        Binding("[", "prev_unread", "bindings.prev_unread", show=False),
         Binding("f1", "help", "bindings.help"),
     ]
 
@@ -125,7 +114,8 @@ class FavoritesScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield _FavListView(id="fav-list")
-        yield Label("", id="fav-empty")
+        # markup=False：空态提示会拼入用户过滤词，纯文本出口不做标记解析
+        yield Label("", id="fav-empty", markup=False)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -166,28 +156,15 @@ class FavoritesScreen(Screen[None]):
     # ---- 列表 ----
 
     def _source_of(self, it: FeedItem) -> Source:
-        return self._sources.get(it.source, _FALLBACK)
+        return self._sources.get(it.source, UNKNOWN_SOURCE)  # 已下架的源用占位源
 
     def _tag_of(self, it: FeedItem) -> str:
-        """源名列文本：聚合流条目自带更具体的出处（订阅名/频道名）优先，
-        否则用源词汇表显示名；注册表里都找不到的落回裸 source id。"""
-        if it.tag:
-            return it.tag
-        src = self._sources.get(it.source)
-        return src.label_text if src is not None else it.source
+        """源名列文本（规则见 list_render.cross_source_tag，搜索结果共用）。"""
+        return cross_source_tag(it, self._sources)
 
-    def _tag_width_of(self) -> int:
-        """源名列宽：批内最长源名 + 1（列内左对齐，各源名成列）。"""
-        return max((display_width(self._tag_of(it)) for it in self.items), default=0) + 1
-
-    def _score_width_of(self) -> int:
-        """元信息列宽：跨源取各自源计算的最长值封顶 META_COL_MAX（多源版
-        score_col_width——源名不拼进来，元信息保持各源在主列表的原生形态）。"""
-        longest = max(
-            (display_width(meta_col_text(self._source_of(it), it)) for it in self.items),
-            default=1,
-        )
-        return min(longest, META_COL_MAX) + META_COL_SPARE
+    def _widths_of(self) -> tuple[int, int]:
+        """(源名列宽, 元信息列宽)：按各条目自己的源算（list_render.cross_source_widths）。"""
+        return cross_source_widths(self.items, self._sources)
 
     def _shown(self) -> list[FeedItem]:
         """当前渲染的行集（/ 过滤态 = 标题匹配子集）；行↔条目映射的唯一入口。"""
@@ -237,16 +214,14 @@ class FavoritesScreen(Screen[None]):
         await view.clear()
         empty = self.query_one("#fav-empty", Label)
         if mounted:
-            self._score_width = self._score_width_of()
-            self._tag_w = self._tag_width_of()
+            self._tag_w, self._score_width = self._widths_of()
             self._time_w = time_col_width(self.items)  # 快照里带时间的条目成列
             await view.extend(self._build_rows(mounted))
             view.index = 0 if idx is None else min(idx, len(mounted) - 1)
             empty.display = False
         elif self.items:
-            # 用户过滤词过 escape：Label/notify/sub_title 都解析 markup，词里
-            # 的 "[" 会被当样式标签吞掉或炸解析（主屏空态 main.py 同款处理）
-            empty.update(t("fav.empty_filter", q=escape(self._filter or "")))
+            # 空态提示是纯文本出口（Label 构造处 markup=False）：过滤词原样给
+            empty.update(t("fav.empty_filter", q=self._filter or ""))
             empty.display = True  # 有收藏但被过滤光：指路去关过滤
         else:
             empty.update(t("fav.empty"))
@@ -255,7 +230,8 @@ class FavoritesScreen(Screen[None]):
 
     def _update_status(self, total: int, mounted: int) -> None:
         if self._filter:
-            self.app.sub_title = t("fav.status_filtered", n=total, q=escape(self._filter))
+            # Header 副标题不做标记解析（实测）：过滤词原样给，转义反而会露出反斜杠
+            self.app.sub_title = t("fav.status_filtered", n=total, q=self._filter)
         elif mounted < total:
             self.app.sub_title = t("fav.status_paged", n=total, m=mounted)
         else:
@@ -325,7 +301,7 @@ class FavoritesScreen(Screen[None]):
             feedback.info(self, t("main.toast_no_selection"))
             return
         self._mark_read(item)
-        webbrowser.open(item.url)
+        open_link(self, item.url)
 
     def action_unfavorite(self) -> None:
         item = self._current()
@@ -336,14 +312,42 @@ class FavoritesScreen(Screen[None]):
         feedback.info(self, t("fav.toast_removed"))
         self._rerender()
 
+    def action_toggle_read(self) -> None:
+        """Ctrl+R：当前收藏切回未读 / 标已读（主列表同键同义，主屏同一行同步）。"""
+        item = self._current()
+        if item is None:
+            feedback.info(self, t("main.toast_no_selection"))
+            return
+        read = self._tui.state.toggle_read(item.source, item.id)
+        feedback.info(self, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
+        self._update_row_mark(item)
+        if (main := self._tui.main) is not None:
+            main._sync_after_read(item)
+
+    def action_next_unread(self) -> None:
+        self._jump_unread(+1)
+
+    def action_prev_unread(self) -> None:
+        self._jump_unread(-1)
+
+    def _jump_unread(self, delta: int) -> None:
+        """环扫到下一条未读的收藏（本体在 list_render.jump_unread，与主屏共用）。"""
+        state = self._tui.state
+        if not jump_unread(
+            self.query_one("#fav-list", ListView),
+            self._mounted(),
+            lambda it: state.is_read(it.source, it.id),
+            delta,
+        ):
+            feedback.info(self, t("main.no_unread"))
+
     def action_copy_link(self) -> None:
         """Ctrl+Y：复制当前收藏的链接（快照里的 url，不依赖源在线）。"""
         item = self._current()
         if item is None:
             feedback.info(self, t("main.toast_no_selection"))
             return
-        self.app.copy_to_clipboard(item.url)
-        feedback.info(self, t("main.toast_copied"))
+        copy_link(self, item.url)
 
     def action_title_filter(self) -> None:
         """/：标题过滤（会话级，同主屏语义）：Enter 设词/空提交清除/Esc 不变。"""
@@ -371,23 +375,44 @@ class FavoritesScreen(Screen[None]):
             return
         self._mark_read(item)
         source = self._source_of(item)
-        if source.opens_detail(item):  # 判据收口在 Source.opens_detail（与主屏共用）
-            self.app.push_screen(DetailScreen(item, source, self.step_readable))
+        # 判据收口在 Source.opens_detail（与主屏共用）；收藏时存过详情的条目即使源
+        # 已打不开它（源下架 / 类型不再进详情），也进详情屏回退显示存档
+        if source.opens_detail(item) or self._tui.state.archive_of(item) is not None:
+            # 跨源列表：相邻条目可能来自别的源，详情屏按条目重新取源
+            self.app.push_screen(
+                DetailScreen(
+                    item,
+                    source,
+                    self.step_readable,
+                    step_unread=self.step_unread,
+                    source_of=self._source_of,
+                )
+            )
         else:
-            webbrowser.open(item.url)
+            open_link(self, item.url)
 
     def step_readable(self, delta: int) -> FeedItem | None:
         """详情屏 ←/→ 的供给端（镜像主屏 step_readable_item）：沿方向推进到下一条
         可进终端详情的收藏（沿已挂载行集——未挂载的页没有行可选），同步选中
         并计已读；没有可读目标时返回 None。"""
+        return self._step(delta, unread_only=False)
+
+    def step_unread(self, delta: int) -> FeedItem | None:
+        """详情屏 ]/[ 的供给端：只停在未读的可读收藏上。"""
+        return self._step(delta, unread_only=True)
+
+    def _step(self, delta: int, *, unread_only: bool) -> FeedItem | None:
         view = self.query_one("#fav-list", ListView)
         mounted = self._mounted()
         if not mounted or view.index is None:
             return None
         for idx in range(view.index + delta, len(mounted) if delta > 0 else -1, delta):
             it = mounted[idx]
-            if self._source_of(it).opens_detail(it):
-                view.index = idx
-                self._mark_read(it)
-                return it
+            if not self._source_of(it).opens_detail(it):
+                continue
+            if unread_only and self._tui.state.is_read(it.source, it.id):
+                continue
+            view.index = idx
+            self._mark_read(it)
+            return it
         return None

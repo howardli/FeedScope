@@ -34,7 +34,7 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 - **Survives site churn** — X's rotating GraphQL queryIds are re-harvested automatically from the live deployment on failure; Reddit's client-version header self-heals on 403; `feedscope probe` pinpoints any breakage in one command
 - **Truly local** — read state, favorites and list caches live in plain local files; no account, no telemetry; `feedscope favorites export` takes your saved items anywhere (no lock-in)
 - **Reading state that sticks** — unread dots survive refreshes and restarts; restarts paint the cache instantly, and offline keeps lists (and RSS / Telegram bodies) readable
-- **Built to last** — 554 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
+- **Built to last** — 622 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
 
 ## Features
 
@@ -47,8 +47,11 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 **Reading**
 
 - Full in-terminal reading: feed → question → answers → comments, each layer loaded on demand
+- Keyboard link following: `Ctrl+G` lists the links in what you are reading (`[image]`, `@mentions`, the original article…) — ↑↓ pick, Enter opens in the browser; no mouse needed
+- Local search: `F6` searches every cached list and your favorites as you type (titles for all sources, bodies for RSS / Telegram) — zero requests
+- Unread triage anywhere: `]` / `[` / `Ctrl+R` also work inside a detail (jump to the next unread article, mark the current one unread to revisit) and on the favorites list
 - Read state & offline: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back); the "N new" count lives in the top status line; lists cache locally — restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
-- Favorites / read-later: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; the full snapshot stays readable after items scroll off hot lists or get deleted, and `feedscope favorites export` takes them with you (no lock-in)
+- Favorites / read-later: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; the snapshot stays readable after items scroll off hot lists, and when you star from a reading screen the detail you had loaded is saved too — a post that was deleted or cannot be opened later shows that copy instead of a dead link. `feedscope favorites export` takes them with you (no lock-in)
 - HN discussion tree: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads flatten to two levels with `@parent` prefixes preserving who-replies-to-whom
 - X extras: auto Grok translation for foreign posts; `[图片]` / `[视频]` media markers are clickable links to the original image / video
 - Login loop: in-app Chrome QR / password login when a source needs it; `Ctrl+U` to switch accounts
@@ -78,7 +81,7 @@ Reddit Popular (meta column "N pts · N comments · r/sub"; add subreddits in `F
 
 ![Reddit popular list](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit.png)
 
-Reddit post detail (markdown self-text + comment floors with scores; moderator stickies flagged `[置顶]`):
+Reddit post detail (markdown self-text + comment floors with scores):
 
 ![Reddit post detail](https://raw.githubusercontent.com/howardli/FeedScope/main/docs/screenshot-reddit-detail.png)
 
@@ -141,14 +144,16 @@ feedscope
 | `Ctrl+N` | Load more (list / floors / comments, each layer independently) |
 | `Ctrl+O` | Open current item in browser |
 | `Ctrl+Y` | Copy the current item's link (in details, copies the article you are reading; in reply layers, the floor-direct link) |
-| `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit) |
+| `Ctrl+G` | Open a link in the body: lists the links of what you are reading (`[image]`, `@mentions`, the original); ↑↓ select, Enter opens in the browser |
+| `Ctrl+R` | Toggle read / unread on the current item (mark it unread to revisit; also while reading and on the favorites list) |
 | `F4` | Unread-only view: the list shows unread items only (session toggle; read rows vanish instantly) |
-| `]` / `[` | Jump to the next / previous unread item (wraps around the current feed) |
+| `]` / `[` | Jump to the next / previous unread item (wraps around the current feed; inside a detail it loads the next unread article; also on the favorites list and search results) |
 | `/` | Filter the list by title (case-insensitive substring; empty input clears; also works in the favorites list) |
 | `Ctrl+A` | Mark every item in the current feed as read (with confirmation) |
 | `Ctrl+F` | Favorite / unfavorite the current item (works while reading too) |
 | `F3` | Favorites list: cross-source, newest by star time; Enter opens detail, Ctrl+F unfavorites |
 | `F5` | Refresh |
+| `F6` | Search cached lists and favorites as you type (titles for every source, bodies for RSS / Telegram); ↑↓ select, Enter opens, Esc goes back |
 | `Ctrl+U` | Account: login / logout |
 | `Ctrl+L` | UI language: pick and save; restart `feedscope` to apply |
 | `Ctrl+T` | UI theme: pick, applied instantly and saved (no restart needed) |
@@ -172,17 +177,18 @@ The dot column on each row tracks reading state: `●` unread (editor blue), bla
 
 The unread-digestion trio: every feed in the sidebar carries an **unread badge** (counted on refresh, decremented live as you read — including reads from the favorites list); `F4` is the **unread-only view** (session toggle, read rows vanish instantly — the main path for working through a backlog); `Ctrl+A` **marks the current feed read** with a light confirmation.
 
-Favorites (`Ctrl+F`) store a **full snapshot at the moment of starring** (title/link/meta, and the body for RSS / Telegram) — items stay readable after they scroll off hot lists or get deleted. The `F3` list reads snapshots with zero requests (works offline); Enter fetches the latest comments from the original source. Favorited entries are exempt from the read-state cap; `feedscope favorites` lists them in the terminal and `feedscope favorites export [file.md]` exports Markdown to take them anywhere.
+Favorites (`Ctrl+F`) store a **full snapshot at the moment of starring** (title/link/meta, and the body for RSS / Telegram) — items stay readable after they scroll off hot lists or get deleted. Starring from a reading screen also saves **the detail you had loaded** (body, answers and reply trees): when the original can no longer be opened — deleted, offline, the source is gone — Enter shows that saved copy with a notice instead of a dead end. The `F3` list reads snapshots with zero requests (works offline); Enter fetches the latest from the original source and falls back to the saved copy. Favorited entries are exempt from the read-state cap; `feedscope favorites` lists them in the terminal and `feedscope favorites export [file.md]` exports Markdown to take them anywhere.
 
-Both live in plain local files (delete to reset; no credentials involved):
+All of these are plain local files (delete to reset; no credentials involved):
 
 | File | Contents |
 | --- | --- |
 | `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids, timestamps and per-feed unread counts (capped at 10k entries, oldest evicted first; favorites exempt) |
-| `favorites.json` (same state dir) | full snapshots of favorited items (user-curated data, never pruned) |
+| `favorites.json` (same state dir) | full snapshots of favorited items (user-curated data, never pruned), plus the detail saved when starring from a reading screen |
+| `feedscope.lock` (same state dir) | empty lock file: lets a second `feedscope` on the same state warn that the two will overwrite each other's read marks (nothing is blocked) |
 | `feeds/` (platform cache dir, `~/.cache/feedscope/feeds/` on Linux) | one JSON list cache per feed (200 items per feed, 60 most recent feeds kept) |
 
-Startup and refresh paint the cache before fetching: restarts show the list instantly; offline or a broken site keeps the old content readable, and RSS / Telegram detail bodies travel with the cached list. `feedscope doctor` reports the state-file location.
+Startup and refresh paint the cache before fetching: restarts show the list instantly; offline or a broken site keeps the old content readable, and RSS / Telegram detail bodies travel with the cached list. `feedscope doctor` reports the state-file location. If `state.json` or `favorites.json` is unreadable (truncated, hand-edited badly), it is renamed to `<name>.corrupt-<timestamp>` instead of being overwritten and the app continues from an empty state; `feedscope doctor` lists the kept-aside files so you can recover them by hand.
 
 ### UI Language
 
@@ -210,7 +216,7 @@ Like language, it is fixed per process (formatted times are baked into the list 
 
 ### Login / Logout
 
-Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`. Login sessions live in a local Chrome profile (`~/.cache/feedscope/chromium-profile/` on Linux) — see [SECURITY](SECURITY.md).
+Zhihu, X and Reddit require login (no anonymous feeds); HN, V2EX, RSS and Telegram work out of the box. Opening a logged-out source pops an in-app dialog; choosing "login" opens Chrome and auto-refreshes when done — no TUI restart. Dismiss it and you won't be asked again this session (`Ctrl+U` still works manually). `Ctrl+U` also switches accounts. From the CLI: `feedscope login [zhihu|x|reddit]`. Login sessions live in a local Chrome profile (`~/.cache/feedscope/chromium-profile/` on Linux) — see [SECURITY](SECURITY.md). While the sign-in window is open, HN / V2EX / RSS / Telegram keep working; Zhihu / X / Reddit pause until it closes.
 
 A session revoked server-side (password change, logout elsewhere, periodic rotation) never leaves you guessing: X's 401 is unambiguous (stale cookies dropped, re-login guided); a half-revoked Zhihu session keeps serving the list while detail endpoints answer 403 (observed in the wild), so those endpoints likewise turn it into re-login guidance instead of a bare HTTP code — in the detail, answer and comment layers — and once a stale session has been detected, `Ctrl+U` offers sign-in directly (the leftover cookie would otherwise fool the check into offering logout first); Zhihu, Reddit and X all fetch through resident real-browser channel tabs (TLS, header order and cookies fully consistent with the login session, immune to non-browser-fingerprint blocking). Reddit's criterion is a local JWT decode of token_v2 (logged-in `sub="user"`, anonymous `sub="loid"`) — its login cookies are issued to anonymous traffic too (merely opening the login page sets one, so a cookie appearing ≠ login complete), while a local decode is zero-network and unforgeable. Both "login success" and the login gate use it, making a re-login loop structurally impossible.
 
@@ -245,11 +251,13 @@ Global flags: `--verbose` (log file goes to DEBUG; subcommands also mirror to st
 
 Environment variables: `FEEDSCOPE_NO_PREWARM=1` starts up without pre-launching the browser (for slow machines); `FEEDSCOPE_SAMPLE_DIR=<dir>` dumps raw responses to disk during normal runs too (the same samples `probe` collects); `FEEDSCOPE_CONFIG` / `FEEDSCOPE_LOG_FILE` relocate the config / log file.
 
-Exit codes (script-friendly): `probe` exits 1 when a probe fails and 2 on unknown source ids; `rss add` / `rss import` exit 2 on an unreadable OPML, and `add` also exits 1 on a subscription conflict; `doctor` exits 1 when the self-check fails.
+Exit codes (script-friendly): `probe` exits 1 when a probe fails and 2 on unknown source ids; `rss add` / `rss import` exit 2 on an unreadable OPML, and `add` also exits 1 on a subscription conflict; `doctor` exits 1 when the self-check fails — Chrome missing, an unreadable `sources.toml`, or settings that would silently not take effect (unknown source ids in `enabled`, `hide` names matching no feed, unknown `language` / `timezone`, subscription entries without a url …); each problem is listed on its own line.
 
 ### Troubleshooting & logs
 
 Every run writes a log file (INFO level) at the location `feedscope doctor` reports — `$HOME/Library/Logs/feedscope/feedscope.log` on macOS, `~/.local/state/feedscope/log/feedscope.log` on Linux — rotated at 1 MB ×3. When something misbehaves, that file usually already holds the answer: fetch failures with tracebacks, self-heal paths (X queryId re-harvest, Reddit version header) that quietly fell back, login-detector errors. `--verbose` raises it to DEBUG for the chatty detail; `FEEDSCOPE_LOG_FILE` relocates it for good. Inside the TUI nothing ever prints to stderr (it would corrupt the redraw), so the file is the one place to look.
+
+Two `feedscope` processes on the same data: the browser profile is protected — a process that finds the profile lock owned by a live one refuses to start Chrome and names the pid; the state files are not locked, so a second TUI instance on the same state warns that read marks and favorites will overwrite each other.
 
 ### Source & Feed Config
 
@@ -257,6 +265,8 @@ First launch shows a picker; `F2` reopens it anytime. Selections are saved to us
 
 ```toml
 language = "zh-CN"  # UI language (maintained by first-run / Ctrl+L)
+browser = "open -a Firefox"   # optional: command that opens links (%u = the URL); default = the system browser
+clipboard = "pbcopy"          # optional: command that reads text from stdin; default = auto-detected, else the terminal's OSC 52
 enabled = ["zhihu", "x", "reddit", "hn", "v2ex", "rss"]  # order = site order; remove an id to disable
 
 [zhihu]
@@ -276,7 +286,7 @@ hnrss = { url = "https://hnrss.org/newest?q=rust" }   # label defaults to key (k
 hide = ["all"]       # hide the "All" aggregate, or a subscription key to hide one feed
 ```
 
-Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`) — and since 0.4.0 it also preserves hand-written comments and unknown keys verbatim (tomlkit round-trip). To reorder sites: highlight a ticked source in `F2` and nudge with `,` / `.` (untick-then-tick still moves to the end).
+Omitting `enabled` = everything enabled; saving from the manager preserves per-source `hide` sections and `feeds` tables (`[rss.feeds]` / `[reddit.feeds]` / `[telegram.feeds]`) — and since 0.4.0 it also preserves hand-written comments and unknown keys verbatim (tomlkit round-trip). To reorder sites: highlight a ticked source in `F2` and nudge with `,` / `.` (untick-then-tick still moves to the end). `browser` / `clipboard` matter on SSH or headless hosts, where the defaults cannot reach a browser or clipboard: set them to a command that works there (e.g. `clipboard = "tmux load-buffer -"`), or copy links with `Ctrl+Y`. `feedscope doctor` reports settings that would silently not take effect.
 
 ### RSS Subscriptions
 
@@ -297,6 +307,7 @@ With zero subscriptions RSS doesn't appear in the source list (`F2` can still op
 - The "All" stream merges every subscription by publish time (newest first); the same URL across feeds (reposts / aggregators) is deduped; one dead feed only loses its own items, all dead = error
 - Details read feed-provided content (`content` full text first, `summary` fallback); images become direct links; summary-only feeds show short bodies — `Ctrl+O` to read the rest in a browser
 - Refreshes are conditional requests (ETag / Last-Modified) — unchanged feeds don't re-transfer bodies
+- JSON Feed is understood too (`feed+json` was already accepted by auto-discovery); relative links and image URLs inside a body are resolved against the entry's own page, and enclosures (podcasts, video feeds) appear after the body as `[audio]` / `[video]` / `[file]` links
 - RSS has no login and no comment layer
 
 ### Hacker News
@@ -329,7 +340,7 @@ Login required; data comes from **the website's own HTML channel** — the legac
 
 - Same three-layer shape as HN: post (self posts: HTML converted to markdown; link posts: one article link; media posts: `[图片]` / `[视频]` markers to originals) → top-level comments as floors → `Enter` opens a floor's reply tree
 - Login criterion: a local JWT decode of token_v2 (logged-in `sub="user"`, anonymous `sub="loid"`) — the mere "presence" of reddit_session/token_v2 can be produced by anonymous traffic; the decode is the hard proof. Login polling and the gate share this one check: zero network, zero forgery
-- Meta column shows "N pts · N comments · r/sub"; floors carry scores, moderator stickies are flagged `[置顶]`; deep threads flatten to two levels with `@parent` prefixes (same as HN)
+- Meta column shows "N pts · N comments · r/sub"; floors carry scores; deep threads flatten to two levels with `@parent` prefixes (same as HN)
 - "Home" aggregates the subreddits your Reddit account follows on the site (empty for a fresh account that follows nothing — expected); subscribe to what you want instead: `F2` → Reddit row → `→`, type a subreddit name or URL (`rust`, `r/rust`, a site link all work) and it becomes its own feed — no need to follow it on reddit.com
 - The comment tree arrives in one request (huge threads are truncated) with "N more collapsed" hints where cut; floor / reply paging is all in-memory, zero extra requests
 
@@ -346,7 +357,6 @@ No login; data comes from each channel's public web preview (`t.me/s/<channel>`,
 
 - Windows support (macOS and Linux today)
 - More sources — propose yours in [discussions](https://github.com/howardli/FeedScope/discussions); a new source is designed to be a one-package change
-- Full-text search across locally cached items
 
 Nothing here is scheduled; 0.x priorities follow user feedback.
 

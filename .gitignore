@@ -11,6 +11,8 @@ dist/
 .screenshot-sources.toml
 .screenshot-state.json
 .screenshot-feeds/
+# 截图 / 动图脚本把状态目录指到仓库根：单实例锁文件（core.store.StateLock）随之落在这里
+/feedscope.lock
 .coverage
 coverage*.xml
 cmp/

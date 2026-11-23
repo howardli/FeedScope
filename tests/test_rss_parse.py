@@ -151,3 +151,107 @@ def test_discover_feed_link() -> None:
     assert discover_feed_link('<link rel="stylesheet" href="/f">', "https://a.test/") == ""
     assert discover_feed_link('<link rel="alternate" type="text/html" href="/h">', "https://a.test/") == ""
     assert discover_feed_link('<link rel="alternate" type="application/rss+xml">', "https://a.test/") == ""
+
+
+# ---- JSON Feed：首页自动发现认 feed+json，解析也得认（以前订阅进去就打不开）----
+
+JSON_FEED = """{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "My <b>Blog</b>",
+  "items": [
+    {"id": "1", "url": "https://blog.example.com/posts/1", "title": "Hello <i>world</i>",
+     "content_html": "<p>body with <a href=\\"/about/\\">a relative link</a> and an <img src=\\"/static/a.png\\"></p>",
+     "date_published": "2026-11-02T08:00:00+08:00",
+     "authors": [{"name": "Ada"}, {"name": "Grace"}],
+     "attachments": [{"url": "https://cdn.example.com/ep1.mp3", "mime_type": "audio/mpeg"},
+                     {"url": "https://cdn.example.com/show.pdf", "mime_type": "application/pdf"}]},
+    {"id": "2", "url": "https://blog.example.com/posts/2", "title": "Plain notes",
+     "content_text": "first line\\nsecond line\\n\\nnew paragraph <not a tag>"}
+  ]
+}"""
+
+
+def test_json_feed_is_recognised_and_parsed() -> None:
+    """顶层是带 items 的 JSON 对象 = JSON Feed：probe 认它（订阅取名用），parse 映射成同形的条目。"""
+    import asyncio
+
+    assert probe(JSON_FEED) == ("My Blog", 2)
+    assert probe(b"\xef\xbb\xbf" + JSON_FEED.encode()) == ("My Blog", 2)  # 带 BOM 的字节体
+    items = parse_feed(JSON_FEED, feed_key="blog", feed_label="My Blog", all_view=False)
+    assert [it.id for it in items] == ["blog/1", "blog/2"]
+    first, plain = items
+    assert first.url == "https://blog.example.com/posts/1"
+    assert first.title == "Hello world"  # 标题里的标签剥掉
+    assert first.extra["author"] == "Ada" and first.extra["published"] == _EPOCH_NOV2
+    assert first.extra["base"] == first.url  # 正文相对地址的绝对化基准
+    assert first.extra["enclosures"] == [
+        {"url": "https://cdn.example.com/ep1.mp3", "type": "audio/mpeg"},
+        {"url": "https://cdn.example.com/show.pdf", "type": "application/pdf"},
+    ]
+    doc = asyncio.run(_detail(first)).doc
+    body = doc.description_md
+    assert "[a relative link](https://blog.example.com/about/)" in body  # 相对链接绝对化
+    assert "[图片](https://blog.example.com/static/a.png)" in body
+    assert "[音频](https://cdn.example.com/ep1.mp3)" in body
+    assert "[附件](https://cdn.example.com/show.pdf)" in body
+    assert "<p>" not in body and "not a tag" in asyncio.run(_detail(plain)).doc.description_md
+
+
+def _detail(item):
+    from feedscope.core.registry import get_source
+
+    return get_source("rss").open_detail(item)
+
+
+def test_not_json_feed_shapes_fall_through() -> None:
+    """普通 JSON / 坏 JSON / 数组顶层都不是 feed：probe 两空、parse 不炸。"""
+    assert probe('{"hello": "world"}') == ("", 0)
+    assert probe("{ not json") == ("", 0)
+    assert probe("[1, 2]") == ("", 0)
+    assert parse_feed("{ not json", feed_key="k", feed_label="L", all_view=False) == []
+
+
+# ---- enclosure（播客 / 视频源）：正文后追加记号链接 ----
+
+PODCAST_XML = """<?xml version="1.0"?><rss version="2.0"><channel><title>Pod</title>
+<item><title>Episode 7</title><link>https://pod.example/7</link><guid>7</guid>
+<description>Shownotes</description>
+<enclosure url="https://cdn.example/7.mp3" length="123" type="audio/mpeg"/></item>
+<item><title>With video</title><link>https://pod.example/8</link><guid>8</guid>
+<description>Notes</description>
+<enclosure url="https://cdn.example/8.mp4" type="video/mp4"/></item>
+</channel></rss>"""
+
+
+def test_enclosures_become_marker_links_after_the_body() -> None:
+    """播客条目以前只剩 shownotes（enclosure 被整个忽略）：现在正文后给出媒体直链。"""
+    import asyncio
+
+    items = parse_feed(PODCAST_XML, feed_key="pod", feed_label="Pod", all_view=False)
+    bodies = [asyncio.run(_detail(it)).doc.description_md for it in items]
+    assert bodies[0] == "Shownotes\n\n[音频](https://cdn.example/7.mp3)"
+    assert bodies[1] == "Notes\n\n[视频](https://cdn.example/8.mp4)"
+
+
+# ---- 正文相对地址绝对化 + 懒加载图片取真实地址 ----
+
+
+def test_html_to_md_resolves_relative_urls_against_base() -> None:
+    html = '<p><a href="/about/?a=1&amp;b=2">about</a> <img src="../img/a.png"> <a href="#fn">fn</a> <a href="mailto:x@y.z">mail</a></p>'
+    assert html_to_md(html, base="https://blog.example.com/posts/1/") == (
+        "[about](https://blog.example.com/about/?a=1&b=2) "
+        "[图片](https://blog.example.com/posts/img/a.png) fn [mail](mailto:x@y.z)"  # 纯锚点链接不成链（html2text 既有行为）
+    )
+    # 不给 base：行为同前（相对地址原样）
+    assert "[about](/about/?a=1&b=2)" in html_to_md(html)
+
+
+def test_html_to_md_prefers_lazy_load_attributes_over_placeholder_src() -> None:
+    """懒加载站的 src 是占位图：真实地址在 data-src / data-original 里。"""
+    assert html_to_md('<img src="https://cdn.example/1x1.gif" data-src="https://cdn.example/real.jpg">') == (
+        "[图片](https://cdn.example/real.jpg)"
+    )
+    assert html_to_md('<img data-original="https://cdn.example/real2.jpg" src="data:image/gif;base64,x">') == (
+        "[图片](https://cdn.example/real2.jpg)"
+    )
+    assert html_to_md('<img src="https://cdn.example/plain.png">') == "[图片](https://cdn.example/plain.png)"

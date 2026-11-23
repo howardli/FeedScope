@@ -19,7 +19,7 @@ from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.dialogs import ConfirmScreen, ask_title_filter
-from feedscope.ui.list_render import MARK_UNREAD, update_row_mark
+from feedscope.ui.list_render import MARK_UNREAD, jump_unread, update_row_mark
 from feedscope.ui.screens.main_nav import MainNavScreen
 
 
@@ -156,20 +156,15 @@ class MainReadScreen(MainNavScreen):
         self._jump_unread(-1)
 
     def _jump_unread(self, delta: int) -> None:
-        """沿 delta 方向环扫一圈找首条未读：命中即选中（列表自动滚到行），
-        一圈无未读 toast 收尾。F4 过滤态天然兼容（行集本就是未读）。"""
-        shown = self._shown()
-        if not shown:
-            return
-        view = self.query_one("#feed", ListView)
-        cur = view.index or 0
-        for step in range(1, len(shown) + 1):
-            i = (cur + delta * step) % len(shown)
-            it = shown[i]
-            if not self._tui.state.is_read(it.source, it.id):
-                view.index = i
-                return
-        feedback.info(self, t("main.no_unread"))
+        """沿 delta 方向环扫一圈找首条未读（环扫本体在 list_render.jump_unread，
+        收藏屏共用）；一圈无未读 toast 收尾。F4 过滤态天然兼容（行集本就是未读）。"""
+        if not jump_unread(
+            self.query_one("#feed", ListView),
+            self._shown(),
+            lambda it: self._tui.state.is_read(it.source, it.id),
+            delta,
+        ):
+            feedback.info(self, t("main.no_unread"))
 
     # ---- 动作：清仓与单条切换 ----
 

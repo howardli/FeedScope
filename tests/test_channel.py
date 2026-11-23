@@ -233,3 +233,16 @@ def test_fetch_playwright_failure_wrapped(monkeypatch) -> None:
     tab, _page = _fetch_tab(monkeypatch, RuntimeError(_NAV_ERR))
     with pytest.raises(SourceError, match="请求失败"):
         asyncio.run(tab.fetch("https://x/a", source="测试"))
+
+
+def test_fetch_times_out_instead_of_hanging(monkeypatch) -> None:
+    """页内 fetch 有超时：fetch 与 page.evaluate 自身都不超时，网络挂起会无限等待并一直
+    占着浏览器会话锁。JS 带 AbortSignal.timeout，超时约定映射成超时文案（带 URL）。"""
+    from feedscope.core.source import SourceError
+
+    assert f"AbortSignal.timeout({browser._FETCH_TIMEOUT_MS})" in browser._FETCH_JS
+    assert browser._TIMEOUT_MARK in browser._FETCH_JS  # JS 的 TimeoutError 分支与 Python 同一个记号
+    tab, _page = _fetch_tab(monkeypatch, {"__error": browser._TIMEOUT_MARK})
+    with pytest.raises(SourceError, match="请求超时") as info:
+        asyncio.run(tab.fetch("https://x/api", source="测试"))
+    assert "https://x/api" in str(info.value) and str(browser._FETCH_TIMEOUT_MS // 1000) in str(info.value)

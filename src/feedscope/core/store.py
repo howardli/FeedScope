@@ -7,7 +7,10 @@
   是用户节奏（打开一条 / 刷新一次）——索引与并发能力都用不上；纯文本可
   cat/grep，对齐 SECURITY 的「数据落点可检视」叙事
 - 容错哲学同 config：读坏 = 警告 + 内存空态，绝不挡 UI；写坏 = 内存照改 +
-  日志告警（丢一次落盘的代价远小于打断阅读）
+  日志告警（丢一次落盘的代价远小于打断阅读）。但「按空态」不能等于「把坏文件
+  洗掉」：内容读得出却解析不了（截断 / 手编坏 / 结构不对）时先把原文件改名
+  留底 `<名>.corrupt-<时间戳>`，之后的正常写入落在新文件上——收藏是用户自选
+  数据，损坏的文件里往往还救得回大半（配置文件的「坏文件拒写」是同一思想）
 - 键 = (source, id)（FeedItem 文档钦定的稳定键），嵌套 dict 存避免转义：
   state.json：{"version": 1, "items": {<source>: {<id>: {"seen", "read", "fav"?}}}}
   （read 为 0 = 未读；seen 兼作淘汰序；fav 见下）
@@ -20,10 +23,11 @@
   自愈
 - 收藏存**全量快照**（收藏那一刻的完整 FeedItem，含 extra 正文）于
   favorites.json：{"version": 1, "items": {<source>: {<id>: {"fav": ts,
-  "item": {...}}}}}——条目会从列表流走、回答/推文会被删，按 id 回源重取
-  一周后点开一半是死的；快照永远可读，RSS/Telegram 正文离线即在。两个文件
-  分开是因为写频不同：state.json 每次标已读都全量重写，favorites.json 只在
-  收藏/取消时写，互不放大
+  "item": {...}, "doc"?}}}}}——条目会从列表流走、回答/推文会被删，按 id 回源重取
+  一周后点开一半是死的；快照永远可读，RSS/Telegram 正文离线即在。doc 是
+  阅读屏收藏时顺手存下的详情（已读到的正文与楼层），原帖失效后详情屏回退
+  显示它（见 toggle_fav / archive_of）。两个文件分开是因为写频不同：
+  state.json 每次标已读都全量重写，favorites.json 只在收藏/取消时写，互不放大
 - 淘汰：_MAX_ITEMS 上限只作用于非收藏条目（按 seen FIFO）；收藏是用户自选
   数据，永不淘汰、无条数上限
 """
@@ -35,10 +39,11 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_state_path
 
-from feedscope.core.models import FeedItem
+from feedscope.core.models import DetailDoc, FeedItem
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,45 @@ def favorites_path() -> Path:
     return user_state_path("feedscope") / "favorites.json"
 
 
+class StateLock:
+    """状态目录的进程锁：同一份已读/收藏只该有一个 feedscope 在写。
+
+    state.json / favorites.json 是整文件覆写，两个实例并行用时后写的把先写的
+    洗掉——另一边刚标的已读、刚收的收藏悄悄消失。锁不住不挡使用（非 POSIX /
+    目录只读）：调用方只拿它来提醒。关 fd 即释放；进程异常退出由内核代劳。"""
+
+    def __init__(self) -> None:
+        self._fd: int | None = None
+
+    def try_acquire(self) -> bool:
+        """抢锁：True = 本进程独占这份状态（或锁不了，不提醒）；False = 已有别的实例在用。"""
+        try:
+            import fcntl  # POSIX only：Windows 不在支持范围，导入失败也不挡启动
+        except ImportError:
+            return True
+        path = state_path().parent / "feedscope.lock"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError:
+            return True  # 建不出 / 打不开锁文件：提醒不了，也不该挡使用
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return False  # 已有别的实例持锁
+        except OSError:
+            os.close(fd)
+            return True  # 文件系统不支持 flock（某些网络盘）：不提醒
+        self._fd = fd
+        return True
+
+    def release(self) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
+
 def item_key(it: FeedItem) -> str:
     """(source, id) -> 单串键（如 "zhihu:question/123"）。
 
@@ -68,6 +112,29 @@ def item_key(it: FeedItem) -> str:
 
 def _valid_entry(e: object) -> bool:
     return isinstance(e, dict) and isinstance(e.get("seen"), (int, float))
+
+
+def _park_corrupt(path: Path) -> str:
+    """读得出却解析不了的文件改名留底，返回留底路径（失败回空串）。
+
+    不留底的话，下一次普通写入（收藏一条 / 标已读）就会用近乎空的新状态把
+    原文件原地覆盖——收藏快照、已读历史一次全没，且无从找回。改名后内存照旧
+    按空态继续，新写入落在新文件上。读都读不了的（权限 / 是个目录）不动它：
+    内容是什么都不知道，谈不上「损坏」。
+    """
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = path.with_name(f"{path.name}.corrupt-{stamp}")
+    n = 2
+    while target.exists():  # 同一秒内再坏一次：上一份留底不能被覆盖
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+        n += 1
+    try:
+        os.replace(path, target)
+    except OSError as exc:
+        logger.warning("坏文件 %s 无法改名留底：%s", path, exc)
+        return ""
+    logger.warning("文件损坏已留底为 %s（当前按空态继续）", target)
+    return str(target)
 
 
 def _member_feeds(entry: Entry) -> list[str]:
@@ -86,19 +153,41 @@ Entry = dict[str, float | str | list[str]]
 SourceEntries = dict[str, Entry]
 
 
-def _load() -> tuple[dict[str, SourceEntries], dict[str, int]]:
-    """读状态文件；不存在/坏 = ({}, {}) + 警告，绝不抛（容错哲学见模块头）。"""
-    path = state_path()
+def _read_json(path: Path, what: str) -> dict[str, Any] | None:
+    """状态文件的读档公共件：返回顶层 dict；不存在 / 读不了 / 坏 = None（坏文件留底）。
+
+    「坏」= 内容读得出却不是预期的 JSON 对象：截断、手编坏、顶层结构不对。
+    调用方拿到 None 按空态处理（容错哲学见模块头）。
+    """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.warning("%s %s 无法读取，已按空态处理：%s", what, path, exc)
+        return None
+    except (ValueError, UnicodeDecodeError) as exc:  # JSONDecodeError 是 ValueError 子类
+        logger.warning("%s %s 无法解析，已按空态处理：%s", what, path, exc)
+        _park_corrupt(path)
+        return None
+    if not isinstance(raw, dict):
+        logger.warning("%s %s 顶层不是对象，已按空态处理", what, path)
+        _park_corrupt(path)
+        return None
+    items = raw.get("items")
+    if items is not None and not isinstance(items, dict):  # 缺键 = 空态；键在却不是表 = 坏
+        logger.warning("%s %s 的 items 不是表，已按空态处理", what, path)
+        _park_corrupt(path)
+        return None
+    return raw
+
+
+def _load() -> tuple[dict[str, SourceEntries], dict[str, int]]:
+    """读状态文件；不存在/坏 = ({}, {}) + 警告，绝不抛（容错哲学见模块头）。"""
+    raw = _read_json(state_path(), "已读状态")
+    if raw is None:
         return {}, {}
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.warning("已读状态 %s 无法解析，已按空态处理：%s", path, exc)
-        return {}, {}
-    items = raw.get("items") if isinstance(raw, dict) else None
-    if not isinstance(items, dict):
-        return {}, {}
+    items: dict[str, Any] = raw.get("items") or {}
     clean: dict[str, SourceEntries] = {}
     for src, ids in items.items():
         # 逐源逐条过滤形状：手编/旧版坏一条不波及整个状态文件
@@ -107,7 +196,7 @@ def _load() -> tuple[dict[str, SourceEntries], dict[str, int]]:
         ok = {i: e for i, e in ids.items() if isinstance(i, str) and _valid_entry(e)}
         if ok:
             clean[src] = ok
-    raw_feeds = raw.get("feeds") if isinstance(raw, dict) else None
+    raw_feeds = raw.get("feeds")
     feeds = (
         {k: v for k, v in raw_feeds.items() if isinstance(k, str) and isinstance(v, int)}
         if isinstance(raw_feeds, dict)
@@ -263,12 +352,17 @@ class ReadState:
         entry = self._data().get(source, {}).get(id)
         return bool(entry and entry.get("fav"))
 
-    def toggle_fav(self, item: FeedItem) -> bool:
+    def toggle_fav(self, item: FeedItem, doc: DetailDoc | None = None) -> bool:
         """Ctrl+F 收藏/取消，返回切换后的收藏态。
 
         收藏 = state.json 记 fav 时间戳（豁免淘汰）+ favorites.json 写全量
         快照（列表展示与离线正文都靠它）；取消 = 两处同删。未见过的条目
         也能收藏（直接在详情屏按 Ctrl+F 的路径），seen 顺手补上。
+
+        doc 是「收藏这一刻已读到的详情」（标题/正文/已加载的楼层与评论树）：
+        阅读屏收藏时给上，原帖被删 / 下线 / 离线后详情屏回退显示的就是它
+        （见 archive_of）。列表屏收藏没有已加载的详情，只存列表级快照——
+        RSS / Telegram 的正文本来就在列表条目的 extra 里。
         """
         data = self._data()
         entry = data.setdefault(item.source, {}).setdefault(
@@ -282,11 +376,22 @@ class ReadState:
         else:
             now = time.time()
             entry["fav"] = now
-            favs.setdefault(item.source, {})[item.id] = {"fav": now, "item": item.to_dict()}
+            snapshot: dict[str, object] = {"fav": now, "item": item.to_dict()}
+            if doc is not None:
+                snapshot["doc"] = doc.to_dict()
+            favs.setdefault(item.source, {})[item.id] = snapshot
             now_fav = True
         self._flush()
         _save_favs(favs)
         return now_fav
+
+    def archive_of(self, item: FeedItem) -> DetailDoc | None:
+        """某条收藏在收藏那一刻存下的详情；没收藏 / 收藏时没存详情 = None。
+
+        详情屏在原帖打不开（被删、下线、离线）时拿它兜底显示。"""
+        entry = _load_favs().get(item.source, {}).get(item.id)
+        data = entry.get("doc") if entry else None
+        return DetailDoc.from_dict(data) if isinstance(data, dict) else None
 
     def favorites(self) -> list[tuple[float, FeedItem]]:
         """全部收藏，按收藏时间新→旧；读的是 favorites.json 快照（零请求）。"""
@@ -322,15 +427,9 @@ def _prune(items: dict[str, SourceEntries]) -> None:
 
 
 def _load_favs() -> dict[str, dict[str, dict[str, object]]]:
-    """读收藏快照；不存在/坏 = {} + 警告（收藏丢了显示为空，可重新收）。"""
-    try:
-        raw = json.loads(favorites_path().read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.warning("收藏快照 %s 无法解析，已按空态处理：%s", favorites_path(), exc)
-        return {}
-    items = raw.get("items") if isinstance(raw, dict) else None
+    """读收藏快照；不存在/坏 = {} + 警告（坏文件留底，损坏的那份还救得回大半）。"""
+    raw = _read_json(favorites_path(), "收藏快照")
+    items = raw.get("items") if raw is not None else None
     if not isinstance(items, dict):
         return {}
     clean: dict[str, dict[str, dict[str, object]]] = {}

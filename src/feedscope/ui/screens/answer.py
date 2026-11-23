@@ -13,7 +13,6 @@ from __future__ import annotations
 from logging import getLogger
 from typing import ClassVar
 
-from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -21,9 +20,10 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.i18n import t
-from feedscope.core.models import Answer, Comment, FeedItem
+from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, Source
 from feedscope.ui import Bindings, feedback
+from feedscope.ui.markup import escape
 from feedscope.ui.screens.reading import (
     READING_CSS,
     PagedReadingScreen,
@@ -116,6 +116,11 @@ class AnswerScreen(PagedReadingScreen):
 
     def _reset_render_state(self) -> None:
         self._floor_count = 0
+
+    def _archive_doc(self) -> DetailDoc | None:
+        """收藏的语义是「这一篇」：随存问题屏已加载的详情（楼层正文在里面；
+        按需抓取的评论层不在存档里）。"""
+        return self.qloader.doc
 
     # 卸载清理继承 PagedReadingScreen：只换出并关评论 loader（问题页签由问题屏管）
 

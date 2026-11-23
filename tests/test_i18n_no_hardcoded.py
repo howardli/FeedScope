@@ -32,6 +32,9 @@ _ALLOWED: tuple[tuple[str, str], ...] = (
     ("core/text.py", "鿿"),
     # 日志上下文前缀（_subscription_from_entry 的 context 参数，只进 logger 输出）
     ("core/config.py", "覆写配置"),
+    # 日志上下文（store._read_json 的 what 参数，只进 logger 输出；同上一条）
+    ("core/store.py", "已读状态"),
+    ("core/store.py", "收藏快照"),
     # 页签统一 fetch 脚本（JS 里的中文注释给维护者）
     ("core/browser.py", "\nasync ([url"),
     # 知乎开题并行拉取脚本（同上）

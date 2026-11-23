@@ -29,6 +29,15 @@ _DAY = 86400
 _RECENT_DAYS = 14  # 14 天内相对计龄，再久日期更可读
 
 
+def valid_timezone(name: str) -> bool:
+    """是否是可用的 IANA 时区名（配置体检用；判定与 set_timezone 同源）。"""
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
 def set_timezone(name: str | None) -> None:
     """配置值 -> 展示时区；缺失/空回默认，非法（IANA 名不存在）记警告回退。
 
@@ -39,9 +48,9 @@ def set_timezone(name: str | None) -> None:
     if not name:
         _TZ = _DEFAULT_TZ
         return
-    try:
+    if valid_timezone(name):
         _TZ = ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
+    else:
         logger.warning("无法识别的时区名 %r，回退默认北京时间（UTC+8）", name)
         _TZ = _DEFAULT_TZ
 

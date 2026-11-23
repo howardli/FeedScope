@@ -69,12 +69,26 @@ class FeedItem:
         )
 
 
+def _text(data: dict[str, Any], key: str) -> str:
+    """收藏存档读回的字段清洗：缺省空串，非字符串（手编坏了）也回空串——存档里坏一个
+    字段不该让整篇打不开。"""
+    value = data.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _dicts(value: object) -> list[dict[str, Any]]:
+    """列表里的对象项（坏项跳过；非列表回空）。"""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
 @dataclass
 class Comment:
     """一条评论（楼层内的讨论；知乎 / HN / Reddit 共用）。
 
     author / votes / content_md / time 是展示字段；replies 是拍平后的子回复
     （@父作者规则见 core.tree）；raw_id 是源内评论 id（翻页去重）。
+
+    to_dict / from_dict 是收藏存档的落盘形态（见 store.ReadState.toggle_fav 的 doc）。
     """
 
     author: str
@@ -83,6 +97,27 @@ class Comment:
     time: str = ""
     replies: list[Comment] = field(default_factory=list)
     raw_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "author": self.author,
+            "votes": self.votes,
+            "content_md": self.content_md,
+            "time": self.time,
+            "raw_id": self.raw_id,
+            "replies": [reply.to_dict() for reply in self.replies],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Comment:
+        return cls(
+            author=_text(data, "author"),
+            votes=_text(data, "votes"),
+            content_md=_text(data, "content_md"),
+            time=_text(data, "time"),
+            replies=[cls.from_dict(reply) for reply in _dicts(data.get("replies"))],
+            raw_id=_text(data, "raw_id"),
+        )
 
 
 @dataclass
@@ -102,6 +137,27 @@ class Answer:
     url: str = ""                      # 楼层直达链接；空 = 用父条目 url
     comment_count: str = ""            # 展示文本，如 "158 条评论"（缺省空）
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "author": self.author,
+            "votes": self.votes,
+            "content_md": self.content_md,
+            "time": self.time,
+            "url": self.url,
+            "comment_count": self.comment_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Answer:
+        return cls(
+            author=_text(data, "author"),
+            votes=_text(data, "votes"),
+            content_md=_text(data, "content_md"),
+            time=_text(data, "time"),
+            url=_text(data, "url"),
+            comment_count=_text(data, "comment_count"),
+        )
+
 
 @dataclass
 class Floor:
@@ -118,10 +174,33 @@ class Floor:
 
 @dataclass
 class DetailDoc:
-    """详情级文档：open_detail() 的首批内容，更多靠 loader.load_more() 增量拿。"""
+    """详情级文档：open_detail() 的首批内容，更多靠 loader.load_more() 增量拿。
+
+    to_dict / from_dict 同 Comment：收藏时把「已读到的这份内容」整份存档
+    （收藏屏 Ctrl+F），原帖被删 / 下线 / 离线时回退显示的就是它。
+    """
 
     title: str
     meta: str = ""                     # 一行元信息（如 "30 回答 · 12 万浏览"）
     time: str = ""                     # 正文发布时间展示文本（源尽力而为，缺省空）
     description_md: str = ""           # 问题描述（markdown）
     answers: list[Answer] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "meta": self.meta,
+            "time": self.time,
+            "description_md": self.description_md,
+            "answers": [answer.to_dict() for answer in self.answers],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DetailDoc:
+        return cls(
+            title=_text(data, "title"),
+            meta=_text(data, "meta"),
+            time=_text(data, "time"),
+            description_md=_text(data, "description_md"),
+            answers=[Answer.from_dict(answer) for answer in _dicts(data.get("answers"))],
+        )

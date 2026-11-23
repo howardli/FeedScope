@@ -54,6 +54,11 @@ _tab = ChannelTab(
 # （HN 30、X 20 的同款折中）
 _MIN_BATCH = 20
 
+# 一次 load_more 顺着 load-after 链最多拉几页：凑批的循环只看「新增够不够」，
+# 链上游标打环、或一直回已见帖（去重后不增长）时没有它就会无休止发请求——
+# 对登录账号是风控放大器。正常的稀疏首屏两三页就够，5 页封顶不伤体验
+_MAX_PAGES_PER_LOAD = 5
+
 # x-reddit-client-version 的形态（如 2026-11-04T13:46Z~456d6f1d）：部署时
 # 轮换，服务端织进每个页面的 HTML
 _VERSION_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z~[0-9a-f]{6,8}")
@@ -116,6 +121,12 @@ async def _get_html(url: str, *, source: str, partial: bool = False) -> str:
             raise SourceError(
                 t("errors.reddit_status_login", source=source, status=status), status=status
             ) from None
+    if status is not None:
+        # 401/403 之外的失败状态（429 限流 / 5xx）：错误页不能当正常 HTML 进解析器
+        # ——解析出 0 条会被首屏守卫误报成「站点可能已改版」
+        raise SourceError(
+            t("errors.reddit_status", source=source, status=status), status=status
+        ) from None
     if not partial and (m := _VERSION_RE.search(body)):
         _version = m.group(0)  # 服务端把版本织进每个页面：顺手收割，首批 partial 免一次专割
     return body
@@ -159,6 +170,7 @@ class RedditFeedLoader(FeedLoader):
         self._next: str | None = None
         self._started = False
         self._done = False
+        self._visited: set[str] = set()  # 本加载器拉过的地址（链上游标打环即止）
 
     @property
     def done(self) -> bool:
@@ -168,12 +180,16 @@ class RedditFeedLoader(FeedLoader):
         if self._done:
             return []
         added: list[FeedItem] = []
-        while not self._done and len(added) < _MIN_BATCH:
+        pages = 0
+        while not self._done and len(added) < _MIN_BATCH and pages < _MAX_PAGES_PER_LOAD:
             url = self._page_url if not self._started else (self._next or "")
-            if not url:
+            if not url or url in self._visited:
+                # 链尽，或游标绕回了拉过的地址：再拉只是重复请求，按到底处理
                 self._done = True
                 break
             self._started = True
+            self._visited.add(url)
+            pages += 1
             items, nxt = await fetch_listing(url, source=f"Reddit「{self._label}」")
             self._next = nxt
             self._done = nxt is None

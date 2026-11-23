@@ -275,6 +275,27 @@ def test_add_feed_autodiscovers_from_homepage(monkeypatch: pytest.MonkeyPatch, t
     assert feed.label == "测试源"  # 显示名取自真 feed 标题
 
 
+def test_add_feed_accepts_json_feed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """JSON Feed：自动发现与 Accept 头一直认 feed+json，解析也得认——以前这种订阅
+    写得进去（显示名回 key），每次打开都报「站点可能已改版」。"""
+    use_config(monkeypatch, tmp_path, "")
+    json_feed = (
+        '{"version": "https://jsonfeed.org/version/1.1", "title": "Json Blog",'
+        ' "items": [{"id": "1", "url": "https://jb.test/1", "title": "Hi"}]}'
+    )
+    home = '<link rel="alternate" type="application/feed+json" href="/feed.json">'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = home if request.url.path == "/" else json_feed
+        return httpx.Response(200, text=page, request=request)
+
+    monkeypatch.setattr(http, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    direct = asyncio.run(subs.add_feed("https://jb.test/feed.json"))
+    assert (direct.key, direct.label) == ("jb-test", "Json Blog")  # 显示名取自 feed 标题而不是回 key
+    found = asyncio.run(subs.add_feed("https://jb2.test/"))  # 首页只声明了 JSON Feed
+    assert found.url == "https://jb2.test/feed.json" and found.label == "Json Blog"
+
+
 def test_add_feed_plain_page_without_link_still_adds(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

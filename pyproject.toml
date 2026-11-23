@@ -17,6 +17,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Terminals",
 ]
 dependencies = [
@@ -93,8 +95,9 @@ source = ["feedscope"]
 branch = true
 
 [tool.coverage.report]
-# 门槛起点取当前实测略下方：防倒退而不是刷数字；新增模块默认应抬高它
-fail_under = 80
+# 门槛取当前实测略下方：防倒退而不是刷数字；新增模块默认应抬高它
+# （2026-11 实测 ~92%——browser 启动路径有了假 playwright 测试后从 60% 升到 94%）
+fail_under = 88
 show_missing = true
 exclude_lines = [
   "pragma: no cover",

@@ -22,26 +22,28 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import webbrowser
 from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from rich.markup import escape
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.events import Resize
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import Label, Static
+from textual.widgets import Label, Markdown, Static
 
 from feedscope.core.i18n import t
-from feedscope.core.models import FeedItem
+from feedscope.core.models import DetailDoc, FeedItem
 from feedscope.core.source import CommentLoader, DetailLoader, LoginRequired, Source
+from feedscope.core.text import links_in
 from feedscope.ui import Bindings, feedback, tui_of
 from feedscope.ui.labels import retranslate_bindings
+from feedscope.ui.launch import copy_link, open_link
 from feedscope.ui.layout import RESIZE_DEBOUNCE, md_body_width
+from feedscope.ui.markup import escape
 from feedscope.ui.screens.help import push_help
+from feedscope.ui.screens.links import LinkPickerScreen
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
@@ -53,8 +55,9 @@ def divider() -> Static:
 
 
 def dim_line(text: str, **kwargs: Any) -> Static:
-    """dim 灰的一行尾注（EOF 标记 / 空态等同族）：markup 只写一次。"""
-    return Static(f"[dim]{text}[/dim]", **kwargs)
+    """dim 灰的一行尾注（EOF 标记 / 空态等同族）：markup 只写一次；text 按纯文本
+    转义——调用方给的是 t() 文案，但出口不假设来源（见 tests/test_markup_sinks.py）。"""
+    return Static(f"[dim]{escape(text)}[/dim]", **kwargs)
 
 
 def floor_head(
@@ -287,6 +290,8 @@ class PagedReadingScreen(ReadingScreen):
         Binding("ctrl+y", "copy_link", "bindings.copy", show=False),
         Binding("ctrl+n", "more", "bindings.more", show=False),
         Binding("ctrl+o", "open_browser", "bindings.browser", show=False),
+        Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
+        Binding("ctrl+g", "links", "bindings.links", show=False),
         Binding("f1", "help", "bindings.help"),
     ]
 
@@ -294,15 +299,54 @@ class PagedReadingScreen(ReadingScreen):
         """F1：键位帮助（全局 + 本屏，从声明自动生成；入口收口在 push_help）。"""
         push_help(self)
 
+    def action_toggle_read(self) -> None:
+        """Ctrl+R：把正在读的这一篇切回未读 / 标已读（与列表屏同一语义）——读到
+        一半想回头细看的，不必退回列表再按。主屏同一行的圆点与边栏角标同步。"""
+        read = self._tui.state.toggle_read(self.item.source, self.item.id)
+        feedback.info(self.app, t("main.toast_marked_read" if read else "main.toast_marked_unread"))
+        if (main := self._tui.main) is not None:
+            main._sync_after_read(self.item)
+
     def action_favorite(self) -> None:
-        """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。"""
-        fav = tui_of(self).state.toggle_fav(self.item)
+        """Ctrl+F：收藏/取消正在读的条目（快照防失效，F3 查看）。
+
+        已读到的详情一并存档（见 _archive_doc）：原帖被删 / 下线 / 离线后，
+        详情屏回退显示的就是这份存档。"""
+        fav = self._tui.state.toggle_fav(self.item, self._archive_doc())
         feedback.info(self.app, t("fav.toast_added" if fav else "fav.toast_removed"))
+
+    def _archive_doc(self) -> DetailDoc | None:
+        """收藏时随存的详情；None = 本屏没有已加载的详情可存。"""
+        return None
 
     def action_copy_link(self) -> None:
         """Ctrl+Y：复制正在读的条目链接（回答层带楼层直达，同 Ctrl+O 目标）。"""
-        self.app.copy_to_clipboard(self._browser_url())
-        feedback.info(self.app, t("main.toast_copied"))
+        copy_link(self, self._browser_url())
+
+    # ---- Ctrl+G：正文链接的键盘跟进 ----
+
+    def action_links(self) -> None:
+        """Ctrl+G：把正文里的链接列出来选一个在浏览器打开。
+
+        [图片]/[视频]/@提及/原文 这些链接在 Markdown 控件里只能鼠标点（Textual
+        的链接是 @click 动作，没有键盘入口）——纯键盘用户跟进不了。链接取自
+        屏上已挂载的 Markdown 控件的源文本，按出现顺序、同一地址只列一次。"""
+        links: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for widget in self.query(Markdown):
+            for text, href in links_in(widget.source):
+                if href not in seen:
+                    seen.add(href)
+                    links.append((text, href))
+        if not links:
+            feedback.info(self.app, t("links.empty"))
+            return
+        self.app.run_worker(self._pick_link(links), group="links")
+
+    async def _pick_link(self, links: list[tuple[str, str]]) -> None:
+        href = await self.app.push_screen(LinkPickerScreen(links), wait_for_dismiss=True)
+        if href:
+            open_link(self, href)
 
     # ---- 翻页（Ctrl+N：加载更多 / 失败态重试）----
 
@@ -363,15 +407,17 @@ class PagedReadingScreen(ReadingScreen):
 
     # ---- ←/→ 换目标（换篇 / 换楼层）----
 
-    async def _retarget(self, delta: int) -> None:
+    async def _retarget(self, delta: int, *, unread: bool = False) -> None:
         """换目标的共享机械件：拿目标 → 取消在途（取数与重排）→ 换出旧
         loader → 清渲染态清屏 → 子类 _adopt_target 重走首载。
 
         沿方向没有目标时不动任何状态，只给反馈（不换屏、不闪黑）。
+        unread=True 换的是「下一篇未读」（] / [），目标由 _next_unread_target 给。
         """
-        target = self._next_target(delta)
+        target = self._next_unread_target(delta) if unread else self._next_target(delta)
         if target is None:
-            feedback.info(self.app, self._no_target_text(delta))
+            text = self._no_unread_text() if unread else self._no_target_text(delta)
+            feedback.info(self.app, text)
             return
         self.workers.cancel_group(self, self._worker_group)
         self.workers.cancel_group(self, "rerender")
@@ -390,6 +436,13 @@ class PagedReadingScreen(ReadingScreen):
     @abstractmethod
     def _no_target_text(self, delta: int) -> str:
         """到边反馈文案（前后方向的措辞由子类定）。"""
+
+    def _next_unread_target(self, delta: int) -> Any | None:
+        """下一篇未读的目标（] / [）。只有问题屏接：回答层的 ] / [ 是换楼层。"""
+        return None
+
+    def _no_unread_text(self) -> str:
+        return t("main.no_unread")
 
     @abstractmethod
     async def _adopt_target(self, target: Any) -> None:
@@ -412,7 +465,7 @@ class PagedReadingScreen(ReadingScreen):
         await self._close_page_loader()  # 卸载清理 = 换出并关掉翻页 loader
 
     def action_open_browser(self) -> None:
-        webbrowser.open(self._browser_url())
+        open_link(self, self._browser_url())
 
     def _browser_url(self) -> str:
         """Ctrl+O 的目标：缺省当前条目；回答屏覆写带楼层直达链接。"""
