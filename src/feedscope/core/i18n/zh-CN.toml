@@ -212,7 +212,10 @@ gallery = "[相册]"
 generic = "[媒体]"
 audio = "[音频]"
 attachment = "[附件]"
+document = "[文件]"
+poll = "[投票]"
 images_n = "[图片 {n}]"
+videos_n = "[视频 {n}]"
 
 
 [display]
@@ -560,3 +563,11 @@ status = "{n} 条结果（显示 {m}）"
 status_all = "{n} 条结果"
 empty = "没有匹配「{q}」的条目"
 hint = "输入即搜——↑↓ 选择，Enter 打开，Esc 返回"
+
+[telegram]
+forwarded_from = "转发自 {name}"
+forwarded_from_signed = "转发自 {name}（{author}）"
+forwarded = "转发消息"
+reply_to = "回复 **{author}**：{text}"
+reply_to_author = "回复 {author}"
+reply_to_anon = "回复一条消息：{text}"

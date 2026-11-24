@@ -4,22 +4,42 @@ Telegram 公开频道的 Web 预览页（t.me/s/<名>）是服务端渲染 HTML�
 免 JS：一页约 20 条消息，更旧一页走 ?before=<最小id>。结构映射与 RSS 同形
 （纯订阅、无评论层、详情读列表自带正文零请求）：
 
-- 每条消息（data-post="频道/编号"）-> FeedItem：正文 HTML 走 html_to_md
-  共用管线（a/b/br 等行内标签全兼容），媒体（图/视频）换 [图片]/[视频] 记号
-- 标题取正文首行截断（频道帖没有标题，同 X 拿推文当标题的思路）；纯媒体帖
-  用记号本身当标题
+- 每条消息（data-post="频道/编号"）-> FeedItem。一条消息里的内容块按
+  Telegram 自己的展示顺序进正文：转发来源 → 回复引用 → 文字 → 投票 →
+  媒体记号 → 链接预览。文字 HTML 走 html_to_md 共用管线（a/b/br 等行内
+  标签全兼容），图 / 视频 / 文件换成记号链接
+- 标题取正文首行截断（频道帖没有标题，同 X 拿推文当标题的思路）；没有文字
+  时依次退到投票的问题、文件的标题，都没有才用媒体记号本身
 - 元信息列：观看数（预览页原生就是格式化文本，如 5.87M）+ 署名（频道
   管理员签名）；「全部」聚合视图再前缀频道名
 
-实测锚点（2026-11 对 t.me/s/durov 抓样）：消息容器 `tgme_widget_message
-… js-widget_message` 带 data-post；正文 `message_text js-message_text`；
-观看 `message_views`；图片是 photo_wrap 锚点的 background-image（不是
-<img>，走属性提取）；视频播放器没有直链，记号指向帖子页。频道关闭 Web
-预览时页面没有任何消息节点——取数侧以「解析出 0 条」报错兜底。
+实测锚点（2026-11 对 t.me/s/durov、telegram、toncoin、bbcrussian 等抓样）：
+消息容器 `tgme_widget_message … js-widget_message` 带 data-post；观看
+`message_views`；图片是 photo_wrap 锚点的 background-image（不是 <img>，
+走属性提取）。
+- 正文 `tgme_widget_message_text js-message_text`。回复引用块
+  （`tgme_widget_message_reply`）里还有一块同类名的文字（js-message_reply_text）：
+  取正文必须按 js- 名排除它，否则带回复的帖子取到的是被回复那条的内容
+- 相册是一条消息（一个 data-post）里的多个媒体锚点
+  （`photo_wrap grouped_media_wrap` / `video_player grouped_media_wrap`）：
+  每个各出一个记号
+- 转发来源 `tgme_widget_message_forwarded_from`：来源名在 _from_name（可以为
+  空：来源被隐藏 / 从个人转发），原帖署名在 _from_author
+- 文件 / 音频 `tgme_widget_message_document_wrap`：链接指向帖子页，标题与
+  附注在 _document_title / _document_extra
+- 链接预览 `tgme_widget_message_link_preview`：站点名 / 标题 / 摘要
+- 投票的锚点以站点自己的脚本（widget-frame.js）为准：容器 `js-poll`（多选带
+  multiple），选项 `js-poll_option`；问题在选项之前、计票摘要在选项之后。
+  预览里不一定带票数——每个选项都以百分比结尾时才当作结果带上
+- 视频没有稳定直链：页面里的 <video src> 带 token 参数（时效未知），记号
+  指向帖子页
+
+频道关闭 Web 预览时页面没有任何消息节点——取数侧以「解析出 0 条」报错兜底。
 """
 
 from __future__ import annotations
 
+import html as html_mod
 import re
 
 from feedscope.core.i18n import t
@@ -48,13 +68,74 @@ _LINK_RE = re.compile(r"(?:t\.me|telegram\.me)/(?:s/)?([A-Za-z0-9_]+)")
 _CHUNK_SPLIT = re.compile(r'(?=<div class="tgme_widget_message )')
 
 _POST_RE = re.compile(r'data-post="([^"]+)"')
-_TEXT_RE = re.compile(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', re.DOTALL)
+
+# 文字块：类名 tgme_widget_message_text。回复引用里的被引文字同用这个类名
+# （只多一个 js-message_reply_text）——_main_text 按 js- 名把它排除
+_TEXT_RE = re.compile(
+    r'<div class="(tgme_widget_message_text[^"]*)"[^>]*>(.*?)</div>', re.DOTALL
+)
 _VIEWS_RE = re.compile(r'<span class="tgme_widget_message_views">\s*([^<]+?)\s*</span>')
 _AUTHOR_RE = re.compile(r'tgme_widget_message_from_author[^>]*>([^<]*)<')
 _TIME_RE = re.compile(r'<time datetime="([^"]+)"')
-_PHOTO_RE = re.compile(r'<a class="tgme_widget_message_photo_wrap[^>]*>')
+
+# 媒体锚点（单图 / 单视频与相册里的同一套，按页面顺序逐个出记号）：
+# 图片地址在 background-image，视频没有稳定直链（见模块头）
+_MEDIA_RE = re.compile(r'<a class="tgme_widget_message_(photo_wrap|video_player)[^"]*"[^>]*>')
 _BG_URL_RE = re.compile(r"background-image:url\('([^']+)'\)")
-_VIDEO_RE = re.compile(r"tgme_widget_message_video_player")
+_HREF_RE = re.compile(r'href="([^"]*)"')
+
+# 回复引用块（帖子正文之前的一个 <a>，内含被引作者与被引文字；没有嵌套 <a>）
+_REPLY_RE = re.compile(r'<a class="tgme_widget_message_reply(?:\s[^"]*)?"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+_REPLY_AUTHOR_RE = re.compile(r"tgme_widget_message_author_name[^>]*>(.*?)</span>", re.DOTALL)
+_REPLY_TEXT_RE = re.compile(r'js-message_reply_text"[^>]*>(.*?)</div>', re.DOTALL)
+
+# 转发来源行：字面「Forwarded from」+ 来源名（可空）+ 可选的原帖署名
+_FWD_RE = re.compile(
+    r'<div class="tgme_widget_message_forwarded_from[^"]*">(.*?)</div>', re.DOTALL
+)
+_FWD_NAME_RE = re.compile(
+    r"tgme_widget_message_forwarded_from_name[^>]*>(.*?)"
+    r"(?=tgme_widget_message_forwarded_from_author|$)",
+    re.DOTALL,
+)
+_FWD_AUTHOR_RE = re.compile(
+    r"tgme_widget_message_forwarded_from_author[^>]*>(.*?)</span>", re.DOTALL
+)
+# 来源名里的内层元素（<span dir="auto">名</span>，也可能是链接）：取它的内容
+_INNER_EL_RE = re.compile(r"<(?:span|a)\b[^>]*>(.*?)</(?:span|a)>", re.DOTALL)
+
+# 文件 / 音频：一个 <a>（链接指向帖子页）里是图标 + 标题 + 附注
+_DOC_RE = re.compile(
+    r'<a class="tgme_widget_message_document_wrap[^"]*"[^>]*>(.*?)</a>', re.DOTALL
+)
+_DOC_TITLE_RE = re.compile(
+    r"tgme_widget_message_document_title[^>]*>(.*?)</div>", re.DOTALL
+)
+_DOC_EXTRA_RE = re.compile(r"tgme_widget_message_document_extra[^>]*>(.*?)</div>", re.DOTALL)
+_DOC_AUDIO_RE = re.compile(r'tgme_widget_message_document_icon[^"]*\baudio\b')
+
+# 链接预览卡（文字 / 媒体之后的一个 <a>）
+_PREVIEW_RE = re.compile(r'<a class="tgme_widget_message_link_preview[^"]*"[^>]*>(.*?)</a>',
+    re.DOTALL,
+)
+_PREVIEW_SITE_RE = re.compile(r'<div class="link_preview_site_name[^"]*"[^>]*>(.*?)</div>',
+    re.DOTALL,
+)
+_PREVIEW_TITLE_RE = re.compile(r'<div class="link_preview_title"[^>]*>(.*?)</div>', re.DOTALL)
+_PREVIEW_DESC_RE = re.compile(r'<div class="link_preview_description"[^>]*>(.*?)</div>', re.DOTALL)
+
+# 投票：容器 / 选项 / 投票按钮的类名以站点脚本（widget-frame.js）为准。
+# 容器到页脚（或表情反应）之前是投票块：问题在最前、选项居中、计票摘要在后
+_POLL_RE = re.compile(r'<([a-z]+) class="[^"]*\bjs-poll\b[^"]*"[^>]*>')
+_POLL_OPTION_RE = re.compile(r'<([a-z]+) class="[^"]*\bjs-poll_option\b[^"]*"[^>]*>')
+_POLL_VOTE_BTN_RE = re.compile(
+    r"<[a-z]+\b[^>]*\bjs-poll_vote_btn\b[^>]*>.*?</[a-z]+>", re.DOTALL
+)
+_POLL_END_RE = re.compile(r"tgme_widget_message_(?:footer|reactions)\b")
+_PCT_TAIL_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*$")
+
 _TITLE_RE = re.compile(r"<title>([^<]*)</title>")
 _OG_TITLE_RE = re.compile(r'og:title" content="([^"]*)"')
 
@@ -75,45 +156,200 @@ def channel_title(html: str) -> str:
     return re.sub(r"\s*\(via @[\w]+\)$", "", title)  # 部分频道尾巴带 "(via @x)"，去掉归 channel
 
 
-def _media_marks(chunk: str, post_url: str) -> list[str]:
-    """消息块里的媒体 -> 记号列表：图片取原图直链，视频没有直链指向帖子页。"""
-    marks: list[str] = []
-    if (m := _PHOTO_RE.search(chunk)) and (u := _BG_URL_RE.search(m.group(0))):
-        marks.append(mark(t("media.image"), u.group(1)))
-    if _VIDEO_RE.search(chunk):
-        marks.append(mark(t("media.video"), post_url))
-    return marks
-
-
 def _strip_emoji(text_html: str) -> str:
     """tg-emoji 三层壳塌缩成字符本身（否则 html2text 给每个表情套 **强调**）。"""
     return _TG_EMOJI_RE.sub(lambda m: m.group(1) or m.group(2) or "", text_html)
 
 
-def _plain_text(text_html: str) -> str:
-    """已剥 emoji 壳的正文 HTML -> 纯文本（标题用）：去标签 + 合并空白。"""
-    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text_html)).strip()
+def _text_of(fragment: str) -> str:
+    """HTML 片段 -> 纯文本：剥 emoji 壳、去标签、还原实体、合并空白。
+
+    标题、引用文案、投票文案都经这里——实体必须还原（`&#036;` 是 $，
+    `&nbsp;` 是空格），否则列表标题里直接露出 `&#036;100,400`。"""
+    plain = re.sub(r"\s+", " ", html_mod.unescape(re.sub(r"<[^>]+>", " ", _strip_emoji(fragment))))
+    plain = plain.strip()
     return re.sub(r"\s+([,.!?;:，。！？；：])", r"\1", plain)  # 标签位换成的空格别挤到标点前
 
 
-def _content_md(text_html: str, marks: list[str]) -> str:
-    """正文：已剥 emoji 壳的行内 HTML -> markdown + 媒体记号缀尾（与 X/RSS 同观感）。"""
-    blocks: list[str] = []
-    if md := html_to_md(text_html):
-        blocks.append(md)
-    blocks.extend(marks)
-    return "\n\n".join(blocks)
+def _main_text(chunk: str) -> str:
+    """帖子自己的文字块（HTML）；没有回空串。
+
+    回复引用里的被引文字同用 tgme_widget_message_text 类名（只多一个
+    js-message_reply_text）：按 js- 名跳过它，否则带回复的帖子取到的是
+    被回复那条的内容。"""
+    for m in _TEXT_RE.finditer(chunk):
+        if "js-message_reply_text" not in m.group(1):
+            return m.group(2)
+    return ""
 
 
-def _title_of(text_html: str, marks: list[str]) -> str:
-    """标题 = 正文首行纯文本按显示宽度截断（标题列不要 markdown 记号）；
-    纯媒体帖用记号的标签文字（如「[图片]」），不带链接尾巴。"""
-    if text := _plain_text(text_html):
-        return truncate_display(text, TITLE_WIDTH)
-    labels = [
-        m[: m.index("]") + 1] if m.startswith("[") and "]" in m else m for m in marks
-    ]
-    return " ".join(labels) if labels else ""
+def _media_marks(chunk: str, post_url: str) -> list[str]:
+    """图片 / 视频 -> 记号列表，按页面顺序。
+
+    单图与相册里的图同一个锚点类名（photo_wrap），逐个扫过去就不用区分
+    「相册」这个形态：每张图各有各的地址，各出一个记号。视频取不到稳定
+    直链、记号都指向帖子页——相册里的 9 个视频若各出一行就是 9 行一模
+    一样的链接，所以同一帖子的视频合并成一个带数量的记号，落在第一个
+    视频的位置上。"""
+    marks: list[str] = []
+    videos = 0  # 本帖的视频数；0 = 还没遇到
+    slot = 0  # 视频记号在 marks 里的下标（数量定了再填）
+    for m in _MEDIA_RE.finditer(chunk):
+        if m.group(1) == "photo_wrap":
+            if u := _BG_URL_RE.search(m.group(0)):
+                marks.append(mark(t("media.image"), u.group(1)))
+        else:
+            videos += 1
+            if videos == 1:
+                slot = len(marks)
+                marks.append("")
+    if videos:
+        label = t("media.videos_n", n=videos) if videos > 1 else t("media.video")
+        marks[slot] = mark(label, post_url)
+    return marks
+
+
+def _document_marks(chunk: str) -> tuple[list[str], list[str]]:
+    """文件 / 音频 -> (记号行, 标题)。
+
+    记号行 = 链接指向帖子页的记号 + 行内带上标题与附注（大小 / 来源）：
+    文件本身在终端里打不开，标题才是可读的部分。"""
+    marks: list[str] = []
+    titles: list[str] = []
+    for m in _DOC_RE.finditer(chunk):
+        inner = m.group(1)
+        href = hm.group(1) if (hm := _HREF_RE.search(m.group(0))) else ""
+        title = _text_of(tm.group(1)) if (tm := _DOC_TITLE_RE.search(inner)) else ""
+        extra = _text_of(em.group(1)) if (em := _DOC_EXTRA_RE.search(inner)) else ""
+        kind = "media.audio" if _DOC_AUDIO_RE.search(inner) else "media.document"
+        line = mark(t(kind), href) if href else t(kind)
+        marks.append(line + (f" {title}" if title else "") + (f"（{extra}）" if extra else ""))
+        titles.append(title)
+    return marks, titles
+
+
+def _pop_reply(chunk: str) -> tuple[str, str]:
+    """摘出回复引用块：返回 (去掉引用块的 chunk, 引用文案)；没有引用时原样返回。
+
+    引用块必须先摘出去，后面按类名找的东西（正文、作者）才不会被它带偏。"""
+    m = _REPLY_RE.search(chunk)
+    if m is None:
+        return chunk, ""
+    inner = m.group(1)
+    author = _text_of(am.group(1)) if (am := _REPLY_AUTHOR_RE.search(inner)) else ""
+    text = _text_of(tm.group(1)) if (tm := _REPLY_TEXT_RE.search(inner)) else ""
+    if author and text:
+        line = t("telegram.reply_to", author=author, text=text)
+    elif text:
+        line = t("telegram.reply_to_anon", text=text)
+    elif author:
+        line = t("telegram.reply_to_author", author=author)
+    else:
+        line = ""
+    return chunk[: m.start()] + chunk[m.end() :], f"> {line}" if line else ""
+
+
+def _forwarded_md(chunk: str) -> str:
+    """转发来源行（引用块）；不是转发回空串。
+
+    来源名与原帖署名都可能为空：从个人转发时名字隐藏、只剩署名（或连署名
+    都没有），那时至少说明这是一条转发来的消息。"""
+    m = _FWD_RE.search(chunk)
+    if m is None:
+        return ""
+    block = m.group(1)
+    name = ""
+    if nm := _FWD_NAME_RE.search(block):
+        source = nm.group(1)
+        if el := _INNER_EL_RE.search(source):
+            source = el.group(1)  # 来源名包在内层元素里；外面还挂着「(」等版式残片
+        name = _text_of(source).strip("()").strip()
+    author = _text_of(am.group(1)) if (am := _FWD_AUTHOR_RE.search(block)) else ""
+    if name and author:
+        return "> " + t("telegram.forwarded_from_signed", name=name, author=author)
+    if name or author:
+        return "> " + t("telegram.forwarded_from", name=name or author)
+    return "> " + t("telegram.forwarded")
+
+
+def _preview_md(chunk: str) -> str:
+    """链接预览卡 -> 引用块（站点名 / 标题 / 摘要，缺哪行省哪行）；没有回空串。"""
+    m = _PREVIEW_RE.search(chunk)
+    if m is None:
+        return ""
+    inner = m.group(1)
+    site = _text_of(sm.group(1)) if (sm := _PREVIEW_SITE_RE.search(inner)) else ""
+    title = _text_of(tm.group(1)) if (tm := _PREVIEW_TITLE_RE.search(inner)) else ""
+    desc = _text_of(dm.group(1)) if (dm := _PREVIEW_DESC_RE.search(inner)) else ""
+    parts = [p for p in (f"**{site}**" if site else "", title, desc) if p]
+    return "\n>\n".join(f"> {part}" for part in parts)
+
+
+def _element_end(fragment: str, start: int, tag: str) -> int:
+    """与已开标签配平的闭合标签位置（只数同名标签的嵌套）；找不到回片段末尾。"""
+    depth = 1
+    for m in re.finditer(rf"</?{tag}\b[^>]*>", fragment[start:]):
+        depth += -1 if m.group(0).startswith("</") else 1
+        if depth == 0:
+            return start + m.start()
+    return len(fragment)
+
+
+def _poll(chunk: str, post_url: str) -> tuple[str, str]:
+    """投票 -> (问题, markdown)；没有投票回 ("", "")。
+
+    投票在终端里只能看不能投：正文末尾留一个指向帖子的 [投票] 记号（Ctrl+G
+    可以从这里打开去投）。只信站点脚本自己用的钩子（js-poll /
+    js-poll_option）；一个选项都认不出时只留这个记号，帖子不至于从列表里
+    消失。每个选项的文字都以百分比结尾才当作结果视图——否则选项文案里恰好
+    带「5%」会被误读成票数。"""
+    head = _POLL_RE.search(chunk)
+    if head is None:
+        return "", ""
+    link = mark(t("media.poll"), post_url)
+    # 投票块到页脚（或表情反应）所在的标签为止——切在类名上会留下
+    # 「<div class="」这样的半截标签
+    end = _POLL_END_RE.search(chunk, head.end())
+    stop = chunk.rfind("<", head.end(), end.start()) if end else len(chunk)
+    block = _POLL_VOTE_BTN_RE.sub("", chunk[head.end() : stop])
+    inners: list[str] = []
+    question_html, tail_start = block, 0
+    for m in _POLL_OPTION_RE.finditer(block):
+        if not inners:
+            question_html = block[: m.start()]
+        close = _element_end(block, m.end(), m.group(1))
+        inners.append(block[m.end() : close])
+        tail_start = close
+    texts = [_text_of(inner) for inner in inners]
+    if not texts:
+        return "", link
+    pcts = [_PCT_TAIL_RE.search(text) for text in texts]
+    has_pct = all(pcts)
+    rows = []
+    for text, pct in zip(texts, pcts, strict=True):
+        if has_pct and pct is not None:
+            rows.append(f"- {text[: pct.start()].strip()} — {pct.group(1)}%")
+        else:
+            rows.append(f"- {text}")
+    question = _text_of(question_html)
+    summary = _text_of(block[tail_start:])
+    lines = ([f"**{question}**", ""] if question else []) + rows
+    if summary:
+        lines += ["", summary]
+    return question, "\n".join([*lines, "", link])
+
+
+def _title_of(*candidates: str) -> str:
+    """标题 = 第一个非空候选按显示宽度截断（标题列不要 markdown 记号）。"""
+    for text in candidates:
+        if text:
+            return truncate_display(text, TITLE_WIDTH)
+    return ""
+
+
+def _mark_labels(marks: list[str]) -> str:
+    """记号行的标签文字（如「[图片]」），不带链接尾巴与行内附注。"""
+    return " ".join(m[: m.index("]") + 1] for m in marks if m.startswith("[") and "]" in m)
 
 
 def parse_channel_html(
@@ -131,12 +367,31 @@ def parse_channel_html(
             continue  # 服务消息（无 data-post）：没有正文，跳条
         post_id = post.group(1)
         url = f"{_SITE}/{post_id}"
-        marks = _media_marks(chunk, url)
-        text_html = _strip_emoji(m.group(1)) if (m := _TEXT_RE.search(chunk)) else ""
-        md = _content_md(text_html, marks)
-        title = _title_of(text_html, marks)
+        chunk, reply = _pop_reply(chunk)  # 先摘回复引用：正文才取得到帖子自己的
+        forwarded = _forwarded_md(chunk)
+        text_html = _strip_emoji(_main_text(chunk))
+        question, poll_md = _poll(chunk, url)
+        doc_marks, doc_titles = _document_marks(chunk)
+        marks = doc_marks + _media_marks(chunk, url)
+        md = "\n\n".join(
+            block
+            for block in (
+                forwarded,
+                reply,
+                html_to_md(text_html),
+                poll_md,
+                "\n\n".join(marks),
+                _preview_md(chunk),
+            )
+            if block
+        )
+        # 投票没有问题可取（连选项都没认出）时用记号标签当标题，帖子不至于被跳掉
+        poll_title = question or (t("media.poll") if poll_md else "")
+        title = _title_of(
+            _text_of(text_html), poll_title, " ".join(doc_titles), _mark_labels(marks)
+        )
         if not title:
-            continue  # 既无正文也无媒体：不可展示，跳条不跳流
+            continue  # 既无文字也无可展示的媒体：不可展示，跳条不跳流
         views = (m.group(1) if (m := _VIEWS_RE.search(chunk)) else "").strip()
         author = (m.group(1) if (m := _AUTHOR_RE.search(chunk)) else "").strip()
         iso = m.group(1) if (m := _TIME_RE.search(chunk)) else ""

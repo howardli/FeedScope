@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Restart resumes where you left off: the source, feed and selected item are saved on quit (and whenever an item is opened) in `state.json` under `last`, and the next start lands back on them. The item is located by id, so items that arrived above it in the meantime don't matter. A source that is no longer enabled or a feed that is gone falls back to the first source / feed; an item that has scrolled off leaves the list at the top
+- Telegram channel posts carry the content the preview page shows but the parser dropped: forwarded posts start with a "Forwarded from …" line, posts that reply to another quote the replied message, link-preview cards (site / title / summary) render after the text, files and voice notes become `[file]` / `[audio]` markers with the file title, and polls render as the question plus its options (with percentages when the preview shows results) and end with a `[poll]` link to the post, where you can vote
+
+### Fixed
+
+- Telegram albums lost all but their first item — a post with nine photos or videos showed a single marker. Every photo now gets its own `[image]` marker, and a post's videos collapse into one `[video N]` marker
+- Telegram posts that reply to another post showed the *replied* message as their own title and body: the quote inside the reply header shares the body's class name, and the parser took the first match
+- Telegram list titles showed raw HTML entities (`&#036;100,400`); they are decoded now
 
 ## [0.5.0] - 2026-11-24
 

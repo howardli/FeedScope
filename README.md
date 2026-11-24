@@ -34,7 +34,7 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 - **Survives site churn** — X's rotating GraphQL queryIds are re-harvested automatically from the live deployment on failure; Reddit's client-version header self-heals on 403; `feedscope probe` pinpoints any breakage in one command
 - **Truly local** — read state, favorites and list caches live in plain local files; no account, no telemetry; `feedscope favorites export` takes your saved items anywhere (no lock-in)
 - **Reading state that sticks** — unread dots survive refreshes and restarts; restarts paint the cache instantly, and offline keeps lists (and RSS / Telegram bodies) readable
-- **Built to last** — 631 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
+- **Built to last** — 645 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
 
 ## Features
 
@@ -351,7 +351,10 @@ No login; data comes from each channel's public web preview (`t.me/s/<channel>`,
 
 - Pure subscription source shaped exactly like RSS: `F2` → Telegram row → `→` opens the manager; type a channel name or link (`durov`, `@durov`, `t.me/durov`, even a post link); label defaults to the channel's own name
 - The "All" stream merges every channel by publish time (newest first), one dead channel only loses its own items; each channel is also its own feed (individually hideable)
-- Meta column "N views" is the channel-post heat radar; the "All" stream labels each row's origin in a dedicated source-tag column (same as the favorites list); inline HTML becomes markdown, images/videos become `[图片]` / `[视频]` markers (videos have no direct link — the marker points to the post page)
+- Meta column "N views" is the channel-post heat radar; the "All" stream labels each row's origin in a dedicated source-tag column (same as the favorites list); inline HTML becomes markdown
+- A post's parts arrive in Telegram's own order: forwarded posts start with a "Forwarded from …" line, posts that reply to another quote the replied message, then the text, the media and the link-preview card (site / title / summary)
+- Media become markers: one `[图片]` per photo linking to the original (albums included), a `[视频]` marker to the post page — several videos in one post collapse into `[视频 N]` (the page's own video URL carries a token, so it is not a stable link) — and `[文件]` / `[音频]` markers with the file's title
+- Polls render as the question plus its options (with percentages when the preview shows results) and end with a `[投票]` link to the post, where you can vote (`Ctrl+G` opens it)
 - Details read list-carried content (zero requests); `Ctrl+N` in a single-channel feed pages back through history via the `?before=` cursor; no comment layer (channel discussion groups aren't in the preview)
 
 ## Roadmap
