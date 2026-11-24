@@ -92,6 +92,7 @@ class MainNavScreen(MainSetupScreen):
             return
         if self._login_blocks(self.sources[target]):
             return
+        self._drop_resume()  # 续读目标属于上一个流：换站后不再适用
         self.source_idx = target
         self._restore_feed_idx()  # 回到该站上次的信息流
         await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
@@ -127,6 +128,7 @@ class MainNavScreen(MainSetupScreen):
             return  # 已在该流，不重复刷新
         if self._login_blocks(self.current_source):  # 同站切流同样刷不出来：不动选中
             return
+        self._drop_resume()  # 续读目标属于上一个流：换流后不再适用
         self.feed_idx = idx
         self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
         await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）
@@ -210,6 +212,7 @@ class MainNavScreen(MainSetupScreen):
         if view.index in (None, 0):
             self._enter_pane(Pane.TABS)  # 首条再 ↑：上探源栏
         else:
+            self._drop_resume()  # 用户自己动了选中
             view.action_cursor_up()
 
     async def action_nav_down(self) -> None:
@@ -225,6 +228,7 @@ class MainNavScreen(MainSetupScreen):
         if not view.has_focus:
             view.focus()
             return
+        self._drop_resume()  # 用户自己动了选中
         view.action_cursor_down()
 
     def action_nav_enter(self) -> None:

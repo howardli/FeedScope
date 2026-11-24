@@ -45,6 +45,7 @@ class MainSetupScreen(Screen[None]):
     feed_idx: int
     _feed_memory: dict[str, int]
     _subs_dirty: bool
+    _resume_id: str | None  # 续读目标：上次停下的条目 id（列表画出来后按它定位选中）
 
     @property
     def _tui(self) -> FeedScopeApp:
@@ -66,6 +67,17 @@ class MainSetupScreen(Screen[None]):
     @abstractmethod
     def _restore_feed_idx(self) -> None:
         """切站后停回该站上次的信息流（实现见 MainScreen）。"""
+
+    @abstractmethod
+    def _resume_position(self) -> None:
+        """启动时回到上次停下的源 / 流，并记下续读目标（实现见 MainScreen）。"""
+
+    def _drop_resume(self) -> None:
+        """用户自己动了选中 / 换了流或站：续读目标作废。
+
+        续读目标要活到抓取定稿那一次上屏（缓存先画的那一轮不算数），期间
+        用户已经挪了地方的话，迟到的定稿不能再把选中拽回原来那条。"""
+        self._resume_id = None
 
     def _enabled_sources(self) -> list[Source]:
         """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
@@ -121,7 +133,9 @@ class MainSetupScreen(Screen[None]):
         await self._bootstrap()
 
     async def _bootstrap(self) -> None:
-        """初始渲染：tab 条/边栏重建是异步的（等旧子项摘除），随后才开始抓取。"""
+        """初始渲染：先回到上次停下的位置（tab 条 / 边栏一画出来高亮就是对的），
+        再重建它们（异步，等旧子项摘除），随后才开始抓取。"""
+        self._resume_position()
         await self._render_source_tabs()
         await self._render_feed_sidebar()
         self.action_refresh()

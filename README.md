@@ -34,7 +34,7 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 - **Survives site churn** — X's rotating GraphQL queryIds are re-harvested automatically from the live deployment on failure; Reddit's client-version header self-heals on 403; `feedscope probe` pinpoints any breakage in one command
 - **Truly local** — read state, favorites and list caches live in plain local files; no account, no telemetry; `feedscope favorites export` takes your saved items anywhere (no lock-in)
 - **Reading state that sticks** — unread dots survive refreshes and restarts; restarts paint the cache instantly, and offline keeps lists (and RSS / Telegram bodies) readable
-- **Built to last** — 622 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
+- **Built to last** — 631 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
 
 ## Features
 
@@ -50,6 +50,7 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 - Keyboard link following: `Ctrl+G` lists the links in what you are reading (`[image]`, `@mentions`, the original article…) — ↑↓ pick, Enter opens in the browser; no mouse needed
 - Local search: `F6` searches every cached list and your favorites as you type (titles for all sources, bodies for RSS / Telegram) — zero requests
 - Unread triage anywhere: `]` / `[` / `Ctrl+R` also work inside a detail (jump to the next unread article, mark the current one unread to revisit) and on the favorites list
+- Resumes where you left off: a restart lands on the same source, feed and selected item — located by id, so items that arrived above it in the meantime don't matter (if it has scrolled off, the list starts at the top). The position is saved when you quit and whenever you open an item
 - Read state & offline: the row-leading `●` marks an item unread and clears when you open it (`Ctrl+R` toggles back); the "N new" count lives in the top status line; lists cache locally — restarts paint instantly and offline keeps them readable (RSS / Telegram details read offline too)
 - Favorites / read-later: `Ctrl+F` stars the current item (from the list or while reading), `F3` opens the cross-source list; the snapshot stays readable after items scroll off hot lists, and when you star from a reading screen the detail you had loaded is saved too — a post that was deleted or cannot be opened later shows that copy instead of a dead link. `feedscope favorites export` takes them with you (no lock-in)
 - HN discussion tree: top-level comments as floors, reply trees one `Enter` deeper; deeply nested threads flatten to two levels with `@parent` prefixes preserving who-replies-to-whom
@@ -183,7 +184,7 @@ All of these are plain local files (delete to reset; no credentials involved):
 
 | File | Contents |
 | --- | --- |
-| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids, timestamps and per-feed unread counts (capped at 10k entries, oldest evicted first; favorites exempt) |
+| `state.json` (platform state dir, `~/.local/state/feedscope/` on Linux) | read/seen/favorite item ids, timestamps and per-feed unread counts (capped at 10k entries, oldest evicted first; favorites exempt), plus the last reading position (source / feed / selected item) |
 | `favorites.json` (same state dir) | full snapshots of favorited items (user-curated data, never pruned), plus the detail saved when starring from a reading screen |
 | `feedscope.lock` (same state dir) | empty lock file: lets a second `feedscope` on the same state warn that the two will overwrite each other's read marks (nothing is blocked) |
 | `feeds/` (platform cache dir, `~/.cache/feedscope/feeds/` on Linux) | one JSON list cache per feed (200 items per feed, 60 most recent feeds kept) |

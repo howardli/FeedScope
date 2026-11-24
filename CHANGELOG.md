@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Restart resumes where you left off: the source, feed and selected item are saved on quit (and whenever an item is opened) in `state.json` under `last`, and the next start lands back on them. The item is located by id, so items that arrived above it in the meantime don't matter. A source that is no longer enabled or a feed that is gone falls back to the first source / feed; an item that has scrolled off leaves the list at the top
+
 ## [0.5.0] - 2026-11-24
 
 ### Added

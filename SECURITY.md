@@ -13,7 +13,7 @@ where the sensitive bits live, so you can audit that claim:
 | --- | --- | --- |
 | User config | `sources.toml` in your platform config dir (`~/.config/feedscope/` on Linux, `~/Library/Application Support/feedscope/` on macOS) | No — language, enabled sources, subscriptions only |
 | Browser profile | `chromium-profile/` in your platform cache dir (`~/.cache/feedscope/` on Linux, `~/Library/Caches/feedscope/` on macOS) | **Yes** — Chrome profile with your Zhihu / X / Reddit session cookies |
-| Read state | `state.json` in your platform state dir (`~/.local/state/feedscope/` on Linux) | No — item ids and timestamps only |
+| Read state | `state.json` in your platform state dir (`~/.local/state/feedscope/` on Linux) | No — item ids, timestamps and the last reading position (source / feed / selected item id) |
 | Favorites | `favorites.json` next to `state.json` | No — snapshots (title/link/body, plus the detail saved when starring from a reading screen) of items you starred |
 | List cache | `feeds/` next to the browser profile in your platform cache dir | No — titles, links and bodies of the public feeds you subscribe to |
 | Instance lock | `feedscope.lock` next to `state.json` | No — an empty file held open to warn a second instance on the same state |

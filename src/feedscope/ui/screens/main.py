@@ -150,6 +150,8 @@ class MainScreen(MainReadScreen):
         self._time_width = 0  # 时间列宽（批内有 published 才成列；无时间的源 0）
         self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
+        self._resume_id: str | None = None  # 续读目标（启动时 _resume_position 记下，见该方法）
+        self._cursor_id = ""  # 当前选中条目的 id（选中变化的镜像，见 on_list_view_highlighted）
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -297,17 +299,21 @@ class MainScreen(MainReadScreen):
             self._tui.state.note_fetched(loader.items, self.current_feed, recount=True)
         )
         feed_cache.save(source.source_id, self.current_feed, loader.items)
-        await self._paint_items(loader.items, source)  # 状态行走 _count_sub（含新计数）
+        # 状态行走 _count_sub（含新计数）；这是抓取成功后的定稿上屏（settle）
+        await self._paint_items(loader.items, source, settle=True)
         self._refresh_sidebar()
 
     async def _paint_items(
-        self, items: list[FeedItem], source: Source, sub: str | None = None
+        self, items: list[FeedItem], source: Source, sub: str | None = None, *, settle: bool = False
     ) -> None:
         """整批渲染列表行（缓存先画与刷新成功共用一条路径）：清-置-画-选中-收空态。
 
         sub 缺省在置完 self.items 后自算（_count_sub 读它）——调用方传进来的
         实参会在赋值前求值，缓存态的「刷新中」文案走显式入参。行画的是
         _shown（F4 过滤态 = 未读子集），self.items 保持全量。
+
+        settle = 抓取成功后的定稿上屏：续读目标在这一轮用掉（见 _resume_index）；
+        缓存先画那一轮不算数——缓存可能比定稿旧，目标条目要等定稿才找得到。
         """
         view = self.query_one("#feed", ListView)
         view.clear()
@@ -318,7 +324,8 @@ class MainScreen(MainReadScreen):
         shown = self._shown()
         await view.extend(self._build_rows(shown, source))  # 单次挂载 = 单次布局
         if shown:
-            view.index = 0  # 自动选中第一条，Enter 可直接进详情
+            # 续读位置：上次停下的那条还在行集里就选中它；没有目标 / 已不在 = 第一条
+            view.index = self._resume_index(shown, settle=settle) or 0
             self._hide_empty()
         elif self.items:
             self.show_empty(self._empty_hint())  # 有数据但被过滤光：指路去关过滤
@@ -622,7 +629,72 @@ class MainScreen(MainReadScreen):
         self._cjk_hint_at = now
         feedback.info(self, t("main.toast_cjk_input"))
 
+    # ---- 续读位置：退出时记下源 / 流 / 选中条目，下次启动回到这里 ----
+
+    def _resume_position(self) -> None:
+        """启动时回到上次停下的源与流，并把那条条目记成续读目标。
+
+        上次的源已不在启用集里（F2 停用、订阅删空被过滤出局）→ 停在第一个源；
+        流已不存在（被 hide / 订阅改名）→ 该站的第一个流。条目本身要等列表画出来
+        才能定位（_resume_index）。没记过位置（全新安装）= 什么都不做。"""
+        last = self._tui.state.last_position()
+        source_id = last.get("source", "")
+        idx = next((i for i, s in enumerate(self.sources) if s.source_id == source_id), None)
+        if idx is None:
+            return
+        feeds = self.sources[idx].feeds
+        feed = last.get("feed", "")
+        matched = feed in feeds
+        self.source_idx = idx
+        self.feed_idx = feeds.index(feed) if matched else 0
+        self._feed_memory[source_id] = self.feed_idx  # 切走再切回来还停在这个流
+        # 条目目标跟着流走：流已不存在，那个 id 属于另一个列表，不作数
+        self._resume_id = (last.get("id") or None) if matched else None
+
+    def _resume_index(self, shown: list[FeedItem], *, settle: bool) -> int | None:
+        """上次停下的那条在本次行集里的下标；没有目标 / 不在行集里回 None。
+
+        按 id 找而不是记下标：两次启动之间新到的条目会把它往下顶，下标早就不
+        是原来那个。settle（抓取定稿）用掉目标——之后用户按 F5 照常回第一条；
+        目标已滚出列表也就此作废。"""
+        target = self._resume_id
+        if target is None:
+            return None
+        if settle:
+            self._resume_id = None
+        return next((i for i, it in enumerate(shown) if it.id == target), None)
+
+    def _save_position(self) -> None:
+        """退出时记下看到哪儿了（源 / 流 / 选中条目）。
+
+        条目读的是 _cursor_id（选中变化的镜像）而不是去查列表：卸载钩子跑到的
+        时候列表控件已经不在树上了，查不到。"""
+        if not self.sources:
+            return  # 一个源都没启用：没有「位置」可记
+        source_id, feed = self.current_source.source_id, self.current_feed
+        last = self._tui.state.last_position()
+        item_id = self._cursor_id
+        if not item_id and (last.get("source"), last.get("feed")) == (source_id, feed):
+            # 列表还没画出来就退出了（启动后一秒内）：还是同一个流，保留上次记的
+            # 条目——拿空值盖掉的话，续读目标白白丢一回
+            item_id = last.get("id", "")
+        self._tui.state.save_position(source_id, feed, item_id)
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """选中项变了：把它的条目 id 镜像到 _cursor_id（续读位置退出时要读）。
+
+        列表的 index 是响应式属性，程序的 / 键盘的 / 鼠标点击的选中变化都会发
+        这个事件——退出时列表已不在树上，位置只能在列表还在时记在普通属性里。
+        事件是异步的，取的是处理时刻的 index：列表重画期间的中间事件（clear
+        置空再落回第一条）都按最终状态算，留下一份与屏上一致的镜像。"""
+        if event.list_view.id != "feed":  # 只认主列表：楼层选择弹层等也会发同名事件
+            return
+        idx = event.list_view.index
+        shown = self._shown()
+        self._cursor_id = shown[idx].id if idx is not None and 0 <= idx < len(shown) else ""
+
     # ---- 清理 ----
 
     async def on_unmount(self) -> None:
+        self._save_position()
         await self.release_feed_loader()  # 浏览器会话与连接池由 App.on_unmount 收

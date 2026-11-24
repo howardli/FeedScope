@@ -28,6 +28,11 @@
   阅读屏收藏时顺手存下的详情（已读到的正文与楼层），原帖失效后详情屏回退
   显示它（见 toggle_fav / archive_of）。两个文件分开是因为写频不同：
   state.json 每次标已读都全量重写，favorites.json 只在收藏/取消时写，互不放大
+- 续读位置：顶层 "last": {"source", "feed", "id"}——退出时记下看到哪儿了
+  （源 / 流 / 选中条目），下次启动回到那里（见 save_position / last_position）。
+  打开条目时也顺手记一份（hold_position：只改内存，随标已读的那次落盘一起
+  写出，不多写一次整文件）——异常退出（SSH 断线、崩溃）没有退出路径，最多
+  退回到最后打开的那条。条目按 id 定位，新到的条目把它往下顶也不受影响
 - 淘汰：_MAX_ITEMS 上限只作用于非收藏条目（按 seen FIFO）；收藏是用户自选
   数据，永不淘汰、无条数上限
 """
@@ -182,11 +187,15 @@ def _read_json(path: Path, what: str) -> dict[str, Any] | None:
     return raw
 
 
-def _load() -> tuple[dict[str, SourceEntries], dict[str, int]]:
-    """读状态文件；不存在/坏 = ({}, {}) + 警告，绝不抛（容错哲学见模块头）。"""
+# 续读位置的三个键（读回时只认这三个，值必须是字符串——手编坏了逐键丢弃）
+_POSITION_KEYS = ("source", "feed", "id")
+
+
+def _load() -> tuple[dict[str, SourceEntries], dict[str, int], dict[str, str]]:
+    """读状态文件；不存在/坏 = ({}, {}, {}) + 警告，绝不抛（容错哲学见模块头）。"""
     raw = _read_json(state_path(), "已读状态")
     if raw is None:
-        return {}, {}
+        return {}, {}, {}
     items: dict[str, Any] = raw.get("items") or {}
     clean: dict[str, SourceEntries] = {}
     for src, ids in items.items():
@@ -202,7 +211,13 @@ def _load() -> tuple[dict[str, SourceEntries], dict[str, int]]:
         if isinstance(raw_feeds, dict)
         else {}
     )
-    return clean, feeds
+    raw_last = raw.get("last")
+    last = (
+        {k: raw_last[k] for k in _POSITION_KEYS if isinstance(raw_last.get(k), str)}
+        if isinstance(raw_last, dict)
+        else {}
+    )
+    return clean, feeds, last
 
 
 class ReadState:
@@ -212,10 +227,11 @@ class ReadState:
         # None = 尚未从磁盘加载；空 dict = 已加载且无历史（写路径都先经 _data()）
         self._items: dict[str, SourceEntries] | None = None
         self._feeds: dict[str, int] = {}  # "<source>/<feed>" -> 未读数（边栏角标）
+        self._last: dict[str, str] = {}  # 上次停下的位置（续读，见 save_position）
 
     def _data(self) -> dict[str, SourceEntries]:
         if self._items is None:
-            self._items, self._feeds = _load()
+            self._items, self._feeds, self._last = _load()
         return self._items
 
     def _feeds_data(self) -> dict[str, int]:
@@ -230,12 +246,11 @@ class ReadState:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(path.name + ".tmp")
+            document = {"version": 1, "items": items, "feeds": self._feeds}
+            if self._last:
+                document["last"] = self._last  # 没记过位置就不写这个键
             tmp.write_text(
-                json.dumps(
-                    {"version": 1, "items": items, "feeds": self._feeds},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
+                json.dumps(document, ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8",
             )
             os.replace(tmp, path)
@@ -345,6 +360,27 @@ class ReadState:
         if items and feed:
             feeds[f"{items[0].source}/{feed}"] = 0
         self._flush()
+
+    # ---- 续读位置（源 / 流 / 选中条目；随 state.json 落盘）----
+
+    def hold_position(self, source: str, feed: str, id: str) -> None:
+        """记下看到哪儿了，只改内存：随下一次落盘一起写出。
+
+        打开条目时调用方紧接着就标已读（那次落盘把它带上），不为它多写一次
+        整文件。先触发加载再记：否则首次落盘时的惰性加载会用磁盘上的旧位置
+        把刚记的这个冲掉。"""
+        self._data()
+        self._last = {"source": source, "feed": feed, "id": id}
+
+    def save_position(self, source: str, feed: str, id: str) -> None:
+        """记下并立刻落盘（退出路径：之后没有别的写入机会了）。"""
+        self.hold_position(source, feed, id)
+        self._flush()
+
+    def last_position(self) -> dict[str, str]:
+        """上次停下的位置 {"source", "feed", "id"}；没记过 / 坏 = {}（调用方回第一个源）。"""
+        self._data()  # 确保已加载
+        return dict(self._last)
 
     # ---- 收藏（快照在 favorites.json，判据在 state.json 的 fav 字段）----
 

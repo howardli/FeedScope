@@ -95,8 +95,15 @@ class MainReadScreen(MainNavScreen):
         return "" if self._tui.state.is_read(it.source, it.id) else MARK_UNREAD
 
     def _mark_read(self, item: FeedItem) -> None:
-        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）。"""
-        self._tui.state.mark_read(item.source, item.id)
+        """打开即已读（Enter 进详情 / 浏览器兜底 / ←/→ 换篇 / Ctrl+O）。
+
+        顺带把续读位置记到这一条（只改内存，随下面标已读的落盘一起写出）：
+        打开是「我在读这儿」的明确信号，异常退出（没有退出路径）时下次启动
+        至少回到最后打开的这条。"""
+        state = self._tui.state
+        state.hold_position(self.current_source.source_id, self.current_feed, item.id)
+        self._drop_resume()  # 用户自己打开了条目：启动时的续读目标不再适用
+        state.mark_read(item.source, item.id)
         self._sync_after_read(item)
 
     def _sync_after_read(self, item: FeedItem | None = None) -> None:
@@ -165,6 +172,8 @@ class MainReadScreen(MainNavScreen):
             delta,
         ):
             feedback.info(self, t("main.no_unread"))
+            return
+        self._drop_resume()  # 用户自己动了选中
 
     # ---- 动作：清仓与单条切换 ----
 
