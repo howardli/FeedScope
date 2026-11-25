@@ -137,16 +137,18 @@ def test_parse_telegram_input_forms() -> None:
 
 
 # ---- 线上真实结构的裁剪（2026-11 对 t.me/s/durov、toncoin、bbcrussian 抓样）----
-# 容器 / 类名 / 嵌套照抄页面，只裁掉版式属性与无关内容。投票一处例外：抓了
-# 六十多页都没遇到投票，它的锚点（js-poll / js-poll_option）取自站点自己的
-# 脚本 widget-frame.js，选项内层的类名是按惯例写的——解析器只信那两个钩子。
+# 容器 / 类名 / 嵌套照抄页面，只裁掉版式属性与无关内容。投票见文末：那是
+# 2026-11-25 另抓的两种形态（预览页 / 单帖嵌入页），同样原样裁剪
 
 
-def _post(post: str, *inner: str) -> str:
-    """一条消息的最小容器（开头与线上同形），inner 是气泡里的内容块。"""
+def _post(post: str, *inner: str, cls: str = "text") -> str:
+    """一条消息的最小容器（开头与线上同形），inner 是气泡里的内容块。
+
+    cls 是消息的类型类名：带文字的帖子是 text，投票这类文字以外的消息是
+    text_not_supported_wrap。"""
     return (
         '<div class="tgme_widget_message_wrap js-widget_message_wrap">'
-        f'<div class="tgme_widget_message text js-widget_message" data-post="{post}">'
+        f'<div class="tgme_widget_message {cls} js-widget_message" data-post="{post}">'
         + "".join(inner)
         + "</div></div>"
     )
@@ -167,16 +169,18 @@ def _text(body: str) -> str:
     )
 
 
-def _footer(views: str, iso: str, author: str = "") -> str:
+def _footer(views: str, iso: str, author: str = "", voters: str = "") -> str:
     signature = (
         '<span class="tgme_widget_message_meta"><span class="tgme_widget_message_from_author" '
         f'dir="auto">{author}</span>,</span>'
         if author
         else ""
     )
+    tally = f'<span class="tgme_widget_message_voters">{voters}</span><span class="copyonly"> voters</span>' if voters else ""
     return (
         '<div class="tgme_widget_message_footer compact js-message_footer">'
         '<div class="tgme_widget_message_info short js-message_info">'
+        f"{tally}"
         f'<span class="tgme_widget_message_views">{views}</span>'
         f'<span class="copyonly"> views</span>{signature}'
         f'<time datetime="{iso}" class="time">Jul 17</time>'
@@ -354,68 +358,241 @@ def test_titles_decode_html_entities() -> None:
     assert item.title.startswith("$100,400 just went to the winners")
 
 
-# ---- 投票：锚点来自站点脚本（见本节开头的说明）----
+# ---- 投票：两种真实形态（2026-11-25 抓自 t.me/s/javascript 及其单帖嵌入页）----
+# 预览页（已出结果）：选项类名 tgme_widget_message_poll_option，先给百分比再给
+# 文案，整组选项包在指向帖子页的 <a> 里，票数在页脚的 voters span。嵌入页（未
+# 投票）：选项另带 js-poll_option + data-value，没有百分比，票数在块里的 _poll_votes。
+# 以前这里是一份按站点脚本钩子拼出来的夹具，真实页面上一个问题都取不到。
 
 
-def _option(value: str, text: str, percent: str = "") -> str:
+def _option(text: str, percent: str = "") -> str:
     pct = f'<div class="tgme_widget_message_poll_option_percent">{percent}</div>' if percent else ""
     return (
-        f'<div class="tgme_widget_message_poll_option js-poll_option" data-value="{value}">'
-        f'<div class="tgme_widget_message_poll_option_text" dir="auto">{text}</div>{pct}</div>'
+        '<div class="tgme_widget_message_poll_option">'
+        f"{pct}"
+        '<div class="tgme_widget_message_poll_option_value">'
+        f'<div class="tgme_widget_message_poll_option_text">{text}</div>'
+        '<div class="tgme_widget_message_poll_option_bar accent_bg" style="width:47.619%"></div>'
+        "</div></div>"
     )
 
 
-def _poll_post(poll_inner: str) -> str:
+def _poll(question: str, kind: str, *options: str) -> str:
+    return (
+        '<div class="tgme_widget_message_poll js-poll">'
+        f'<div class="tgme_widget_message_poll_question">{question}</div>'
+        f'<div class="tgme_widget_message_poll_type">{kind}</div>'
+        '<a class="tgme_widget_message_poll_options" href="https://t.me/javascript/3603">'
+        + "".join(options)
+        + "</a></div>"
+    )
+
+
+def _poll_post(poll_html: str, voters: str = "") -> str:
+    """投票帖：投票块是气泡里作者行之后的兄弟节点（不在文字块里）。"""
     return _post(
-        "durov/700",
-        '<div class="media_supported_cont"><div class="tgme_widget_message_poll js-poll">'
-        + poll_inner
-        + "</div></div>",
-        _footer("2.0K", "2026-07-21T09:00:00+00:00"),
+        "javascript/3603",
+        _owner("JavaScript"),
+        poll_html,
+        _footer("1.64K", "2026-11-03T06:33:24+00:00", voters=voters),
+        cls="text_not_supported_wrap",
     )
 
 
-_QUESTION = '<div class="tgme_widget_message_poll_question" dir="auto">Which feature next?</div>'
-_VOTE = '<a class="tgme_widget_message_poll_vote_btn js-poll_vote_btn" href="#">Vote</a>'
+_LINK = "[投票](https://t.me/javascript/3603)"
+
+_QUIZ = (  # 线上原样（t.me/s/javascript/3603）：只把相邻标签之间的空白换成换行
+    '<div class="tgme_widget_message_poll js-poll">'
+    '<div class="tgme_widget_message_poll_question">What is the output?</div>'
+    '<div class="tgme_widget_message_poll_type">Anonymous Quiz</div>'
+    '<a class="tgme_widget_message_poll_options" href="https://t.me/javascript/3603">'
+    '<div class="tgme_widget_message_poll_option">'
+    '<div class="tgme_widget_message_poll_option_percent">20%</div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">NaN 2</div>'
+    '<div class="tgme_widget_message_poll_option_bar accent_bg" style="width:47.619%"></div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option">'
+    '<div class="tgme_widget_message_poll_option_percent">42%</div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">6 3</div>'
+    '<div class="tgme_widget_message_poll_option_bar accent_bg" style="width:100%"></div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option">'
+    '<div class="tgme_widget_message_poll_option_percent">30%</div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">6 2</div>'
+    '<div class="tgme_widget_message_poll_option_bar accent_bg" style="width:71.4286%"></div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option">'
+    '<div class="tgme_widget_message_poll_option_percent">8%</div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">7 2</div>'
+    '<div class="tgme_widget_message_poll_option_bar accent_bg" style="width:19.0476%"></div>'
+    "</div>"
+    "</div></a>"
+    "</div>"
+)
+
+_UNVOTED = (  # 线上原样（同一帖子的嵌入页 ?embed=1：未投票的形态）
+    '<div class="tgme_widget_message_poll js-poll">'
+    '<div class="tgme_widget_message_poll_question">What is the output?</div>'
+    '<div class="tgme_widget_message_poll_type">Anonymous Quiz</div>'
+    '<div class="tgme_widget_message_poll_options">'
+    '<div class="tgme_widget_message_poll_option '
+    'tgme_widget_message_poll_option_radio_item js-poll_option" data-value="MA">'
+    '<div class="tgme_widget_message_poll_option_radio"></div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">NaN 2</div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option '
+    'tgme_widget_message_poll_option_radio_item js-poll_option" data-value="MQ">'
+    '<div class="tgme_widget_message_poll_option_radio"></div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">6 3</div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option '
+    'tgme_widget_message_poll_option_radio_item js-poll_option" data-value="Mg">'
+    '<div class="tgme_widget_message_poll_option_radio"></div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">6 2</div>'
+    "</div>"
+    "</div>"
+    '<div class="tgme_widget_message_poll_option '
+    'tgme_widget_message_poll_option_radio_item js-poll_option" data-value="Mw">'
+    '<div class="tgme_widget_message_poll_option_radio"></div>'
+    '<div class="tgme_widget_message_poll_option_value">'
+    '<div class="tgme_widget_message_poll_option_text">7 2</div>'
+    "</div>"
+    "</div></div>"
+    '<div class="tgme_widget_message_poll_votes">100 answered</div>'
+    "</div>"
+)
 
 
-def test_poll_with_results_renders_question_options_and_tally() -> None:
-    item = _one(
-        _poll_post(
-            _QUESTION
-            + _option("0", "Option A", "45%")
-            + _option("1", "Option B", "55%")
-            + '<div class="tgme_widget_message_poll_type">1,234 votes</div>'
-        )
-    )
-    assert item.title == "Which feature next?", "投票没有文字：用问题当标题（以前整条被丢掉）"
+def test_real_quiz_poll_renders_question_options_and_tally() -> None:
+    """回归：以前只认脚本钩子 js-poll_option，真实页面的选项类名是
+    tgme_widget_message_poll_option——投票帖标题清一色是 [投票]，问题和选项全丢。"""
+    item = _one(_poll_post(_QUIZ, voters="100"))
+    assert item.title == "What is the output?", "投票没有文字块：问题就是标题"
     assert item.extra["content_md"] == (
-        "**Which feature next?**\n\n- Option A — 45%\n- Option B — 55%\n\n1,234 votes"
-        "\n\n[投票](https://t.me/durov/700)"  # 终端里只能看不能投：末尾留去投的入口
+        "**What is the output?**\n\n"
+        "- NaN 2 — 20%\n- 6 3 — 42%\n- 6 2 — 30%\n- 7 2 — 8%\n\n"
+        "Anonymous Quiz · 100 人投票\n\n"
+        + _LINK  # 终端里只能看不能投：末尾留去投的入口
     )
 
 
-def test_poll_without_results_lists_the_options_and_skips_the_vote_button() -> None:
-    body = _one(_poll_post(_QUESTION + _option("0", "Option A") + _option("1", "Option B") + _VOTE)).extra[
-        "content_md"
-    ]
-    assert body == "**Which feature next?**\n\n- Option A\n- Option B\n\n[投票](https://t.me/durov/700)"
+def test_real_unvoted_poll_lists_options_without_percentages() -> None:
+    body = _one(_poll_post(_UNVOTED)).extra["content_md"]
+    assert body == (
+        "**What is the output?**\n\n- NaN 2\n- 6 3\n- 6 2\n- 7 2\n\n"
+        "Anonymous Quiz · 100 answered\n\n"  # 嵌入页的票数是整句：页面给什么显示什么
+        + _LINK
+    )
 
 
-def test_option_text_containing_a_percent_is_not_mistaken_for_a_result() -> None:
-    """只有一个选项以百分比结尾 = 不是结果视图：那是选项文案本身。"""
-    body = _one(_poll_post(_QUESTION + _option("0", "Raise it by 5%") + _option("1", "Keep it") + _VOTE)).extra[
-        "content_md"
-    ]
-    assert "- Raise it by 5%\n- Keep it\n\n[投票]" in body
+def test_plain_poll_names_its_type_and_voter_count() -> None:
+    poll = _poll("Which feature next?", "Anonymous Poll", _option("Option A", "45%"), _option("Option B", "55%"))
+    item = _one(_poll_post(poll, voters="609"))
+    assert item.title == "Which feature next?"
+    assert item.extra["content_md"] == (
+        "**Which feature next?**\n\n- Option A — 45%\n- Option B — 55%\n\n"
+        "Anonymous Poll · 609 人投票\n\n"
+        + _LINK
+    )
+
+
+def test_percent_comes_from_its_own_element_not_from_the_option_text() -> None:
+    """票数只认选项自己的 _option_percent：文案里带「5%」不会被当成结果，
+    带了百分比元素时也照常并排给出。"""
+    poll = _poll("Budget?", "Poll", _option("Raise it by 5%", "45%"), _option("Keep it"))
+    body = _one(_poll_post(poll, voters="12")).extra["content_md"]
+    assert "- Raise it by 5% — 45%\n- Keep it\n\nPoll · 12 人投票" in body
+
+
+def test_poll_without_type_or_tally_has_no_summary_line() -> None:
+    bare = '<div class="tgme_widget_message_poll js-poll">' + _option("Yes", "100%") + "</div>"
+    body = _one(_poll_post(bare)).extra["content_md"]
+    assert body == "- Yes — 100%\n\n" + _LINK
+
+
+def test_poll_text_is_plain_and_decoded() -> None:
+    """问题和选项走 _text_of：实体还原、自定义表情塌缩成字符（否则满屏星号）。"""
+    option = _option('<b>A</b> &amp; <tg-emoji emoji-id="1"><i class="emoji" style="x"><b>👍</b></i></tg-emoji>')
+    poll = _poll("Which&nbsp;<i>one</i>?", "Poll", option)
+    body = _one(_poll_post(poll)).extra["content_md"]
+    assert body == "**Which one?**\n\n- A & 👍\n\nPoll\n\n" + _LINK
 
 
 def test_unrecognized_poll_markup_keeps_the_post_as_a_link() -> None:
-    """一个选项都认不出（站点改了版式）：不把投票块的版式残片当正文，
-    退回一个指向帖子的记号——帖子不至于像以前那样整个消失。"""
-    item = _one(_poll_post(_QUESTION))
+    """问题和选项都认不出（站点改了版式）：不把投票块里的东西当正文，退回一个
+    指向帖子的记号——帖子不至于整个消失；认得出问题时至少拿它当标题。"""
+    item = _one(_poll_post('<div class="tgme_widget_message_poll js-poll">???</div>'))
     assert item.title == "[投票]"
-    assert item.extra["content_md"] == "[投票](https://t.me/durov/700)"
+    assert item.extra["content_md"] == _LINK
+    only_question = _one(
+        _poll_post(
+            '<div class="tgme_widget_message_poll js-poll">'
+            '<div class="tgme_widget_message_poll_question">Q?</div></div>'
+        )
+    )
+    assert only_question.title == "Q?"
+    assert only_question.extra["content_md"] == "**Q?**\n\n" + _LINK
+
+
+# ---- 普通表情（2026-11-25 抓自 t.me/s/iosdev/2143、golang、cricket）----
+# 页面上 emoji 是 <i class="emoji"><b>📖</b></i>，自定义表情外面再套一层 <tg-emoji>。
+# 抓的 59 页里无外壳的普通表情 2108 处、带外壳的 442 处——以前只塌缩带外壳的那种，
+# 正文里每个普通表情都被 html2text 套成 _**📖**_
+
+
+def _emoji(char: str, codepoint: str = "F09F9396") -> str:
+    return (
+        "<i class=\"emoji\" style=\"background-image:url('//telegram.org/img/emoji/40/"
+        f"{codepoint}.png')\"><b>{char}</b></i>"
+    )
+
+
+def test_ordinary_emoji_in_the_body_lose_their_emphasis_markers() -> None:
+    """回归：普通表情不带 tg-emoji 外壳，以前漏塌缩——正文里是 _**📖**_，
+    嵌在加粗标题里时连强调标记都乱了。"""
+    body = _text(
+        f"<b>{_emoji('⚡️', 'E29AA1')} Заголовок</b><br/><br/>"
+        f"{_emoji('📖')} "
+        '<a href="https://developer.apple.com/news/?id=kkphp5qo">Спецификации</a>.'
+    )
+    item = _one(_post("iosdev/2143", body))
+    assert item.extra["content_md"] == (
+        "**⚡️ Заголовок**  \n  \n📖 [Спецификации](https://developer.apple.com/news/?id=kkphp5qo)."
+    )
+    assert item.title == "⚡️ Заголовок 📖 Спецификации."  # 标题那条路本来就去标签：不变
+
+
+def test_custom_emoji_still_collapse_inside_their_tg_emoji_wrapper() -> None:
+    body = _text(f'<tg-emoji emoji-id="5246793797538425300">{_emoji("😃", "F09F9883")}</tg-emoji> <b>hi</b>')
+    assert _one(_post("iosdev/2143", body)).extra["content_md"] == "😃 **hi**"
+
+
+def test_emoji_inside_nested_emphasis_keeps_the_nesting() -> None:
+    """回归：加粗里套斜体、里面再一个表情壳，以前渲染成 **…_**🔥**__**。"""
+    body = _text("<i>Lay Rajasthan...</i><br/><b><i>Gujarat Plus Kro..." + _emoji("🔥", "F09F94A5") + "</i></b>")
+    assert _one(_post("cricket/8956", body)).extra["content_md"] == (
+        "_Lay Rajasthan..._  \n**_Gujarat Plus Kro...🔥_**"
+    )
+
+
+def test_adjacent_emoji_are_joined_in_the_body_and_spaced_in_the_title() -> None:
+    """两个表情元素之间源码里没有空白：正文照原帖连着写；标题那条路把标签换成
+    空格（一直如此），列表标题因此不变。"""
+    item = _one(_post("golang/1122", _text(_emoji("😀", "F09F9880") + _emoji("🎉", "F09F8E89") + " party")))
+    assert item.extra["content_md"] == "😀🎉 party"
+    assert item.title == "😀 🎉 party"
 
 
 def test_reply_variants_and_empty_posts() -> None:

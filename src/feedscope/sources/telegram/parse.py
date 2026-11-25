@@ -28,9 +28,11 @@ Telegram 公开频道的 Web 预览页（t.me/s/<名>）是服务端渲染 HTML�
 - 文件 / 音频 `tgme_widget_message_document_wrap`：链接指向帖子页，标题与
   附注在 _document_title / _document_extra
 - 链接预览 `tgme_widget_message_link_preview`：站点名 / 标题 / 摘要
-- 投票的锚点以站点自己的脚本（widget-frame.js）为准：容器 `js-poll`（多选带
-  multiple），选项 `js-poll_option`；问题在选项之前、计票摘要在选项之后。
-  预览里不一定带票数——每个选项都以百分比结尾时才当作结果带上
+- 投票（2026-11 对 t.me/s/javascript、t.me/s/iosdev 抓样，单帖嵌入页对照未投票
+  形态）：容器按站点脚本（widget-frame.js）自己用的钩子 `js-poll` 认，内部按
+  类名取问题 / 类型 / 选项。已出结果时每个选项先给百分比再给文案，整组选项
+  包在指向帖子页的 <a> 里，票数在页脚的 voters；未投票的形态选项另带
+  `js-poll_option`、没有百分比
 - 视频没有稳定直链：页面里的 <video src> 带 token 参数（时效未知），记号
   指向帖子页
 
@@ -126,22 +128,35 @@ _PREVIEW_SITE_RE = re.compile(r'<div class="link_preview_site_name[^"]*"[^>]*>(.
 _PREVIEW_TITLE_RE = re.compile(r'<div class="link_preview_title"[^>]*>(.*?)</div>', re.DOTALL)
 _PREVIEW_DESC_RE = re.compile(r'<div class="link_preview_description"[^>]*>(.*?)</div>', re.DOTALL)
 
-# 投票：容器 / 选项 / 投票按钮的类名以站点脚本（widget-frame.js）为准。
-# 容器到页脚（或表情反应）之前是投票块：问题在最前、选项居中、计票摘要在后
+# 投票：容器按站点脚本（widget-frame.js）自己用的钩子 js-poll 认，内部按类名取。
+# …_poll_options（整组选项的包）与 …_poll_option_percent 等都以 …_poll_option
+# 打头：选项的类名必须整词匹配（首尾不能挨着字母数字下划线连字符）
 _POLL_RE = re.compile(r'<([a-z]+) class="[^"]*\bjs-poll\b[^"]*"[^>]*>')
-_POLL_OPTION_RE = re.compile(r'<([a-z]+) class="[^"]*\bjs-poll_option\b[^"]*"[^>]*>')
-_POLL_VOTE_BTN_RE = re.compile(
-    r"<[a-z]+\b[^>]*\bjs-poll_vote_btn\b[^>]*>.*?</[a-z]+>", re.DOTALL
+_POLL_QUESTION_RE = re.compile(r'tgme_widget_message_poll_question"[^>]*>(.*?)</div>', re.DOTALL)
+_POLL_TYPE_RE = re.compile(r'tgme_widget_message_poll_type"[^>]*>(.*?)</div>', re.DOTALL)
+_POLL_OPTION_RE = re.compile(
+    r'<([a-z]+) class="[^"]*(?<![\w-])(?:tgme_widget_message_poll_option|js-poll_option)'
+    r'(?![\w-])[^"]*"[^>]*>'
 )
-_POLL_END_RE = re.compile(r"tgme_widget_message_(?:footer|reactions)\b")
-_PCT_TAIL_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*$")
+_POLL_OPTION_TEXT_RE = re.compile(
+    r'tgme_widget_message_poll_option_text"[^>]*>(.*?)</div>', re.DOTALL
+)
+_POLL_OPTION_PERCENT_RE = re.compile(
+    r'tgme_widget_message_poll_option_percent"[^>]*>(.*?)</div>', re.DOTALL
+)
+# 票数：嵌入页在投票块里（整句，如 100 answered）；预览页在页脚（只有数字，
+# 后面跟页面自己的英文 voters——文案要自己配）
+_POLL_VOTES_RE = re.compile(r'tgme_widget_message_poll_votes"[^>]*>(.*?)</div>', re.DOTALL)
+_VOTERS_RE = re.compile(r'<span class="tgme_widget_message_voters">\s*([^<]+?)\s*</span>')
 
 _TITLE_RE = re.compile(r"<title>([^<]*)</title>")
 _OG_TITLE_RE = re.compile(r'og:title" content="([^"]*)"')
 
-# 预览页把 emoji 包成 <tg-emoji><i class="emoji" style="…"><b>🩵</b></i></tg-emoji>
-# （i/b 壳是旧客户端兜底）：整只塌缩成字符本身，否则 html2text 给每个表情
-# 套一层 **强调**，正文满屏星号
+# 预览页把 emoji 包成 <i class="emoji" style="…"><b>🙂</b></i>（i/b 壳是旧客户端
+# 兜底），自定义表情外面再套一层 <tg-emoji>。正文里两种都整只塌缩成字符本身，
+# 否则 html2text 给每个表情套一层 **强调**，正文满屏星号；普通表情占绝大多数
+# （2026-11 抓 59 页：无外壳 2108 处、带外壳 442 处）
+_EMOJI_SHELL_RE = re.compile(r'<i class="emoji"[^>]*>(?:<b>(.*?)</b>|([^<]*))</i>')
 _TG_EMOJI_RE = re.compile(
     r'<tg-emoji[^>]*>(?:<i class="emoji"[^>]*>)?(?:<b>(.*?)</b>)?(?:</i>)?([^<]*)</tg-emoji>'
 )
@@ -156,9 +171,22 @@ def channel_title(html: str) -> str:
     return re.sub(r"\s*\(via @[\w]+\)$", "", title)  # 部分频道尾巴带 "(via @x)"，去掉归 channel
 
 
+def _emoji_text(m: re.Match[str]) -> str:
+    """壳里的字符：<b> 里的那个，或直接放在壳里的文本。"""
+    return str(m.group(1) or m.group(2) or "")
+
+
 def _strip_emoji(text_html: str) -> str:
-    """tg-emoji 三层壳塌缩成字符本身（否则 html2text 给每个表情套 **强调**）。"""
-    return _TG_EMOJI_RE.sub(lambda m: m.group(1) or m.group(2) or "", text_html)
+    """自定义表情的 tg-emoji 壳（连内层的 i/b）塌缩成字符本身。"""
+    return _TG_EMOJI_RE.sub(_emoji_text, text_html)
+
+
+def _strip_emoji_shell(text_html: str) -> str:
+    """正文用：再塌缩普通表情的 i/b 壳。
+
+    只走正文——标题那条路（_text_of）把标签换成空格，本来就没有星号问题；
+    相邻的两个表情在那里因此隔着空格，保持原样。"""
+    return _EMOJI_SHELL_RE.sub(_emoji_text, text_html)
 
 
 def _text_of(fragment: str) -> str:
@@ -299,44 +327,40 @@ def _poll(chunk: str, post_url: str) -> tuple[str, str]:
     """投票 -> (问题, markdown)；没有投票回 ("", "")。
 
     投票在终端里只能看不能投：正文末尾留一个指向帖子的 [投票] 记号（Ctrl+G
-    可以从这里打开去投）。只信站点脚本自己用的钩子（js-poll /
-    js-poll_option）；一个选项都认不出时只留这个记号，帖子不至于从列表里
-    消失。每个选项的文字都以百分比结尾才当作结果视图——否则选项文案里恰好
-    带「5%」会被误读成票数。"""
+    可以从这里打开去投）。百分比取自选项自己的 _option_percent——选项文案里
+    带「5%」不会被误读成票数。问题和选项都认不出（站点改了版式）时只留记号，
+    帖子不至于从列表里消失。"""
     head = _POLL_RE.search(chunk)
     if head is None:
         return "", ""
     link = mark(t("media.poll"), post_url)
-    # 投票块到页脚（或表情反应）所在的标签为止——切在类名上会留下
-    # 「<div class="」这样的半截标签
-    end = _POLL_END_RE.search(chunk, head.end())
-    stop = chunk.rfind("<", head.end(), end.start()) if end else len(chunk)
-    block = _POLL_VOTE_BTN_RE.sub("", chunk[head.end() : stop])
-    inners: list[str] = []
-    question_html, tail_start = block, 0
+    block = chunk[head.end() : _element_end(chunk, head.end(), head.group(1))]
+    question = _text_of(qm.group(1)) if (qm := _POLL_QUESTION_RE.search(block)) else ""
+    rows: list[str] = []
     for m in _POLL_OPTION_RE.finditer(block):
-        if not inners:
-            question_html = block[: m.start()]
-        close = _element_end(block, m.end(), m.group(1))
-        inners.append(block[m.end() : close])
-        tail_start = close
-    texts = [_text_of(inner) for inner in inners]
-    if not texts:
+        inner = block[m.end() : _element_end(block, m.end(), m.group(1))]
+        text = _text_of(tm.group(1)) if (tm := _POLL_OPTION_TEXT_RE.search(inner)) else ""
+        percent = _text_of(pm.group(1)) if (pm := _POLL_OPTION_PERCENT_RE.search(inner)) else ""
+        if text:
+            rows.append(f"- {text} — {percent}" if percent else f"- {text}")
+    if not rows and not question:
         return "", link
-    pcts = [_PCT_TAIL_RE.search(text) for text in texts]
-    has_pct = all(pcts)
-    rows = []
-    for text, pct in zip(texts, pcts, strict=True):
-        if has_pct and pct is not None:
-            rows.append(f"- {text[: pct.start()].strip()} — {pct.group(1)}%")
-        else:
-            rows.append(f"- {text}")
-    question = _text_of(question_html)
-    summary = _text_of(block[tail_start:])
-    lines = ([f"**{question}**", ""] if question else []) + rows
-    if summary:
+    lines: list[str] = [f"**{question}**"] if question else []
+    if rows:
+        lines += ([""] if question else []) + rows
+    if summary := _poll_summary(chunk, block):
         lines += ["", summary]
     return question, "\n".join([*lines, "", link])
+
+
+def _poll_summary(chunk: str, block: str) -> str:
+    """投票块下面的摘要行：类型（Anonymous Poll / Anonymous Quiz）+ 票数，缺哪个省哪个。"""
+    kind = _text_of(tm.group(1)) if (tm := _POLL_TYPE_RE.search(block)) else ""
+    if vm := _POLL_VOTES_RE.search(block):
+        tally = _text_of(vm.group(1))
+    else:
+        tally = t("telegram.poll_voters", n=nm.group(1)) if (nm := _VOTERS_RE.search(chunk)) else ""
+    return " · ".join(p for p in (kind, tally) if p)
 
 
 def _title_of(*candidates: str) -> str:
@@ -378,7 +402,7 @@ def parse_channel_html(
             for block in (
                 forwarded,
                 reply,
-                html_to_md(text_html),
+                html_to_md(_strip_emoji_shell(text_html)),  # 正文：普通表情也不带星号
                 poll_md,
                 "\n\n".join(marks),
                 _preview_md(chunk),
