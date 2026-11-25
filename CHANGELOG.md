@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-26
+
 ### Added
 
 - Restart resumes where you left off: the source, feed and selected item are saved on quit (and whenever an item is opened) in `state.json` under `last`, and the next start lands back on them. The item is located by id, so items that arrived above it in the meantime don't matter. A source that is no longer enabled or a feed that is gone falls back to the first source / feed; an item that has scrolled off leaves the list at the top
@@ -156,6 +158,7 @@ Initial release.
 - Editor-inspired VS Code Dark+ theme; every keybinding is a non-printing key (works while an IME is active); top tab bar and sidebar are clickable
 - Layout-change self-check: 0 items parsed → immediate "site may have changed" error; `feedscope probe` inspects all sources with raw samples saved to disk; `feedscope doctor` environment self-check; `feedscope rss` CLI for subscription management
 
+[0.6.0]: https://github.com/howardli/FeedScope/releases/tag/v0.6.0
 [0.5.0]: https://github.com/howardli/FeedScope/releases/tag/v0.5.0
 [0.4.2]: https://github.com/howardli/FeedScope/releases/tag/v0.4.2
 [0.4.1]: https://github.com/howardli/FeedScope/releases/tag/v0.4.1
