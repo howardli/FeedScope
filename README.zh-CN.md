@@ -34,7 +34,7 @@ feedscope                # Tab 切站点，Enter 进详情
 - **扛得住站点改版**——X 轮换的 GraphQL queryId 失效时自动从当前部署重收割；Reddit 版本头 403 自愈；`feedscope probe` 一条命令定位任何断点
 - **纯本地**——已读、收藏、列表缓存都在本机明文文件里；无账号、无遥测；`feedscope favorites export` 随时把收藏带走（无锁定）
 - **读态不丢**——未读圆点扛过刷新与重启；重启先画缓存秒开列表，断网照样可翻（RSS / Telegram 正文也离线可读）
-- **工程质量打底**——652 个离线测试、全量 mypy strict、中英双语、IME 友好的非打印键位；新主题/新语言都是一个 TOML 文件，放进去即被自动发现
+- **工程质量打底**——665 个离线测试、全量 mypy strict、中英双语、IME 友好的非打印键位；新主题/新语言都是一个 TOML 文件，放进去即被自动发现
 
 ## 特性
 
@@ -199,11 +199,11 @@ feedscope
 language = "zh-CN"   # 或 "en"（缺省）；删掉这行 = 回到默认英文（只有全新安装会重新弹选）
 ```
 
-新增一种语言：复制 `src/feedscope/core/i18n/en.toml` 为 `<语言码>.toml`（如 `ja.toml`），改 `[meta]` 里的自称（`name = "日本語"`）并翻译文案——语言选择屏自动发现它，零代码改动。各语言目录的键树由测试强制一致（`tests/test_i18n.py`），漏译会红；`src` 里硬编码文案（中英文都算）同样被测试拦下（`tests/test_i18n_no_hardcoded.py`）。
+新增一种语言：复制 `src/feedscope/core/i18n/en.toml` 为 `<语言码>.toml`（如 `ja.toml`），改 `[meta]` 里的自称（`name = "日本語"`）并翻译文案——语言选择屏自动发现它，零代码改动。各语言目录的键树由测试强制一致（`tests/core/test_i18n.py`），漏译会红；`src` 里硬编码文案（中英文都算）同样被测试拦下（`tests/test_i18n_no_hardcoded.py`）。
 
 ### 界面主题
 
-`Ctrl+T` 随时切换——**即时生效并落盘**（与语言的「重启生效」不同：主题是纯显示层）。内置 `editor-dark`（默认）与 `editor-light`；配置里手动指定 `theme = "editor-light"`，删掉该行 = 回默认深色。新增一个主题：复制 `src/feedscope/ui/themes/editor-dark.toml` 改色即被自动发现（零代码），色槽完整性由 `tests/test_theme.py` 钉住。
+`Ctrl+T` 随时切换——**即时生效并落盘**（与语言的「重启生效」不同：主题是纯显示层）。内置 `editor-dark`（默认）与 `editor-light`；配置里手动指定 `theme = "editor-light"`，删掉该行 = 回默认深色。新增一个主题：复制 `src/feedscope/ui/themes/editor-dark.toml` 改色即被自动发现（零代码），色槽完整性由 `tests/ui/test_theme.py` 钉住。
 
 ### 展示时区
 

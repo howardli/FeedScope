@@ -34,7 +34,7 @@ Run `feedscope doctor` afterwards to self-check the environment. From-source ins
 - **Survives site churn** — X's rotating GraphQL queryIds are re-harvested automatically from the live deployment on failure; Reddit's client-version header self-heals on 403; `feedscope probe` pinpoints any breakage in one command
 - **Truly local** — read state, favorites and list caches live in plain local files; no account, no telemetry; `feedscope favorites export` takes your saved items anywhere (no lock-in)
 - **Reading state that sticks** — unread dots survive refreshes and restarts; restarts paint the cache instantly, and offline keeps lists (and RSS / Telegram bodies) readable
-- **Built to last** — 652 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
+- **Built to last** — 665 offline tests, mypy strict throughout, bilingual UI (中文 / English), IME-friendly non-printing keys; a new theme or a new language is one TOML file, auto-discovered
 
 ## Features
 
@@ -199,11 +199,11 @@ The first launch asks for the language (pre-selected from your system locale; `E
 language = "zh-CN"   # or "en" (the default); delete the line to fall back to English (only a fresh install asks again)
 ```
 
-Adding a language: copy `src/feedscope/core/i18n/en.toml` to `<code>.toml` (e.g. `ja.toml`), set its native name in `[meta]` (`name = "日本語"`) and translate the messages — the language picker discovers it automatically, no code changes. A parity test (`tests/test_i18n.py`) enforces identical key trees across catalogs, and an AST guard (`tests/test_i18n_no_hardcoded.py`) blocks hardcoded copy in `src`, so a missing translation turns the CI red.
+Adding a language: copy `src/feedscope/core/i18n/en.toml` to `<code>.toml` (e.g. `ja.toml`), set its native name in `[meta]` (`name = "日本語"`) and translate the messages — the language picker discovers it automatically, no code changes. A parity test (`tests/core/test_i18n.py`) enforces identical key trees across catalogs, and an AST guard (`tests/test_i18n_no_hardcoded.py`) blocks hardcoded copy in `src`, so a missing translation turns the CI red.
 
 ### UI theme
 
-`Ctrl+T` switches anytime — **applied instantly and saved** (unlike language's restart model: a theme is pure presentation). Built-ins are `editor-dark` (default) and `editor-light`; set it manually in the config with `theme = "editor-light"` (delete the line to fall back to the dark default). Adding a theme: copy `src/feedscope/ui/themes/editor-dark.toml` and recolor — it is auto-discovered with zero code changes; completeness is pinned by `tests/test_theme.py`.
+`Ctrl+T` switches anytime — **applied instantly and saved** (unlike language's restart model: a theme is pure presentation). Built-ins are `editor-dark` (default) and `editor-light`; set it manually in the config with `theme = "editor-light"` (delete the line to fall back to the dark default). Adding a theme: copy `src/feedscope/ui/themes/editor-dark.toml` and recolor — it is auto-discovered with zero code changes; completeness is pinned by `tests/ui/test_theme.py`.
 
 ### Display timezone
 
