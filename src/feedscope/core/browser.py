@@ -5,6 +5,10 @@
 - 所有页面操作走 run()，持锁串行执行 -> 无并发竞争
 - profile 是独立目录，绝不碰用户日常 Chrome 的默认 profile
 - App 退出时 close_session() 兜底清理
+
+本机 Chrome 的发现（find_chrome）、公共启动参数（chrome_launch_kwargs）与页面
+导航超时（PAGE_TIMEOUT_MS）也归这里：browser.py（TUI 内无头）、services/login
+（手动登录有头）、X 的瞬态页、doctor 自检共用同一份，别处不再各抄。
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import time
 from collections.abc import Awaitable, Callable
@@ -24,13 +29,42 @@ from typing import Any, TypeVar
 from platformdirs import user_cache_path
 
 from feedscope.core import samples
-from feedscope.core.const import PAGE_TIMEOUT_MS, chrome_launch_kwargs
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
-from feedscope.core.source import SourceError
+from feedscope.core.jsonio import dump_atomic
 
 logger = logging.getLogger(__name__)
 
 PROFILE_DIR = user_cache_path("feedscope") / "chromium-profile"
+
+# Playwright 页面导航超时（毫秒）
+PAGE_TIMEOUT_MS = 30_000
+
+# channel="chrome" 硬编码依赖的标准安装位置（macOS）与 PATH 候选名（Linux）
+CHROME_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+CHROME_BINS = ("google-chrome", "google-chrome-stable", "chrome", "google-chrome-beta")
+
+
+def find_chrome() -> str:
+    """Chrome 可执行文件路径；找不到回空串（doctor 自检与截图脚本共用的唯一实现）。"""
+    if CHROME_PATH.exists():
+        return str(CHROME_PATH)
+    return next((p for name in CHROME_BINS if (p := shutil.which(name))), "")
+
+
+def chrome_launch_kwargs() -> dict[str, Any]:
+    """Chrome persistent context 公共启动参数（channel 固定本机 Chrome，无开关）。
+
+    TUI 内无头取数（本模块）与有头手动登录（services/login）共用；headless
+    由调用方给。
+    """
+    return {
+        "channel": "chrome",
+        "viewport": {"width": 1280, "height": 900},  # 桌面布局，避免命中移动端 DOM
+        "locale": "zh-CN",
+        "timezone_id": "Asia/Shanghai",
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
 
 
 class ProfileInUse(SourceError):
@@ -308,10 +342,7 @@ def _read_ua_cache() -> str | None:
 def _write_ua_cache(ua: str) -> None:
     """落盘 UA 缓存（写失败不声张：下次再探一次而已）。"""
     try:
-        PROFILE_DIR.parent.mkdir(parents=True, exist_ok=True)
-        (PROFILE_DIR.parent / "chrome-ua.json").write_text(
-            json.dumps({"ua": ua, "ts": time.time()})
-        )
+        dump_atomic(PROFILE_DIR.parent / "chrome-ua.json", {"ua": ua, "ts": time.time()})
     except OSError:
         logger.warning("UA 缓存写盘失败（不影响本次运行）")
 

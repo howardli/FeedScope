@@ -4,11 +4,11 @@
   同一条路径）、Insert 添加、Delete 删除、Esc 返回
 - 添加框是全应用唯一的文本输入：可输入的形态因源而异（rss 收 feed 地址 /
   站点首页 / OPML 路径，reddit 收 subreddit 名或地址），文案与分流都在
-  各源的 SubsStore 里，本屏零源特判
+  SubsStore 里（由源声明合成），本屏零源特判
 - 改动即时落盘（config.update_feeds 原子写）：订阅是数据不是待确认的草稿，
   Esc 只退出不回滚；删除有轻确认，误删可重新添加（显示名会再拉一次）
-- 业务编排全部复用顶层 subscriptions 模块，本屏只做展示与键位；源的差异
-  收在 SubsStore 适配器（Source.subscribable 门控入口 + store_for 分派）
+- 业务编排全部复用 services/subscriptions，本屏只做展示与键位；源的差异
+  是各源包里的订阅钩子，经 store_for 合成的 SubsStore 到达这里
 """
 
 from __future__ import annotations
@@ -21,8 +21,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, ListItem, ListView, Static
 
 from feedscope.core.config import Subscription  # 仅类型注解用（列表行的 key/label/url 三段）
+from feedscope.core.errors import SubscriptionError
 from feedscope.core.i18n import t
-from feedscope.subscriptions import SubscriptionError, SubsStore
+from feedscope.services.subscriptions import SubsStore
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.dialogs import ConfirmScreen, InputScreen
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavListView
@@ -59,7 +60,7 @@ class SubscriptionsScreen(ArrowModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="subs-dialog", classes="modal-card"):
-            # 标题与提示是纯文案出口（markup=False，见 tests/test_markup_sinks.py）
+            # 标题与提示是纯文案出口（markup=False，见 tests/ui/test_markup_sinks.py）
             yield Label(
                 t("subscriptions.title", label=self._store.label), id="subs-title", markup=False
             )

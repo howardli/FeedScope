@@ -16,23 +16,16 @@ import re
 from typing import Any
 
 from feedscope.core.browser import ChannelTab
+from feedscope.core.errors import LoginRequired, SourceError
 from feedscope.core.i18n import raw, t
+from feedscope.core.loaders import CommentLoader, DetailLoader, FeedLoader, dedup_append, dedup_by
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
-from feedscope.core.source import (
-    CommentLoader,
-    DetailLoader,
-    FeedLoader,
-    LoginRequired,
-    SourceError,
-    dedup_append,
-    dedup_by,
-)
 from feedscope.sources.zhihu.parse import (
-    _api_comments,
-    _api_question_doc,
-    _feed_api_item,
-    _feeds_answers,
-    _hot_api_items,
+    parse_answers,
+    parse_comments,
+    parse_feed_item,
+    parse_hot_list,
+    parse_question_doc,
 )
 
 # ---- 页面上下文 fetch（通道页签里执行的 JS：API 请求由真 Chrome 发出）----
@@ -186,7 +179,7 @@ async def _comment_page(url: str) -> tuple[list[Comment], str, bool]:
         except Exception:
             logger.debug("子回复补全失败（热门子集兜底）", exc_info=True)
     paging = data.get("paging") or {}
-    return _api_comments(data), paging.get("next") or "", bool(paging.get("is_end"))
+    return parse_comments(data), paging.get("next") or "", bool(paging.get("is_end"))
 
 
 # ---- 信息流 API（热榜/推荐/关注：v3 免签接口，只认 cookie）----
@@ -242,7 +235,7 @@ async def _api_json(url: str, referer: str, zse93: bool = False) -> dict[str, An
 
 async def fetch_hot_list(referer: str) -> list[FeedItem]:
     """热榜一次 API 调用拿全量（30 条上限，无翻页）。"""
-    return _hot_api_items(await _api_json(HOT_API, referer))
+    return parse_hot_list(await _api_json(HOT_API, referer))
 
 
 # ---- 问题详情（纯 API，全程不加载页面）----
@@ -310,7 +303,7 @@ async def open_question(qid: str) -> DetailLoader:
             ) from exc
         raise
     _raise_compound_error(r["feeds"])
-    doc = _api_question_doc(r["meta"], _feeds_answers(r["feeds"], qid))
+    doc = parse_question_doc(r["meta"], parse_answers(r["feeds"], qid))
     paging = r["feeds"].get("paging") or {}
     return ZhihuQuestionLoader(doc, paging.get("next") or None, referer, qid)
 
@@ -347,7 +340,7 @@ class ZhihuApiFeedLoader(FeedLoader):
         if not self._next or paging.get("is_end"):
             self._done = True
         return dedup_append(
-            self.items, self._seen, (_feed_api_item(r) for r in data.get("data") or [])
+            self.items, self._seen, (parse_feed_item(r) for r in data.get("data") or [])
         )
 
 
@@ -382,7 +375,7 @@ class ZhihuQuestionLoader(DetailLoader):
             _reauth_if_stale(exc)  # 翻页撞会话失效（401 已在 _api_json 转译）
             raise
         # 回答按 url 去重防排序抖动（dedup_by：空 url 不去重直接放行）
-        new = dedup_by(_feeds_answers(data, self._qid), self._seen_urls, key=lambda a: a.url)
+        new = dedup_by(parse_answers(data, self._qid), self._seen_urls, key=lambda a: a.url)
         self.doc.answers.extend(new)  # 维持「doc = 已加载全部」的不变量
         paging = data.get("paging") or {}
         self._next = paging.get("next") or None

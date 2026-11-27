@@ -11,7 +11,7 @@ action 是动作文案键（feedback.*）：请求/添加/登出/评论加载/�
 三个出口一律 markup=False：toast 正文会拼入订阅名、过滤词、异常消息等
 用户与第三方数据，而 notify 默认解析 markup（'[AI] 周刊' 被当样式标签吞掉、
 含闭合标记的抛 MarkupError）。纯文本出口按构造即安全，调用方不必逐处
-转义（tests/test_markup_sinks.py 守着这条约定）。
+转义（tests/ui/test_markup_sinks.py 守着这条约定）。
 """
 
 from __future__ import annotations
@@ -21,8 +21,9 @@ from typing import Any
 from textual.app import App
 from textual.screen import Screen
 
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import has, t
-from feedscope.core.source import Source, SourceError
+from feedscope.core.source import Source
 
 ACTION_FETCH = "feedback.action_fetch"  # 默认动作（列表/详情首载）
 

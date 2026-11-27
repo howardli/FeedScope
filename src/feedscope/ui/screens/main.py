@@ -1,12 +1,15 @@
 """主屏（默认屏）：顶部站点 tab 条 + 左侧信息流边栏 + 单栏列表。
 
-继承链四层（各层只留自己的职责，纯搬家零行为变化）：
-MainSetupScreen（源启用编排）→ MainNavScreen（导航与切站切流）→
-MainReadScreen（行集与已读/过滤）→ MainScreen（本模块：取数上屏、
-边栏渲染、Enter 动线与杂项转发动作）。从 app.py 下沉为主屏后，键位
-归属与守卫关系自然理顺：主屏专属键绑在屏级——弹层与详情屏在前台时
-这些绑定根本不命中；App 只留全局退出与生命周期（见 app.py）。主屏
-状态也都在这条链上，外部（AccountFlow 等）经 app.main 访问。
+主屏继承链四层（各层一职，状态归属见 ui/screens/__init__.py）：
+MainSetupScreen（启用集与当前位置）→ MainNavScreen（导航与切站切流）→
+MainReadScreen（行集、过滤与已读）→ MainScreen（本模块）。本层只做叶子
+才做得了的事：compose 与样式、两侧导航的渲染、空态提示、以及把键位接到
+协作者和各屏上（Enter 动线、收藏 / 搜索 / 主题 / 帮助、Ctrl+N、账号）。
+取数上屏的机械件在 main_feed.FeedFlow，续读位置在 main_resume.ResumeTracker。
+
+键位归属：主屏专属键绑在屏级——弹层与详情屏在前台时这些绑定根本不命中；
+App 只留全局退出与生命周期（见 app.py）。外部（AccountFlow 等）经 app.main
+访问主屏。
 """
 
 from __future__ import annotations
@@ -20,33 +23,27 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.widget import Widget
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.widgets import Footer, Header, Label, ListView, Static
 
-from feedscope.core import config, feed_cache
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
-from feedscope.core.source import FeedLoader, LoginRequired, Source
 from feedscope.core.text import is_cjk as _is_cjk
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.coalesce import CoalescedScheduler
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.launch import copy_link, open_link
-from feedscope.ui.layout import (
-    META_COL_SPARE,
-    list_title_width,
-    score_col_width,
-    tag_col_width,
-    time_col_width,
-)
-from feedscope.ui.list_render import LIST_ROW_CSS, build_item
+from feedscope.ui.list_render import LIST_ROW_CSS, step_to
 from feedscope.ui.markup import escape
 from feedscope.ui.screens.detail import DetailScreen
 from feedscope.ui.screens.favorites import FavoritesScreen
 from feedscope.ui.screens.help import push_help
+from feedscope.ui.screens.main_feed import FeedFlow
 from feedscope.ui.screens.main_read import MainReadScreen
+from feedscope.ui.screens.main_resume import ResumeTracker
 from feedscope.ui.screens.search import SearchScreen
-from feedscope.ui.screens.theme import ThemeScreen
+from feedscope.ui.screens.theme import pick_theme
 from feedscope.ui.widgets import (
+    FeedListResized,
     FeedListView,
     FeedNavItem,
     FeedNavPressed,
@@ -60,11 +57,11 @@ logger = logging.getLogger(__name__)
 
 
 class MainScreen(MainReadScreen):
-    """站点 tab 条 + 信息流边栏 + 条目列表；取数上屏与边栏渲染。
+    """站点 tab 条 + 信息流边栏 + 条目列表；渲染与键位接线。
 
-    继承链：MainSetupScreen（源启用编排，_tui 收窄属性也在这层）→
-    MainNavScreen（导航）→ MainReadScreen（行集与已读/过滤）→ 本类。
-    本类只留渲染、取数与 Enter/账号/收藏等转发动作。
+    继承链：MainSetupScreen（启用集与当前位置）→ MainNavScreen（导航）→
+    MainReadScreen（行集与已读/过滤）→ 本类。本层自己的状态只有两个：
+    边栏刷新的合并式调度器、输入法提示的节流时间戳。
     """
 
     # 导航键位（方向键六件）声明在 MainNavScreen、已读/过滤键位在
@@ -128,30 +125,15 @@ class MainScreen(MainReadScreen):
     """
 
     def __init__(self) -> None:
-        super().__init__()
-        self.sources = self._enabled_sources()
-        self.source_idx = 0
-        self.feed_idx = 0
-        # 区域焦点 _pane 与 _feed_memory 在 MainNavScreen.__init__ 初始化（导航族状态）
-        self.items: list[FeedItem] = []
-        self.feed_loader: FeedLoader | None = None  # 持有活页签，切流/退出前要 close
-        # 本批「新抓到」的条目数（note_fetched 返回集的长度）：只喂顶部状态行
-        # 的「N 新」计数。行首圆点不看它——未读是持久态，直到打开才消失
-        # （传统阅读器语义；「新」是瞬态信息，归状态行）
-        self._new_count = 0
-        # 过滤态（_unread_only/_title_filter）在 MainReadScreen.__init__ 初始化
+        super().__init__()  # 位置 / 导航 / 行集各族状态在各自那层初始化
+        # 协作者（取数上屏、续读位置）：要用到全链成员，所以在叶子组装
+        self.flow = FeedFlow(self)
+        self.resume = ResumeTracker(self)
         # 边栏刷新的合并式调度器（见 _refresh_sidebar；alive 守卫 = 收尾期不排程）
         self._sidebar_sched = CoalescedScheduler(
             self, self._render_feed_sidebar, group="sidebar", alive=lambda: self.is_running
         )
-        # 元信息列宽（随当前批内容自适应，见 score_col_width；首渲染前是占位值）
-        self._score_width = 1 + META_COL_SPARE
-        self._tag_width = 0  # 源名列宽（聚合流标订阅/频道名；单源流 0 不占列）
-        self._time_width = 0  # 时间列宽（批内有 published 才成列；无时间的源 0）
-        self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
         self._cjk_hint_at = 0.0  # 上次「输入法没切英文」提示的时刻（on_key 节流用）
-        self._resume_id: str | None = None  # 续读目标（启动时 _resume_position 记下，见该方法）
-        self._cursor_id = ""  # 当前选中条目的 id（选中变化的镜像，见 on_list_view_highlighted）
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -219,130 +201,13 @@ class MainScreen(MainReadScreen):
     async def on_feed_nav_pressed(self, event: FeedNavPressed) -> None:
         await self.action_select_feed(event.idx)
 
-    # ---- 数据加载（当前源/流属性与切站回停在 MainNavScreen）----
-
-    def action_refresh(self) -> None:
-        # 有头登录独占 profile：走浏览器通道的源（声明了登录页的那些）此时别碰
-        # 浏览器；纯 httpx 的源（HN / V2EX / RSS / Telegram）不受登录影响，照常刷新
-        if self.sources and self.current_source.login_url and self._tui.accounts.in_progress:
-            feedback.info(self, t("account.login_refresh_later"))
-            return
-        # 详情屏在前台时不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
-        if not self.is_current:
-            return
-        # 先停在途的增量加载：旧 loader 的迟到写入会把条目混进新列表（索引错位）
-        self.workers.cancel_group(self, "more")
-        self.run_worker(self._refresh(), exclusive=True)
-
-    async def release_feed_loader(self) -> None:
-        """关掉当前流 loader 持有的活页签并复位（切流/登录前让出资源）。"""
-        if self.feed_loader is not None:
-            await self.feed_loader.close()
-            self.feed_loader = None
-
-    async def _refresh(self) -> None:
-        await self.release_feed_loader()  # 切流前关掉旧页签（await 完成再继续）
-        if not self.sources:  # 全部停用：常驻空态指路（F2 再开），不退出
-            view = self.query_one("#feed", ListView)
-            view.clear()
-            self.items = []
-            self.app.sub_title = ""
-            self.show_empty(t("main.empty_no_sources"))
-            return
-        source = self.current_source
-
-        open_coro = source.open_feed(self.current_feed)
-
-        # Header 副标题 = 状态行（站点/信息流位置由 tab 条与边栏承担）；纯文本
-        # 不写 markup（Header 的 Content 解析行为不确定）
-        self.app.sub_title = t("read.loading")
-        view = self.query_one("#feed", ListView)
-        view.clear()
-        self.items = []
-        # 离线兜底先画缓存：重启秒开、断网可翻（详情自带正文的 RSS/Telegram
-        # 离线也能读）；刷新成功整批替换，失败/未登录保留缓存不清屏。缓存
-        # 内容在抓取时已登记过已见，不是「新」——快照清空
-        cached = feed_cache.load(source.source_id, self.current_feed)
-        if cached:
-            self._new_count = 0
-            await self._paint_items(cached, source, t("main.status_cached", n=len(cached)))
-        try:
-            loader = await open_coro
-        except LoginRequired as exc:
-            if not self.items:
-                self.app.sub_title = t("main.status_signed_out")
-            hint = t("main.hint_login", error=exc)
-            if not self.items:
-                self.show_empty(str(exc))  # 先按原始消息占位（弹框期间屏不空）
-            # 撞墙即给入口：记失效 + 未拒绝过才弹框（动线收口在 AccountFlow；
-            # 拒绝过的留常驻提示——hint 带登录入口，不再被追问打断）
-            if not await self._tui.accounts.maybe_prompt(source, hint) and not self.items:
-                self.show_empty(hint)
-            return
-        except Exception as exc:
-            # 缓存行保留（有内容时不清屏不亮空态）：断网/改版时旧内容仍可翻
-            logger.warning(
-                "刷新失败 source=%s feed=%s", source.source_id, self.current_feed,
-                exc_info=True,
-            )
-            self.app.sub_title = t("read.status_failed")
-            feedback.fail(self, source, exc)
-            if not self.items:
-                self.show_empty(
-                    t("main.empty_load_failed", text=feedback.failure_text(source, exc))
-                )
-            return
-
-        self.feed_loader = loader
-        # 先定格「新」计数（渲染不依赖它，但状态行要）+ 整流重数未读角标，再重写缓存
-        self._new_count = len(
-            self._tui.state.note_fetched(loader.items, self.current_feed, recount=True)
-        )
-        feed_cache.save(source.source_id, self.current_feed, loader.items)
-        # 状态行走 _count_sub（含新计数）；这是抓取成功后的定稿上屏（settle）
-        await self._paint_items(loader.items, source, settle=True)
-        self._refresh_sidebar()
-
-    async def _paint_items(
-        self, items: list[FeedItem], source: Source, sub: str | None = None, *, settle: bool = False
-    ) -> None:
-        """整批渲染列表行（缓存先画与刷新成功共用一条路径）：清-置-画-选中-收空态。
-
-        sub 缺省在置完 self.items 后自算（_count_sub 读它）——调用方传进来的
-        实参会在赋值前求值，缓存态的「刷新中」文案走显式入参。行画的是
-        _shown（F4 过滤态 = 未读子集），self.items 保持全量。
-
-        settle = 抓取成功后的定稿上屏：续读目标在这一轮用掉（见 _resume_index）；
-        缓存先画那一轮不算数——缓存可能比定稿旧，目标条目要等定稿才找得到。
-        """
-        view = self.query_one("#feed", ListView)
-        view.clear()
-        self.items = items
-        self._score_width = score_col_width(source, self.items)  # 列宽按本批最长元信息定
-        self._tag_width = tag_col_width(self.items)  # 聚合流的源名列（单源流 0）
-        self._time_width = time_col_width(self.items)  # 相对时间列（无时间批 0）
-        shown = self._shown()
-        await view.extend(self._build_rows(shown, source))  # 单次挂载 = 单次布局
-        if shown:
-            # 续读位置：上次停下的那条还在行集里就选中它；没有目标 / 已不在 = 第一条
-            view.index = self._resume_index(shown, settle=settle) or 0
-            self._hide_empty()
-        elif self.items:
-            self.show_empty(self._empty_hint())  # 有数据但被过滤光：指路去关过滤
-        else:
-            self.show_empty(t("main.empty_no_content"))
-        self.app.sub_title = sub if sub is not None else self._count_sub()
+    def on_feed_list_resized(self, event: FeedListResized) -> None:
+        """列表视口改宽（防抖在控件里）：按新宽度重排标题折行；空列表重排是空转。
+        走独立组（同 _sync_after_read 的组语义），不与在途刷新互相取消。"""
+        if self.items:
+            self.run_worker(self.flow.rebuild_rows(), group="rebuild", exclusive=True)
 
     # 行集 _shown 与过滤空态 _empty_hint 在 MainReadScreen（行集族）
-
-    def _count_sub(self) -> str:
-        """状态行计数文案：本批有「新」带新计数（刷新与 Ctrl+N 共用）。"""
-        n = len(self._shown())
-        return (
-            t("main.status_with_new", n=n, new=self._new_count)
-            if self._new_count
-            else t("main.status_count", n=n)
-        )
 
     def show_empty(self, text: str) -> None:
         """空态/失败态：列表区无内容时的常驻屏内提示（notify 是瞬时反馈，这是常驻状态）。"""
@@ -353,112 +218,7 @@ class MainScreen(MainReadScreen):
     def _hide_empty(self) -> None:
         self.query_one("#empty-hint", Label).display = False
 
-    async def _load_more_feed(self) -> None:
-        loader = self.feed_loader
-        if loader is None:
-            return
-        # 列表屏的加载更多没有独立加载行：进行中/结果全部落进常驻状态行
-        # （Cloudflare 顶跳最长能到数十秒，没有进行中提示会像按键失灵）
-        self.app.sub_title = t("main.status_more_loading", n=len(self.items))
-        try:
-            new = await loader.load_more()
-        except Exception as exc:
-            logger.warning(
-                "加载更多失败 source=%s feed=%s", self.current_source.source_id, self.current_feed,
-                exc_info=True,
-            )
-            self.app.sub_title = t("main.status_more_failed", n=len(self.items))
-            if isinstance(exc, LoginRequired):
-                self._tui.accounts.mark_stale(self.current_source)  # 会话失效记账
-            feedback.fail(
-                self, self.current_source, exc, action="feedback.action_more_failed"
-            )
-            return
-        if loader is not self.feed_loader:
-            return  # 期间切流/刷新：旧 loader 的迟到结果不能混进新列表
-        if not new:
-            if loader.done:
-                self.app.sub_title = t("main.status_no_more", n=len(self.items))
-                feedback.info(self, t("main.toast_no_more"))
-            else:
-                self.app.sub_title = t("main.status_no_new", n=len(self.items))
-                feedback.info(self, t("main.toast_no_new_retry"))
-            return
-        self.items = loader.items
-        # 新批次的首见数累进「新」计数与角标（不重数整流——批是局部的），缓存重写；
-        # store 计数变了但部件不会自己动——边栏角标要跟着刷新（漏了这里会停在旧值）
-        self._new_count += len(self._tui.state.note_fetched(new, self.current_feed))
-        feed_cache.save(self.current_source.source_id, self.current_feed, self.items)
-        self._refresh_sidebar()
-        view = self.query_one("#feed", ListView)
-        new_width = score_col_width(self.current_source, self.items)
-        new_tag = tag_col_width(self.items)
-        new_time = time_col_width(self.items)
-        if (
-            new_width > self._score_width
-            or new_tag > self._tag_width
-            or new_time > self._time_width
-            or self._unread_only
-            or self._title_filter is not None
-        ):
-            # 新批次带来更长的元信息/源名/成列时间（或过滤态下行集变化）：
-            # 列变宽或行集重算——全量重建，不只是追加新行。F4 与 / 都在：
-            # 行集 = 全量与新过滤词的 AND，直接 extend 未过滤行会让行与
-            # current_item()/_row_mark() 按 _shown() 的寻址从此错位
-            self._score_width = new_width
-            self._tag_width = new_tag
-            self._time_width = new_time
-            await self.rebuild_items()
-        else:
-            await view.extend(self._build_rows(new, self.current_source))  # 单次挂载 = 单次布局
-        self._hide_empty()
-        self.app.sub_title = self._count_sub()
-
     # ---- 列表项构建与折行 ----
-
-    def _build_rows(self, items: list[FeedItem], source: Source) -> list[ListItem]:
-        """条目批 -> 行部件批：列宽三件套（元信息/源名/时间）与折行宽取当前态，
-        首画 / 增量追加 / 过滤重建三条路同一副参数列（漂移即行与列错位）。"""
-        width = self._wrap_width()
-        return [
-            build_item(
-                it,
-                width,
-                self._score_width,
-                source,
-                self._row_mark(it),
-                tag=it.tag,
-                tag_width=self._tag_width,
-                time_width=self._time_width,
-            )
-            for it in items
-        ]
-
-    def _wrap_width(self) -> int:
-        """标题可用宽：折行算术与布局常量的对应关系集中在 ui/layout.py。"""
-        return list_title_width(
-            self.query_one("#feed", ListView).region.width,
-            self._score_width,
-            self._tag_width,
-            self._time_width,
-        )
-
-    async def rebuild_items(self) -> None:
-        """按当前宽度/过滤态重排列表（只重排版，不重新抓取；行集 = _shown）。"""
-        if not self.items:
-            return
-        view = self.query_one("#feed", ListView)
-        idx = view.index
-        view.clear()
-        shown = self._shown()
-        await view.extend(self._build_rows(shown, self.current_source))
-        if shown:
-            view.index = 0 if idx is None else min(idx, len(shown) - 1)
-            self._hide_empty()
-        else:
-            view.index = None
-            self.show_empty(self._empty_hint())
-        self.app.sub_title = self._count_sub()
 
     # ---- 收藏：Ctrl+F 标记 / F3 列表（屏在 ui/screens/favorites.py）----
 
@@ -484,19 +244,8 @@ class MainScreen(MainReadScreen):
         self.app.push_screen(SearchScreen())
 
     def action_theme(self) -> None:
-        """Ctrl+T：主题选择。纯显示层即时生效（对照 Ctrl+L 语言的重启模型），
-        选完当场换肤 + 落盘；wait_for_dismiss 要在 worker 里（语言屏同款）。"""
-        self.app.run_worker(self._theme_flow(), group="theme")
-
-    async def _theme_flow(self) -> None:
-        name = await self.app.push_screen(
-            ThemeScreen(highlight=self.app.theme), wait_for_dismiss=True
-        )
-        if not name or name == self.app.theme:
-            return
-        self.app.theme = name  # Textual 即时应用全屏换肤
-        config.save_theme(name)
-        feedback.info(self, t("theme.toast_applied", name=name))
+        """Ctrl+T：主题选择（动线在 ui/screens/theme.pick_theme：选完即时换肤 + 落盘）。"""
+        self.app.run_worker(pick_theme(self), group="theme")
 
     def action_copy_link(self) -> None:
         """Ctrl+Y：复制当前条目链接（详情/回答层的 Ctrl+Y 复制的是正在读的）。"""
@@ -520,10 +269,10 @@ class MainScreen(MainReadScreen):
         open_link(self, item.url)
 
     def action_more(self) -> None:
-        if self.feed_loader is None:
+        if self.flow.loader is None:
             feedback.info(self, t("main.toast_nothing_to_load"))  # 失败/空态下按 Ctrl+N 也绝不无声
             return
-        self.run_worker(self._load_more_feed(), group="more", exclusive=True)
+        self.run_worker(self.flow.load_more(), group="more", exclusive=True)
 
     # ---- 账号：Ctrl+U（动线在 ui/account.AccountFlow）----
 
@@ -541,15 +290,6 @@ class MainScreen(MainReadScreen):
         )
 
     # ---- Enter：进详情或跳浏览器 ----
-
-    def current_item(self) -> FeedItem | None:
-        shown = self._shown()
-        if not shown:
-            return None
-        view = self.query_one("#feed", ListView)
-        if view.index is None or view.index >= len(shown):
-            return None
-        return shown[view.index]
 
     def _opens_detail(self, item: FeedItem) -> bool:
         """Enter 的分派谓词：进终端详情屏还是跳浏览器（判据收口在
@@ -577,18 +317,19 @@ class MainScreen(MainReadScreen):
         shown = self._shown()
         if not shown or view.index is None:
             return None
-        for idx in range(view.index + delta, len(shown) if delta > 0 else -1, delta):
-            it = shown[idx]
-            if not self._opens_detail(it):
-                continue
-            if unread_only and self._tui.state.is_read(it.source, it.id):
-                continue
-            view.index = idx
+        target = step_to(
+            view,
+            shown,
+            delta,
+            readable=self._opens_detail,
+            is_read=lambda it: self._tui.state.is_read(it.source, it.id),
+            unread_only=unread_only,
+        )
+        if target is not None:
             # 换篇的静默推进同样计已读：详情屏拿目标必经这里，主屏上下文里
             # 就地清圆点，不必跨屏回写
-            self._mark_read(it)
-            return it
-        return None
+            self._mark_read(target)
+        return target
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id != "feed":  # 只认主列表：楼层选择弹层等也会发同名事件
@@ -631,55 +372,6 @@ class MainScreen(MainReadScreen):
 
     # ---- 续读位置：退出时记下源 / 流 / 选中条目，下次启动回到这里 ----
 
-    def _resume_position(self) -> None:
-        """启动时回到上次停下的源与流，并把那条条目记成续读目标。
-
-        上次的源已不在启用集里（F2 停用、订阅删空被过滤出局）→ 停在第一个源；
-        流已不存在（被 hide / 订阅改名）→ 该站的第一个流。条目本身要等列表画出来
-        才能定位（_resume_index）。没记过位置（全新安装）= 什么都不做。"""
-        last = self._tui.state.last_position()
-        source_id = last.get("source", "")
-        idx = next((i for i, s in enumerate(self.sources) if s.source_id == source_id), None)
-        if idx is None:
-            return
-        feeds = self.sources[idx].feeds
-        feed = last.get("feed", "")
-        matched = feed in feeds
-        self.source_idx = idx
-        self.feed_idx = feeds.index(feed) if matched else 0
-        self._feed_memory[source_id] = self.feed_idx  # 切走再切回来还停在这个流
-        # 条目目标跟着流走：流已不存在，那个 id 属于另一个列表，不作数
-        self._resume_id = (last.get("id") or None) if matched else None
-
-    def _resume_index(self, shown: list[FeedItem], *, settle: bool) -> int | None:
-        """上次停下的那条在本次行集里的下标；没有目标 / 不在行集里回 None。
-
-        按 id 找而不是记下标：两次启动之间新到的条目会把它往下顶，下标早就不
-        是原来那个。settle（抓取定稿）用掉目标——之后用户按 F5 照常回第一条；
-        目标已滚出列表也就此作废。"""
-        target = self._resume_id
-        if target is None:
-            return None
-        if settle:
-            self._resume_id = None
-        return next((i for i, it in enumerate(shown) if it.id == target), None)
-
-    def _save_position(self) -> None:
-        """退出时记下看到哪儿了（源 / 流 / 选中条目）。
-
-        条目读的是 _cursor_id（选中变化的镜像）而不是去查列表：卸载钩子跑到的
-        时候列表控件已经不在树上了，查不到。"""
-        if not self.sources:
-            return  # 一个源都没启用：没有「位置」可记
-        source_id, feed = self.current_source.source_id, self.current_feed
-        last = self._tui.state.last_position()
-        item_id = self._cursor_id
-        if not item_id and (last.get("source"), last.get("feed")) == (source_id, feed):
-            # 列表还没画出来就退出了（启动后一秒内）：还是同一个流，保留上次记的
-            # 条目——拿空值盖掉的话，续读目标白白丢一回
-            item_id = last.get("id", "")
-        self._tui.state.save_position(source_id, feed, item_id)
-
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """选中项变了：把它的条目 id 镜像到 _cursor_id（续读位置退出时要读）。
 
@@ -691,10 +383,10 @@ class MainScreen(MainReadScreen):
             return
         idx = event.list_view.index
         shown = self._shown()
-        self._cursor_id = shown[idx].id if idx is not None and 0 <= idx < len(shown) else ""
+        self.resume.cursor_id = shown[idx].id if idx is not None and 0 <= idx < len(shown) else ""
 
     # ---- 清理 ----
 
     async def on_unmount(self) -> None:
-        self._save_position()
-        await self.release_feed_loader()  # 浏览器会话与连接池由 App.on_unmount 收
+        self.resume.save()
+        await self.flow.release_loader()  # 浏览器会话与连接池由 App.on_unmount 收

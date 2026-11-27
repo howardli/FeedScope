@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from feedscope.core import http
 from feedscope.core.config import Subscription
+from feedscope.core.loaders import FeedLoader, dedup_append
 from feedscope.core.models import FeedItem
-from feedscope.core.source import FeedLoader, dedup_append, merge_feeds
+from feedscope.core.source import merge_feeds
 from feedscope.sources.telegram.parse import parse_channel_html
 
 _SITE = "https://t.me/s"

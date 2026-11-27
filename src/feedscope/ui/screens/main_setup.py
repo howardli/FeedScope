@@ -1,11 +1,15 @@
-"""主屏基类：源启用编排（首启引导、F2 源管理、启用集变化的生效路径）。
+"""主屏继承链的根：启用集与当前位置（含其派生视图）+ 首启 / F2 的生效流程。
 
-从 main.py 拆出的 MainSetupScreen——「配置生效流程」（引导落盘 / 勾选
-重建 / 订阅空源指引）不是主屏的渲染与导航职责，与 source_setup.py 的
-弹层天然配对（行文案 source_entry_text 就住在那边）。继承链四层
-（Setup → Nav → Read → MainScreen）都以本类为根：_tui 收窄属性也在这层，
-任何一族都能用。编排依赖的协作者（源列表状态与两侧导航的重建、刷新）
-以抽象方法显式声明，静态检查从此不需要「mixin 靠子类兜」的约定。
+继承链四层（Setup → Nav → Read → MainScreen）都以本类为根，状态归属见
+ui/screens/__init__.py。本层拥有并初始化「当前位置」一族：启用的源列表、
+选中的源 / 流下标、各源上次停的流；current_source / current_feed 是它们的
+只读视图，_restore_feed_idx / action_refresh 是建立在它们上的动作——位置
+归谁，位置的派生物就归谁，下层只管挪位置。
+
+取数上屏与续读位置是两个协作者（ui/screens/main_feed.FeedFlow、
+main_resume.ResumeTracker）：它们要调用全链成员，所以由叶子类组装；本层只
+声明类型，各层经 self.flow / self.resume 使用。仍然只能由叶子实现的，是三个
+渲染钩子（两侧导航的重建 + 边栏刷新）——控件是叶子 compose 的。
 """
 
 from __future__ import annotations
@@ -29,28 +33,69 @@ from feedscope.ui.screens.source_setup import (
 
 if TYPE_CHECKING:
     from feedscope.ui.app import FeedScopeApp  # 运行时导入会与 app.py 成环
+    from feedscope.ui.screens.main_feed import FeedFlow
+    from feedscope.ui.screens.main_resume import ResumeTracker
 
 
 class MainSetupScreen(Screen[None]):
-    """源启用编排基类（主屏继承链的第一层；协作者由下层实现，见抽象声明）。
+    """主屏继承链的根：启用集与当前位置 + 首启 / F2 的生效流程。
 
     继承链：MainSetupScreen（本模块）→ MainNavScreen（导航）→
-    MainReadScreen（行集与已读）→ MainScreen（取数上屏）。
+    MainReadScreen（行集与已读）→ MainScreen（取数上屏与渲染）。
     """
 
-    # 编排读写的源列表状态（MainScreen.__init__ 初始化；feed_idx 由
-    # MainNavScreen 的切流/回停读写，同属「当前位置」契约）
-    sources: list[Source]
-    source_idx: int
-    feed_idx: int
-    _feed_memory: dict[str, int]
-    _subs_dirty: bool
-    _resume_id: str | None  # 续读目标：上次停下的条目 id（列表画出来后按它定位选中）
+    # 协作者（由叶子类 MainScreen.__init__ 创建——它们要调用全链成员）
+    flow: FeedFlow
+    resume: ResumeTracker
+
+    def __init__(self) -> None:
+        super().__init__()
+        # 当前位置：启用的源列表（展示顺序 = enabled 的书写顺序）与选中的源 / 流下标
+        self.sources: list[Source] = self._enabled_sources()
+        self.source_idx = 0
+        self.feed_idx = 0
+        # source_id -> 上次选的信息流（切站回到上次看的板块；F2 收尾时按新启用集清洗）
+        self._feed_memory: dict[str, int] = {}
+        self._subs_dirty = False  # 订阅管理屏改过信息流（F2 收尾时消费，见 _manage_sources）
 
     @property
     def _tui(self) -> FeedScopeApp:
         """self.app 的收窄视图（cast 与说明收口在 ui.tui_of，全 app 唯一出处）。"""
         return tui_of(self)
+
+    # ---- 当前位置的只读视图（位置归本层，派生物也归本层）----
+
+    @property
+    def current_source(self) -> Source:
+        return self.sources[self.source_idx]
+
+    @property
+    def current_feed(self) -> str:
+        feeds = self.current_source.feeds
+        return feeds[self.feed_idx] if feeds else ""
+
+    def _restore_feed_idx(self) -> None:
+        """切站后停回该站上次的信息流（_feed_memory）；越界（流被隐藏/删除）回 0。"""
+        feeds = self.current_source.feeds if self.sources else []
+        mem = self._feed_memory.get(self.current_source.source_id, 0) if self.sources else 0
+        self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
+
+    # ---- 刷新（建立在当前位置上的动作；取数本体在 self.flow）----
+
+    def action_refresh(self) -> None:
+        # 有头登录独占 profile：走浏览器通道的源（声明了登录页的那些）此时别碰
+        # 浏览器；纯 httpx 的源（HN / V2EX / RSS / Telegram）不受登录影响，照常刷新
+        if self.sources and self.current_source.login_url and self._tui.accounts.in_progress:
+            feedback.info(self, t("account.login_refresh_later"))
+            return
+        # 详情屏在前台时不做隐形后台刷新（会顶掉详情标题、重开隐藏列表的页签）
+        if not self.is_current:
+            return
+        # 先停在途的增量加载：旧 loader 的迟到写入会把条目混进新列表（索引错位）
+        self.workers.cancel_group(self, "more")
+        self.run_worker(self.flow.refresh(), exclusive=True)
+
+    # ---- 只有叶子能实现的渲染钩子（控件是叶子 compose 的）----
 
     @abstractmethod
     async def _render_source_tabs(self) -> None:
@@ -61,23 +106,8 @@ class MainSetupScreen(Screen[None]):
         """重建左侧信息流边栏（高亮当前流；实现见 MainScreen）。"""
 
     @abstractmethod
-    def action_refresh(self) -> None:
-        """刷新当前流（实现见 MainScreen）。"""
-
-    @abstractmethod
-    def _restore_feed_idx(self) -> None:
-        """切站后停回该站上次的信息流（实现见 MainScreen）。"""
-
-    @abstractmethod
-    def _resume_position(self) -> None:
-        """启动时回到上次停下的源 / 流，并记下续读目标（实现见 MainScreen）。"""
-
-    def _drop_resume(self) -> None:
-        """用户自己动了选中 / 换了流或站：续读目标作废。
-
-        续读目标要活到抓取定稿那一次上屏（缓存先画的那一轮不算数），期间
-        用户已经挪了地方的话，迟到的定稿不能再把选中拽回原来那条。"""
-        self._resume_id = None
+    def _refresh_sidebar(self) -> None:
+        """请求边栏角标重建（实现见 MainScreen）。"""
 
     def _enabled_sources(self) -> list[Source]:
         """按配置取启用的源，展示顺序 = enabled 的书写顺序（= 用户勾选顺序）。
@@ -135,7 +165,7 @@ class MainSetupScreen(Screen[None]):
     async def _bootstrap(self) -> None:
         """初始渲染：先回到上次停下的位置（tab 条 / 边栏一画出来高亮就是对的），
         再重建它们（异步，等旧子项摘除），随后才开始抓取。"""
-        self._resume_position()
+        self.resume.restore()
         await self._render_source_tabs()
         await self._render_feed_sidebar()
         self.action_refresh()

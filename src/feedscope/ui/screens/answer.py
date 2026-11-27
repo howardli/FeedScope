@@ -20,8 +20,9 @@ from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
 from feedscope.core.i18n import t
+from feedscope.core.loaders import CommentLoader, DetailLoader
 from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
-from feedscope.core.source import CommentLoader, DetailLoader, Source
+from feedscope.core.source import Source
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.markup import escape
 from feedscope.ui.screens.reading import (
@@ -71,7 +72,7 @@ class AnswerScreen(PagedReadingScreen):
         self.item = item        # 问题条目（Ctrl+O 兜底用它）
         self.qloader = qloader  # 问题 loader（共享页签的底座）
         self.index = index
-        self.loader: CommentLoader | None = None  # 评论 loader（契约见 core.source.CommentLoader）
+        self.loader: CommentLoader | None = None  # 评论 loader（契约见 core.loaders.CommentLoader）
         # 词汇表归源：本屏两层各有单位词——楼层（←/→ 切换的对象，知乎「回答」、
         # HN「评论」）与评论（Ctrl+N 翻的对象，知乎「评论」、HN「回复」）；键位
         # 文案随词换（类级 BINDINGS 是占位，知乎渲染与内置文案逐字相同）

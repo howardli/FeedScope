@@ -1,11 +1,12 @@
 """X（Twitter）解析层：GraphQL URT 响应 -> FeedItem / 详情，纯函数，不碰网络与浏览器。
 
-合同（fetch 层只产这几类 dict / 调这几个函数）：
-- _tweet_from_result(result)  单条推文 result（rest_id / legacy / core / note_tweet）
-- _entries_and_cursor(data) + _iter_tweet_results(entries)  从 instructions 摊平条目
-- _detail_entries_and_cursor(data)  TweetDetail 响应摊平（详情首批 + 回复翻页共用）
-- _focal_and_replies(entries, rest_id) / _detail_doc / _reply_answer  详情三件套
-- _grok_translation(result)  Grok 译文块（TweetDetail 响应内嵌，外文推才有）
+公开入口（全库约定：parse.py 的公开函数一律 parse_ 前缀，fetch 层与测试只调
+它们；带 _ 的是本模块私有的字段抽取件）：
+- parse_tweet(result)  单条推文 result -> FeedItem（rest_id / legacy / core / note_tweet）
+- parse_entries_and_cursor(data) / parse_tweet_results(entries)  时间线：从 instructions 摊平条目
+- parse_detail_entries_and_cursor(data)  TweetDetail 响应摊平（详情首批 + 回复翻页共用）
+- parse_focal_and_replies / parse_detail_doc / parse_reply  详情三件套
+  （焦点与父推 / DetailDoc / 回复楼层；Grok 译文块内嵌在详情里，外文推才有）
 
 三类推文形态（2026-11 实弹抓包确认，字段都从这两种嵌套里出）：
 - 转发（RT）：外壳 legacy.full_text 只是 X 截断的 140 字预览（带 …），媒体
@@ -29,9 +30,9 @@ from typing import Any
 
 from feedscope.core.display import fmt_count, signature, votes_text
 from feedscope.core.i18n import has, t
+from feedscope.core.loaders import dedup_by
 from feedscope.core.media import mark
-from feedscope.core.models import Answer, FeedItem
-from feedscope.core.source import dedup_by
+from feedscope.core.models import Answer, DetailDoc, FeedItem
 from feedscope.core.text import strip_zwsp, truncate_display
 from feedscope.core.timefmt import fmt_twitter, twitter_epoch
 
@@ -189,7 +190,7 @@ def _urt_entries_and_cursor(
 
     时间线（home.home_timeline_urt）与详情（threaded_conversation_with_
     injections_v2）同构；容器路径与「哪条算下一页游标」是端点差异，经
-    urt_of / cursor_of 注入（见 _entries_and_cursor / _detail_entries_and_cursor）。
+    urt_of / cursor_of 注入（见 parse_entries_and_cursor / parse_detail_entries_and_cursor）。
     """
     entries: list[dict[str, Any]] = []
     for ins in urt_of(data).get("instructions") or []:
@@ -202,7 +203,7 @@ def _urt_entries_and_cursor(
     return entries, cursor
 
 
-def _entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+def parse_entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
     """从 GraphQL 响应提取全部 entries 与下一页游标（cursor-bottom 条目的 value）。
 
     For You（HomeTimeline）与 Following（HomeLatestTimeline）同容器
@@ -223,7 +224,7 @@ def _entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str
     )
 
 
-def _iter_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+def parse_tweet_results(entries: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
     """把 entries 里的推文摊平成 result dict 流：跳广告与关注推荐模块。
 
     逐个过 _unwrap：受限推文的 result 套一层 .tweet（TweetDetail 已确证该
@@ -267,7 +268,7 @@ def _quote_snippet(r: dict[str, Any]) -> str:
     return t("x.quote_line", who=_who(q), body=body)
 
 
-def _tweet_from_result(r: dict[str, Any]) -> FeedItem | None:
+def parse_tweet(r: dict[str, Any]) -> FeedItem | None:
     """单条推文 result -> FeedItem；拿不到 id 或作者的残卡返回 None（调用方丢弃）。
 
     换行压成空格（列表标题是扫描用的单段文本）；图片/视频在列表只换 [图片 N]/
@@ -316,10 +317,12 @@ def _tweet_from_result(r: dict[str, Any]) -> FeedItem | None:
 # ---- 详情（TweetDetail 响应：threaded_conversation_with_injections_v2）----
 
 
-def _detail_entries_and_cursor(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+def parse_detail_entries_and_cursor(
+    data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
     """TweetDetail 响应 -> (entries, 回复翻页 cursor)。
 
-    与 _entries_and_cursor 同构（共享 _urt_entries_and_cursor 骨架），游标取
+    与 parse_entries_and_cursor 同构（共享 _urt_entries_and_cursor 骨架），游标取
     最后一条 cursor-*（ShowMore 回复；itemContent 形态优先，content.value 兜底）。
     焦点推文是 tweet-{id} 条目，回复在 conversationthread-* 模块里，条目序
     即阅读序（祖先推文混在最前，v1 当上下文读，不单独标注）。
@@ -347,26 +350,26 @@ def _unwrap(res: dict[str, Any] | None) -> dict[str, Any]:
     return res
 
 
-def _ordered_results(entries: list[dict[str, Any]], seen: set[str]) -> list[dict[str, Any]]:
+def parse_ordered_results(entries: list[dict[str, Any]], seen: set[str]) -> list[dict[str, Any]]:
     """entries 里的推文按条目序摊平，rest_id 去重并直接登记进 seen（持久集）。
 
     tweetdetailrelatedtweets-* 模块是「相关推文」推荐（详情页尾部），不是回复，
     整个丢弃。同一条回复可在顶层与 conversationthread 模块里各出现一次；
     翻页页也用它，seen 装焦点与已输出过的回复 id——本函数边过滤边登记
     （残卡转换失败也已记下，翻页不会再吐同一条）。去重规则本体在
-    core.source.dedup_by（空 rest_id 不去重直接放行）。
+    core.loaders.dedup_by（空 rest_id 不去重直接放行）。
     """
     clean = [
         e for e in entries if not (e.get("entryId") or "").startswith("tweetdetailrelatedtweets")
     ]
     return dedup_by(
-        (_unwrap(res) for res in _iter_tweet_results(clean)),
+        (_unwrap(res) for res in parse_tweet_results(clean)),
         seen,
         key=lambda r: str(r.get("rest_id") or ""),
     )
 
 
-def _focal_and_replies(
+def parse_focal_and_replies(
     entries: list[dict[str, Any]], rest_id: str
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """首批 entries -> (焦点推文, 父推「原推」, 回复列表)。
@@ -375,7 +378,7 @@ def _focal_and_replies(
     回复型推文的父推（focal.in_reply_to_status_id_str 指向的原推）从回复列表
     拆出来单独展示，不混进楼层；匹配不到（父推被删/不在首屏）则 None。
     """
-    results = _ordered_results(entries, set())
+    results = parse_ordered_results(entries, set())
     focal = next((r for r in results if str(r.get("rest_id") or "") == rest_id), None)
     if focal is None:
         focal = results[0] if results else {}
@@ -402,8 +405,8 @@ def _quote_context(r: dict[str, Any], label: str) -> str:
     return out
 
 
-def _detail_doc(focal: dict[str, Any], parent: dict[str, Any] | None) -> tuple[str, str, str, str]:
-    """焦点推文 -> (title, meta, description_md, time)。
+def parse_detail_doc(focal: dict[str, Any], parent: dict[str, Any] | None) -> DetailDoc:
+    """焦点推文 -> DetailDoc（title / meta / description_md / time 四段）。
 
     title 取正文首行截 _DETAIL_TITLE_CELLS 格（详情屏标题行与 Header 副标题共用，标题保持
     原文——扫描面）；正文全文（含换行，开头的 @ 提及已藏）放 description_md，
@@ -436,7 +439,12 @@ def _detail_doc(focal: dict[str, Any], parent: dict[str, Any] | None) -> tuple[s
     quoted = _quote_result(focal)
     if quoted:
         desc += "\n\n" + _quote_context(quoted, t("x.quoted_tweet"))
-    return title, meta, "" if desc == title else desc, fmt_twitter(legacy.get("created_at"))
+    return DetailDoc(
+        title=title,
+        meta=meta,
+        description_md="" if desc == title else desc,
+        time=fmt_twitter(legacy.get("created_at")),
+    )
 
 
 def _visible_text(r: dict[str, Any]) -> str:
@@ -519,7 +527,7 @@ def _expand_urls(text: str, legacy: dict[str, Any], offset: int = 0) -> str:
         return text
 
 
-def _reply_answer(r: dict[str, Any]) -> Answer | None:
+def parse_reply(r: dict[str, Any]) -> Answer | None:
     """一条回复推文 -> Answer；残卡（无 id 或作者）返回 None（调用方丢弃）。
 
     内容序：正文（换行保留）→ 媒体地址 → 引用片段 → Grok 译文块（外文回复，

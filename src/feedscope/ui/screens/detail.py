@@ -18,9 +18,11 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Label, Markdown, Static
 
+from feedscope.core.errors import LoginRequired
 from feedscope.core.i18n import t
+from feedscope.core.loaders import DetailLoader, StaticDetailLoader
 from feedscope.core.models import Answer, DetailDoc, FeedItem
-from feedscope.core.source import DetailLoader, LoginRequired, Source, StaticDetailLoader
+from feedscope.core.source import Source
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.markup import escape
 from feedscope.ui.screens.answer import AnswerScreen

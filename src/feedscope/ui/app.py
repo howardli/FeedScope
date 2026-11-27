@@ -26,7 +26,7 @@ from feedscope.ui import Bindings
 from feedscope.ui.account import AccountFlow
 from feedscope.ui.labels import retranslate_bindings
 from feedscope.ui.screens.main import MainScreen
-from feedscope.ui.theme import register_all, resolve
+from feedscope.ui.themes import register_all, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class FeedScopeApp(App[None]):
         # 展示时区同语言一道烙进进程（fmt_* / 列表时间列全走它）：配置缺失/
         # 非法回退默认北京时间（UTC+8），见 core/timefmt.py 的 set_timezone
         timefmt.set_timezone(config.get_timezone())
-        # 主题：ui/themes/ 一文件一主题自动发现（见 ui/theme.py）；配置缺失/
+        # 主题：ui/themes/ 一文件一主题自动发现（见 ui/themes.py）；配置缺失/
         # 非法回退默认深色。纯显示层，Ctrl+T 运行时可实时切换（无需重启）
         register_all(self)
         self.theme = resolve(config.get_theme())

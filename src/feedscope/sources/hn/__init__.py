@@ -14,26 +14,14 @@ items/:id 一次给全树，楼层与评论翻页都是内存切片——详情�
 
 from __future__ import annotations
 
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
+from feedscope.core.loaders import FeedLoader, SliceDetailLoader
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    FeedLoader,
-    SliceDetailLoader,
-    Source,
-    SourceError,
-)
+from feedscope.core.source import Source
 from feedscope.sources.hn.fetch import HnFeedLoader, fetch_item
 from feedscope.sources.hn.parse import SOURCE_ID, parse_story
-
-
-class HnDetailLoader(SliceDetailLoader):
-    """HN 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。
-
-    全部结构在 SliceDetailLoader.from_detail（楼层/评论树成对进切片），
-    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
-
-    source_label = "HN"
 
 
 @register
@@ -63,4 +51,6 @@ class HnSource(Source):
         root = await fetch_item(item.id)
         if not root.get("id"):
             raise SourceError(t("errors.hn_no_id"))
-        return HnDetailLoader.from_detail(parse_story(root), fallback_title=item.title)
+        return SliceDetailLoader.from_detail(
+            parse_story(root), fallback_title=item.title, source_label=self.label_text
+        )

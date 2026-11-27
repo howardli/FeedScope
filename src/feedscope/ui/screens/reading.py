@@ -33,9 +33,11 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Label, Markdown, Static
 
+from feedscope.core.errors import LoginRequired
 from feedscope.core.i18n import t
+from feedscope.core.loaders import CommentLoader, DetailLoader
 from feedscope.core.models import DetailDoc, FeedItem
-from feedscope.core.source import CommentLoader, DetailLoader, LoginRequired, Source
+from feedscope.core.source import Source
 from feedscope.core.text import links_in
 from feedscope.ui import Bindings, feedback, tui_of
 from feedscope.ui.labels import retranslate_bindings
@@ -56,7 +58,7 @@ def divider() -> Static:
 
 def dim_line(text: str, **kwargs: Any) -> Static:
     """dim 灰的一行尾注（EOF 标记 / 空态等同族）：markup 只写一次；text 按纯文本
-    转义——调用方给的是 t() 文案，但出口不假设来源（见 tests/test_markup_sinks.py）。"""
+    转义——调用方给的是 t() 文案，但出口不假设来源（见 tests/ui/test_markup_sinks.py）。"""
     return Static(f"[dim]{escape(text)}[/dim]", **kwargs)
 
 

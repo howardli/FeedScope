@@ -21,6 +21,7 @@ from urllib.parse import quote, unquote
 
 from platformdirs import user_cache_path
 
+from feedscope.core.jsonio import dump_atomic
 from feedscope.core.models import FeedItem
 
 logger = logging.getLogger(__name__)
@@ -56,17 +57,7 @@ def save(source_id: str, feed: str, items: list[FeedItem]) -> None:
         return
     path = _file(source_id, feed)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"version": 1, "items": [it.to_dict() for it in items[:_MAX_ITEMS]]},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            encoding="utf-8",
-        )
-        os.replace(tmp, path)
+        dump_atomic(path, {"version": 1, "items": [it.to_dict() for it in items[:_MAX_ITEMS]]})
     except OSError as exc:
         logger.warning("列表缓存写入失败（%s/%s，忽略）：%s", source_id, feed, exc)
     _evict()

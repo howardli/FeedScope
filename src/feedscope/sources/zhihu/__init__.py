@@ -14,15 +14,12 @@ from __future__ import annotations
 import re
 from typing import ClassVar
 
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
+from feedscope.core.loaders import DetailLoader, FeedLoader
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    DetailLoader,
-    FeedLoader,
-    Source,
-    SourceError,
-)
+from feedscope.core.source import Source
 from feedscope.sources.zhihu.fetch import (
     FOLLOW_API,
     HOT_API,

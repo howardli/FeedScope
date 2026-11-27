@@ -1,0 +1,182 @@
+"""源能力声明（ClassVar 词汇表）的基线测试：UI 与 login 只按声明分派。"""
+
+import pytest
+
+import feedscope.sources  # noqa: F401  import 即注册
+from feedscope.core.registry import all_sources
+from feedscope.core.source import Source
+
+
+def test_login_capability_declared() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    # 需要登录的源：知乎（扫码）、X（账号密码）、Reddit（账号密码 + 2FA）
+    for sid in ("zhihu", "x", "reddit"):
+        assert by_id[sid].login_url and by_id[sid].login_cookie
+
+
+def test_logout_cookies_declared() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    # 登出要清掉判登 cookie：知乎是 z_c0，X 是 auth_token+ct0 成对；
+    # Reddit 两枚都清（token_v2 是部分账号的迁移形态）
+    assert by_id["zhihu"].logout_cookies == ["z_c0"]
+    assert by_id["x"].logout_cookies == ["auth_token", "ct0"]
+    assert by_id["reddit"].logout_cookies == ["reddit_session", "token_v2"]
+
+
+def test_zhihu_feed_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    z = by_id["zhihu"]
+    assert z.feeds == ["hot", "recommend", "follow"]
+    assert [z.label_of(f) for f in z.feeds] == ["热榜", "推荐", "关注"]
+    assert z.supports_detail  # Enter 进终端详情屏（回答）
+    assert z.detail_kinds == frozenset({"", "question"})
+
+
+def test_x_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    x = by_id["x"]
+    assert x.feeds == ["foryou", "following"]  # 与 X 主页页签同序：默认进「推荐」
+    assert [x.label_of(f) for f in x.feeds] == ["推荐", "正在关注"]
+    assert x.supports_detail  # Enter 进终端详情屏（正文 + 回复）
+    assert x.detail_kinds == frozenset({"tweet"})
+    assert not x.kind_labels  # 无类型标签：元信息列直接显示作者
+
+
+def test_detail_unit_label_per_source() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    assert by_id["zhihu"].detail_unit == "回答"
+    assert by_id["x"].detail_unit == "回复"
+    assert by_id["reddit"].detail_unit == "评论"
+    assert by_id["hn"].detail_unit == "评论"
+    assert by_id["v2ex"].detail_unit == "回复"
+    assert by_id["rss"].detail_unit == "正文"
+
+
+def test_rss_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    r = by_id["rss"]
+    assert r.feeds == []  # 测试配置零订阅：feeds 完全来自用户配置（见 test_rss_source）
+    assert not r.feed_labels
+    assert r.supports_detail and r.detail_kinds == frozenset({""})  # 全部条目进终端详情
+    assert not r.login_url and not r.logout_cookies  # 无登录生态
+
+
+def test_comments_capability_declared() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    # 评论层（DetailLoader.open_comments，详情屏 Enter）知乎/HN/Reddit 有：
+    # X/V2EX 的详情到回复为止、RSS/Telegram 全文无楼层——UI 按此声明决定是否预告 Enter
+    assert by_id["zhihu"].supports_comments
+    assert by_id["hn"].supports_comments
+    assert by_id["reddit"].supports_comments
+    assert not by_id["x"].supports_comments
+    assert not by_id["v2ex"].supports_comments
+    assert not by_id["rss"].supports_comments
+    assert not by_id["telegram"].supports_comments
+
+
+def test_reddit_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    r = by_id["reddit"]
+    # 测试配置零订阅：内置流兜底（与 RSS 的纯订阅合成不同）
+    assert r.feeds == ["home", "popular"]
+    assert [r.label_of(f) for f in r.feeds[:2]] == ["首页", "热门"]
+    assert r.supports_detail and r.detail_kinds == frozenset({"link", "self"})  # 全部条目进终端详情
+    assert r.subscribable  # [reddit.feeds] 订阅表：F2 里 → 进订阅管理
+    assert r.login_url == "https://www.reddit.com/login"
+    assert r.login_cookie == "token_v2"
+    # cookie 出现不算数（reddit_session/token_v2 匿名流量也发）：覆写了判登谓词做 JWT 解码
+    assert type(r).logged_in is not Source.logged_in
+    assert r.logged_in({"reddit_session": "x", "token_v2": "not-a-jwt"}) is False
+    # HN 式三层词汇：楼层叫「评论」（顶层讨论串）、楼层内叫「回复」
+    assert r.detail_unit == "评论" and r.comment_unit == "回复"
+
+
+def test_hn_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    h = by_id["hn"]
+    assert h.feeds == ["front", "new", "ask", "show"]
+    assert [h.label_of(f) for f in h.feeds] == ["首页", "最新", "提问", "展示"]
+    assert h.supports_detail
+    assert h.detail_kinds == frozenset({"story", "ask", "show"})  # 全部条目进终端详情
+    assert not h.login_url and not h.logout_cookies  # 无登录生态（公开索引 API）
+    assert not h.subscribable  # 内置流，非用户订阅
+    # 知乎式三层词汇：楼层叫「评论」（顶层讨论串）、楼层内叫「回复」
+    assert h.detail_unit == "评论"
+    assert h.comment_unit == "回复"
+
+
+def test_v2ex_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    v = by_id["v2ex"]
+    assert v.feeds == ["hot", "new"]
+    assert [v.label_of(f) for f in v.feeds] == ["热门", "最新"]
+    assert v.supports_detail
+    assert v.detail_kinds == frozenset({"topic"})  # 全部条目进终端详情
+    assert not v.login_url and not v.logout_cookies  # 无登录生态（v1 公开 API）
+    assert not v.subscribable  # 内置流，非用户订阅
+    # X 式两层词汇：楼层叫「回复」；回复平铺无嵌套，无评论层
+    assert v.detail_unit == "回复"
+
+
+def test_telegram_source_declaration() -> None:
+    by_id = {s.source_id: s for s in all_sources()}
+    t = by_id["telegram"]
+    assert t.feeds == []  # 测试配置零订阅：feeds 完全来自用户配置（同 rss）
+    assert not t.feed_labels
+    assert t.supports_detail and t.detail_kinds == frozenset({""})  # 全部条目进终端详情
+    assert t.subscribable  # [telegram.feeds] 订阅表：F2 里 → 进订阅管理
+    assert not t.login_url and not t.logout_cookies  # 免登录（公开预览页）
+    assert t.detail_unit == "正文"  # 无楼层（同 rss）
+
+
+def test_registry_order_is_tab_order() -> None:
+    """注册顺序 = source_id 字母正序 = 源选择列表与默认 Tab 序（2026-11 起
+    取代旧的「知乎在前」手工排序；钉住不变量：新增源的 import 插错位置这里
+    红，而不是列表顺序悄悄变）。"""
+    ids = [s.source_id for s in all_sources()]
+    assert ids == sorted(ids), f"sources/__init__ 的 import 要按字母序书写：{ids}"
+
+
+def test_subscribable_sources_get_a_store() -> None:
+    """subscribable=True 即有订阅管理适配器：store_for 按源声明合成，没有登记表
+    可漏（回归：曾靠一张手写 _STORES 字典，漏登记 = F2 里按 → 直接 ValueError）。
+    非可订阅源要 store 则 ValueError（入口分派据此挡住）。"""
+    from feedscope.services.subscriptions import store_for
+
+    for source in all_sources():
+        if source.subscribable:
+            store = store_for(source.source_id)
+            assert store.label == source.label_text
+            assert store.add_placeholder and store.hint and store.empty
+            assert callable(store.add) and callable(store.feeds)
+        else:
+            with pytest.raises(ValueError):
+                store_for(source.source_id)
+
+
+def test_subscribable_sources_implement_subscription_hooks() -> None:
+    """三个订阅钩子与四个文案键是可订阅源的必填项：漏了要到 F2 里按 → 才炸，这里提前拦。"""
+    from feedscope.core import i18n
+    from feedscope.core.source import Source
+
+    for source in all_sources():
+        if not source.subscribable:
+            continue
+        for name in ("subscription_input", "check_subscription", "probe_subscription"):
+            assert getattr(type(source), name) is not getattr(Source, name), (
+                f"{source.source_id} 没实现订阅钩子 {name}"
+            )
+        for key in (source.sub_placeholder, source.sub_hint, source.sub_empty, source.sub_added):
+            assert key and i18n.has(key), f"{source.source_id} 订阅文案键 {key} 不在目录"
+
+
+def test_reserved_feed_keys_declared() -> None:
+    """订阅 key 的保留字从源声明读（subscriptions._reserved 的单一出处）：
+    聚合流名（SubscribedSource）与内置流名（reddit）——源新增流后忘了
+    同步声明，订阅 key 就能遮住它，这条断言负责抓住漂移。"""
+    by_id = {s.source_id: type(s) for s in all_sources()}
+    assert by_id["rss"].reserved_feed_keys == ("all",)
+    assert by_id["telegram"].reserved_feed_keys == ("all",)
+    assert set(by_id["reddit"].reserved_feed_keys) == {"home", "popular"}
+    for sid in ("zhihu", "x", "hn", "v2ex"):  # 非 subscribable：没有订阅入口，无保留字
+        assert by_id[sid].reserved_feed_keys == ()

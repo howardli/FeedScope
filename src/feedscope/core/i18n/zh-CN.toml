@@ -2,7 +2,7 @@
 #
 # - 键为点分嵌套域，代码里用 core.i18n.t("domain.key", 占位=值) 查找
 # - 占位符 {name} 走 str.format；文案里要出现字面花括号双写 {{ }}
-# - 各语言文件键树必须完全一致（tests/test_i18n.py 奇偶校验），漏译会红
+# - 各语言文件键树必须完全一致（tests/core/test_i18n.py 奇偶校验），漏译会红
 # - 新增语言：复制本文件为 <code>.toml 改 [meta] name 与文案即可被自动发现
 
 [meta]

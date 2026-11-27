@@ -18,7 +18,7 @@ from feedscope.core.models import Answer, Comment, DetailDoc, FeedItem
 from feedscope.core.text import strip_zwsp
 from feedscope.core.timefmt import fmt_unix
 
-# html2text 统一配置见 core/const.py（不硬换行；img/video 进它之前已换成记号）
+# html2text 统一配置见 core/media.py（不硬换行；img/video 进它之前已换成记号）
 # HTML2Text 实例经 media.h2t() 取（线程本地，见其 docstring），源内不自建
 
 _NOSCRIPT_RE = re.compile(r"<noscript>.*?</noscript>", re.IGNORECASE | re.DOTALL)
@@ -91,7 +91,7 @@ def _md(html: str) -> str:
     return re.sub(rf"({img}(?!\())(?:[ \t]*{img}(?!\())+", r"\1", text)
 
 
-def _hot_api_items(data: dict[str, Any]) -> list[FeedItem]:
+def parse_hot_list(data: dict[str, Any]) -> list[FeedItem]:
     """热榜 API（www/api/v3/feed/topstory/hot-lists/total）响应 -> FeedItem 列表。
 
     target.url 是 api.zhihu.com/questions/{id}（浏览器不可达的内部形态），
@@ -122,7 +122,7 @@ def _hot_api_items(data: dict[str, Any]) -> list[FeedItem]:
     return out
 
 
-def _feed_api_item(r: dict[str, Any]) -> FeedItem | None:
+def parse_feed_item(r: dict[str, Any]) -> FeedItem | None:
     """推荐/关注 feed API 条目 -> FeedItem；None = 丢弃。
 
     只留能进终端详情的问题卡（详情只支持问题页，文章/想法/视频等不展示）：
@@ -153,7 +153,7 @@ def _feed_api_item(r: dict[str, Any]) -> FeedItem | None:
     )
 
 
-def _api_question_doc(q: dict[str, Any], answers: list[Answer]) -> DetailDoc:
+def parse_question_doc(q: dict[str, Any], answers: list[Answer]) -> DetailDoc:
     """问题元信息 API（v4/questions/{qid}?include=…，2026-11 实测）-> DetailDoc。
 
     meta 行「提问人 提问 · N 个回答 · N 万浏览」对齐页面头部形态；时间裸
@@ -195,7 +195,7 @@ def _api_comment(c: dict[str, Any]) -> Comment:
     )
 
 
-def _api_comments(data: dict[str, Any]) -> list[Comment]:
+def parse_comments(data: dict[str, Any]) -> list[Comment]:
     """root_comment 一页 -> 顶层评论列表（删掉的/仅自己可见的不算数）。"""
     roots = [
         c
@@ -205,7 +205,7 @@ def _api_comments(data: dict[str, Any]) -> list[Comment]:
     return [_api_comment(c) for c in roots]
 
 
-def _feeds_answers(data: dict[str, Any], qid: str) -> list[Answer]:
+def parse_answers(data: dict[str, Any], qid: str) -> list[Answer]:
     """回答 feeds API（questions/{qid}/feeds，2026-11 实测免签）一页 -> Answer 批次。
 
     展示词汇全 app 统一（core/display 唯一出处，与 X 回复楼层同形）：

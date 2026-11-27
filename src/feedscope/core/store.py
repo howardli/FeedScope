@@ -48,6 +48,7 @@ from typing import Any
 
 from platformdirs import user_state_path
 
+from feedscope.core.jsonio import dump_atomic
 from feedscope.core.models import DetailDoc, FeedItem
 
 logger = logging.getLogger(__name__)
@@ -242,18 +243,11 @@ class ReadState:
         """全量落盘（临时文件 + os.replace 原子写，模式同 config；先淘汰再写）。"""
         items = self._data()
         _prune(items)
-        path = state_path()
+        document = {"version": 1, "items": items, "feeds": self._feeds}
+        if self._last:
+            document["last"] = self._last  # 没记过位置就不写这个键
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + ".tmp")
-            document = {"version": 1, "items": items, "feeds": self._feeds}
-            if self._last:
-                document["last"] = self._last  # 没记过位置就不写这个键
-            tmp.write_text(
-                json.dumps(document, ensure_ascii=False, separators=(",", ":")),
-                encoding="utf-8",
-            )
-            os.replace(tmp, path)
+            dump_atomic(state_path(), document)
         except OSError as exc:
             # 磁盘满/权限坏：内存态继续可用，丢一次落盘可接受（下次变更再试）
             logger.warning("已读状态落盘失败（内存态保留）：%s", exc)
@@ -486,15 +480,8 @@ def _load_favs() -> dict[str, dict[str, dict[str, object]]]:
 
 
 def _save_favs(favs: dict[str, dict[str, dict[str, object]]]) -> None:
-    """原子写收藏快照（只在收藏/取消时调用，频次低；tmp + os.replace）。"""
-    path = favorites_path()
+    """原子写收藏快照（只在收藏/取消时调用，频次低；原语见 core/jsonio）。"""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(
-            json.dumps({"version": 1, "items": favs}, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        os.replace(tmp, path)
+        dump_atomic(favorites_path(), {"version": 1, "items": favs})
     except OSError as exc:
         logger.warning("收藏快照落盘失败（内存态保留）：%s", exc)

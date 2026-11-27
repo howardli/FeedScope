@@ -44,21 +44,27 @@ from dataclasses import dataclass
 from typing import Any
 
 from feedscope.core import http
-from feedscope.core.browser import ChannelTab, drop_profile_cookies, get_session, run_page
-from feedscope.core.const import PAGE_TIMEOUT_MS
+from feedscope.core.browser import (
+    PAGE_TIMEOUT_MS,
+    ChannelTab,
+    drop_profile_cookies,
+    get_session,
+    run_page,
+)
+from feedscope.core.errors import LoginRequired, SourceError
 from feedscope.core.i18n import t
-from feedscope.core.models import Answer, DetailDoc, FeedItem
-from feedscope.core.source import DetailLoader, FeedLoader, LoginRequired, SourceError, dedup_append
+from feedscope.core.loaders import DetailLoader, FeedLoader, dedup_append
+from feedscope.core.models import Answer, FeedItem
 from feedscope.sources.x.parse import (
     BASE,
-    _detail_doc,
-    _detail_entries_and_cursor,
-    _entries_and_cursor,
-    _focal_and_replies,
-    _iter_tweet_results,
-    _ordered_results,
-    _reply_answer,
-    _tweet_from_result,
+    parse_detail_doc,
+    parse_detail_entries_and_cursor,
+    parse_entries_and_cursor,
+    parse_focal_and_replies,
+    parse_ordered_results,
+    parse_reply,
+    parse_tweet,
+    parse_tweet_results,
 )
 
 _tab = ChannelTab(f"{BASE}/home", name="x")  # 停靠 x.com/home：同源 fetch 与 cookie 的前提
@@ -323,6 +329,28 @@ def _resolve(op_name: str) -> _Op | None:
     return _harvest.get(op_name) or _seed_for(op_name)
 
 
+def shape_report() -> dict[str, dict[str, Any] | None]:
+    """三个端点当前生效的请求形状摘要（诊断用：scripts/x_probe.py 打印现场）。
+
+    每项 = {qid, src（harvest 收割 / seed 种子）, variables（变量名）, features（数量）}；
+    两路都没有为 None。只给形状不给值——输出不含 cookie、变量值与响应体。
+    """
+    report: dict[str, dict[str, Any] | None] = {}
+    for op_name in ("HomeTimeline", "HomeLatestTimeline", _DETAIL_OP):
+        op = _resolve(op_name)
+        report[op_name] = (
+            None
+            if op is None
+            else {
+                "qid": op.qid,
+                "src": "harvest" if op_name in _harvest else "seed",
+                "variables": sorted(op.variables),
+                "features": len(op.features or {}),
+            }
+        )
+    return report
+
+
 async def _deep_capture_detail() -> _Op | None:
     """懒深度截获 TweetDetail 形状：瞬态页开稳定推文，网络层收 SPA 自己发的请求。
 
@@ -426,7 +454,7 @@ async def fetch_entries(feed: str, cursor: str | None) -> tuple[list[dict[str, A
     data = await _graphql(
         op_name, {"cursor": cursor} if cursor else None, source=t("sources.x.timeline")
     )
-    return _entries_and_cursor(data)
+    return parse_entries_and_cursor(data)
 
 
 async def fetch_conversation(
@@ -437,7 +465,7 @@ async def fetch_conversation(
     if cursor:
         extra["cursor"] = cursor
     data = await _graphql(_DETAIL_OP, extra, source=t("sources.x.detail"))
-    return _detail_entries_and_cursor(data)
+    return parse_detail_entries_and_cursor(data)
 
 
 class XFeedLoader(FeedLoader):
@@ -464,7 +492,7 @@ class XFeedLoader(FeedLoader):
         self._cursor = cursor
         self._done = cursor is None
         return dedup_append(
-            self.items, self._seen, (_tweet_from_result(r) for r in _iter_tweet_results(entries))
+            self.items, self._seen, (parse_tweet(r) for r in parse_tweet_results(entries))
         )
 
 
@@ -479,11 +507,10 @@ class XTweetDetailLoader(DetailLoader):
         self._rest_id = rest_id
         self._cursor = cursor
         self._seen: set[str] = set()  # 已输出的推文 id（焦点 + 父推 + 回复，跨页去重）
-        focal, parent, replies = _focal_and_replies(entries, rest_id)
+        focal, parent, replies = parse_focal_and_replies(entries, rest_id)
         if not focal:
             raise SourceError(t("errors.x_detail_empty"))
-        title, meta, desc, time = _detail_doc(focal, parent)
-        self.doc = DetailDoc(title=title, meta=meta, description_md=desc, time=time)
+        self.doc = parse_detail_doc(focal, parent)
         self._seen.add(str(focal.get("rest_id") or ""))
         if parent:
             self._seen.add(str(parent.get("rest_id") or ""))
@@ -499,7 +526,7 @@ class XTweetDetailLoader(DetailLoader):
         for r in results:
             if rid := str(r.get("rest_id") or ""):
                 self._seen.add(rid)
-        new = [a for a in map(_reply_answer, results) if a is not None]
+        new = [a for a in map(parse_reply, results) if a is not None]
         self.doc.answers.extend(new)
         return new
 
@@ -512,7 +539,7 @@ class XTweetDetailLoader(DetailLoader):
             return []
         entries, cursor = await fetch_conversation(self._rest_id, self._cursor)
         self._cursor = cursor
-        new = self._answers(_ordered_results(entries, self._seen))
+        new = self._answers(parse_ordered_results(entries, self._seen))
         if not new:
             self._cursor = None  # 空页 = 真到头（游标会一直发，空页判死避免空转）
         return new

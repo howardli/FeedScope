@@ -48,7 +48,7 @@ from feedscope.core.i18n import t
 from feedscope.core.media import html_to_md, mark
 from feedscope.core.models import FeedItem
 from feedscope.core.text import truncate_display
-from feedscope.core.timefmt import fmt_iso, iso_epoch
+from feedscope.core.timefmt import iso_epoch
 
 SOURCE_ID = "telegram"
 
@@ -162,7 +162,7 @@ _TG_EMOJI_RE = re.compile(
 )
 
 
-def channel_title(html: str) -> str:
+def parse_channel_title(html: str) -> str:
     """预览页的频道显示名（og:title 优先，缺了回 <title> 的尾巴）。"""
     m = _OG_TITLE_RE.search(html) or _TITLE_RE.search(html)
     if not m:
@@ -456,8 +456,3 @@ def parse_telegram_input(text: str) -> str:
     # 链接形态取路径里的频道名；裸名形态：整个串（去尾斜杠）就是频道名
     name = m.group(1) if (m := _LINK_RE.search(s)) else s.rstrip("/")
     return name.lower() if _NAME_RE.match(name) else ""
-
-
-def display_time(published: str) -> str:
-    """extra 里存的 ISO 串 -> 展示文本（详情层时间行用）。"""
-    return fmt_iso(published or None)

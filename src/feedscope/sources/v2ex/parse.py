@@ -15,10 +15,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from feedscope.core.const import safe_int
 from feedscope.core.i18n import t
 from feedscope.core.media import html_to_md
-from feedscope.core.models import Answer, FeedItem
+from feedscope.core.models import Answer, FeedItem, safe_int
 from feedscope.core.timefmt import fmt_unix
 
 SOURCE_ID = "v2ex"

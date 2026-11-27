@@ -5,7 +5,7 @@
   partial 翻页），由常驻 reddit.com 通道页签的真 Chrome 发出（知乎同款，
   TLS/头序/cookie 与登录会话自洽；.json 遗留端点已全线 403）
 - parse.py  解析层：shreddit HTML -> FeedItem / 帖子与评论树，纯函数可测
-- __init__.py 编排层：Source 能力声明与 open_* 分派 + 内存分页 Loader
+- __init__.py 编排层：Source 能力声明与 open_* 分派 + 订阅管理三钩子
 
 结构映射是 HN 式三层：帖子（自述帖 HTML 转 markdown / 链接帖原文一行 /
 媒体记号）-> 顶层评论当楼层（unit「评论」）-> 楼层内回复树当评论层
@@ -20,7 +20,7 @@ key，url 存站内地址自解释）走加法——零订阅仍有内置流（�
 
 登录：本源必须登录。`feedscope login reddit` 弹 Chrome 手动输账号密码
 （+2FA）。判据一律是 token_v2 的 JWT 本地解码（登录态 sub="user"、
-匿名态 sub="loid"，见 _token_logged_in）——Reddit 的判登 cookie 全不可
+匿名态 sub="loid"，见 parse.parse_login_state）——Reddit 的判登 cookie 全不可
 信：reddit_session 匿名流量也发、token_v2 光看在不在更不行；解码零网络
 零请求，匿名流量伪造不出。
 """
@@ -28,81 +28,24 @@ key，url 存站内地址自解释）走加法——零订阅仍有内置流（�
 from __future__ import annotations
 
 import asyncio
-import base64
-import json as _json
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from feedscope.core import config
+from feedscope.core.config import Subscription
+from feedscope.core.errors import SourceError, SubscriptionError
 from feedscope.core.i18n import t
+from feedscope.core.loaders import FeedLoader, SliceDetailLoader
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    FeedLoader,
-    SliceDetailLoader,
-    Source,
-    SourceError,
-    login_gate,
-    require_feed_items,
-)
+from feedscope.core.source import Source, require_feed_items
+from feedscope.sources.reddit import fetch
 from feedscope.sources.reddit.fetch import RedditFeedLoader, fetch_thread_html
-from feedscope.sources.reddit.parse import SOURCE_ID, parse_thread_html
-
-
-class RedditDetailLoader(SliceDetailLoader):
-    """Reddit 详情加载器：树已全在内存——楼层翻页与评论层都是切片，零额外请求。
-
-    全部结构在 SliceDetailLoader.from_detail（楼层/评论树成对进切片），
-    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
-
-    source_label = "Reddit"
-
-
-def _token_logged_in(token_v2: str | None) -> bool:
-    """token_v2 的 JWT claims 是登录的本地铁证：登录态 sub="user"（匿名态 sub="loid"）。
-
-    Reddit 的判登 cookie 全都不可信：reddit_session 匿名流量也发（实测打开
-    登录页即出现）、token_v2 光看在不在更不行——但 token_v2 本体是 JWT，
-    登录后 Reddit 重签的版本 claims 里 sub 从 "loid"（Logged-Out ID）变成
-    "user" 且带 at=1/aid=账号id（2026-11 实测两种形态各解码一次）。本地
-    解码零请求、匿名流量伪造不出，是判登/登录轮询的地面真值。
-    """
-    if not token_v2:
-        return False
-    try:
-        payload = token_v2.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = _json.loads(base64.urlsafe_b64decode(payload))
-        return bool(claims.get("sub") == "user")
-    except (IndexError, ValueError):
-        return False
-
-
-async def _login_verified(ctx: Any) -> bool:
-    """登录成功的浏览器级判据（login.py 轮询 login_verify）：token_v2 解码出登录态。
-
-    读登录窗口上下文的 cookie、本地解码 JWT（见 _token_logged_in）——零网络
-    （这台网络 www 的 me.json 连登录会话都 403，问不了服务端）、零页面
-    依赖（登录中途跳 accounts 域也不影响）。登录完成 Reddit 重签 token_v2
-    的瞬间即可检出。
-    """
-    cookies = await ctx.cookies("https://www.reddit.com")
-    jar = {c["name"]: c["value"] for c in cookies}
-    return _token_logged_in(jar.get("token_v2"))
-
-
-async def require_login(what: str) -> None:
-    """判登门：token_v2 JWT 过门（通道页签的 cookie 由浏览器自带，无需另建会话）。
-
-    公共 API：subscriptions 的 subreddit 添加入口也过这道门（订阅管理屏
-    没有账号动线，LoginRequired 的消息自带指引）。cookie 读取与消息模板
-    在 core.source.login_gate，判据（JWT 解码）是本源差异。
-    """
-    await login_gate(
-        "https://www.reddit.com",
-        lambda c: _token_logged_in(c.get("token_v2")),
-        label="Reddit",
-        what=what,
-    )
+from feedscope.sources.reddit.parse import (
+    SOURCE_ID,
+    parse_login_state,
+    parse_subreddit_input,
+    parse_thread_html,
+)
 
 
 @register
@@ -116,10 +59,7 @@ class RedditSource(Source):
     detail_unit_label = "units.comment"  # 楼层单位词：顶层评论串（同 HN）
     comment_unit_label = "units.reply"  # 楼层内的讨论（同 HN）
     login_url = "https://www.reddit.com/login"
-    login_cookie = "token_v2"  # 兜底显示用（真实判据是 login_verify 的 JWT 解码）
-    login_verify = staticmethod(
-        _login_verified
-    )  # 登录成功 = token_v2 解码出登录态（cookie 出现不算数）
+    login_cookie = "token_v2"
     logout_cookies: ClassVar[list[str]] = ["reddit_session", "token_v2"]  # 登出两枚都清
 
     # 内置流：流名 -> 列表页 URL（订阅流的页面是 https://www.reddit.com/r/{key}/）
@@ -133,6 +73,21 @@ class RedditSource(Source):
     # 订阅 key 不得撞内置流名（/r/home、/r/popular 真实存在，撞名会遮住内置流）：
     # 从 _BUILTIN 派生，新增内置流时保留字自动跟上（subscriptions 的拒收读这里）
     reserved_feed_keys = tuple(_BUILTIN)
+    # 订阅管理：添加框收 subreddit 名或站内/站点地址（文案键见 subs.*）；删空不摘
+    # enabled——首页/热门内置流仍在（与 rss / telegram 的纯订阅合成不同）
+    sub_placeholder = "subs.reddit_placeholder"
+    sub_hint = "subs.hint_basic"
+    sub_empty = "subs.reddit_empty"
+    sub_added = "subs.added_subreddit"
+    drop_enabled_when_empty = False
+
+    def logged_in(self, cookies: dict[str, str]) -> bool:
+        """判登：token_v2 的 JWT 解码出登录态（parse.parse_login_state）——cookie 出现不算数
+        （reddit_session / token_v2 匿名流量也发）。判登门、登录轮询、账号屏同一份判据。"""
+        return parse_login_state(cookies.get("token_v2"))
+
+    def login_evidence(self) -> str:
+        return t("login.success_state")  # 报喜说「检测到登录态」而不是列 cookie 名
 
     def __init__(self) -> None:
         """混形合成：内置流剔 hide（减法）+ 订阅表各成一流（加法，RSS 同款）。
@@ -157,7 +112,7 @@ class RedditSource(Source):
         page = (
             self._BUILTIN.get(name) or f"https://www.reddit.com/r/{name}/"
         )  # 订阅 key 即 subreddit 名
-        await require_login(t("errors.what_feed", label=label))
+        await self.require_login(t("errors.what_feed", label=label))
         loader = RedditFeedLoader(page, label)
         await loader.load_more()  # 首批（判登在上一行 require_login 已完成）
         if name == "home" and not loader.items:
@@ -167,12 +122,41 @@ class RedditSource(Source):
         require_feed_items(loader.items, self.label_text, label)  # 0 条 = 大概率改版
         return loader
 
+    # ---- 订阅管理钩子（通用编排在 services/subscriptions；判定顺序与文案不变）----
+
+    def subscription_input(
+        self, text: str, *, key: str | None, existing: list[Subscription]
+    ) -> Subscription:
+        # 四形态归一成裸 subreddit 名（parse_subreddit_input：rust / r/rust /
+        # /r/rust/ / 站点地址）；订阅 key 即 subreddit 名，url 存站内地址自解释
+        name = parse_subreddit_input(text)
+        if not name:
+            raise SubscriptionError(t("subs.subreddit_unrecognized"))
+        return Subscription(key=name, label="", url=f"https://www.reddit.com/r/{name}/")
+
+    def check_subscription(self, draft: Subscription, existing: list[Subscription]) -> None:
+        # /r/home、/r/popular 真实存在：订阅 key 撞内置流名会遮住内置流
+        if draft.key in self.reserved_feed_keys:
+            raise SubscriptionError(t("subs.subreddit_reserved", name=draft.key))
+        if any(f.key == draft.key for f in existing):
+            raise SubscriptionError(t("subs.subreddit_dup", name=draft.key))
+
+    async def probe_subscription(self, draft: Subscription) -> Subscription:
+        try:
+            await self.require_login(f"r/{draft.key}")
+            real = await fetch.fetch_subreddit(draft.key)
+        except SourceError as exc:  # 含 LoginRequired：订阅管理屏没有账号动线，消息自带指引
+            raise SubscriptionError(
+                t("subs.subreddit_failed", name=draft.key, error=exc)
+            ) from None
+        return Subscription(key=draft.key, label=real, url=draft.url)
+
     async def open_detail(self, item: FeedItem) -> SliceDetailLoader:
-        await require_login(t("errors.what_post_detail"))
+        await self.require_login(t("errors.what_post_detail"))
         html = await fetch_thread_html(item.url)  # 列表给的绝对 permalink（slug 全）
         # 1.5MB 级 SSR 页的解析 ~160ms：放工作线程跑，不卡事件循环（解析是
         # 纯函数；HTML2Text 已线程本地化，见 core.media.h2t）。换篇取消的是
         # await——线程会把旧结果跑完但协程已死、结果自然丢弃（线程无法取消，
         # 白算一次是换篇的既有代价）
         detail = await asyncio.to_thread(parse_thread_html, html, fallback_title=item.title)
-        return RedditDetailLoader.from_detail(detail)
+        return SliceDetailLoader.from_detail(detail, source_label=self.label_text)

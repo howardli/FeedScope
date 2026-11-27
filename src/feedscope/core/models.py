@@ -76,6 +76,16 @@ def _text(data: dict[str, Any], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+def safe_int(value: object) -> int:
+    """野数据防御的整数化：None/空/非数字/无穷大回 0（解析层把 API 野值装进模型字段的统一口径）。"""
+    if not isinstance(value, (int, float, str)):
+        return 0  # 非数字类型（None/bool 之外的对象）原也走 except -> 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _dicts(value: object) -> list[dict[str, Any]]:
     """列表里的对象项（坏项跳过；非列表回空）。"""
     return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
@@ -164,7 +174,7 @@ class Floor:
     """一个楼层（顶层评论/回答）：本体 + 它的回复树（已是 Comment 列表）。
 
     「详情一次拉全树」的源（HN / Reddit）的 parse 产物单元，楼层切片
-    Loader（core.source.SliceDetailLoader 的调用方）按 answer 建楼层、
+    Loader（core.loaders.SliceDetailLoader 的调用方）按 answer 建楼层、
     按下标切 comments 进评论层。
     """
 

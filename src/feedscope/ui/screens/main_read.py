@@ -1,15 +1,15 @@
-"""主屏行集与已读基类：_shown 行集、已读同步、过滤与未读导航（从 main.py 外移）。
+"""主屏继承链的行集层：行集映射、过滤、已读同步与未读导航。
 
-继承链：MainSetupScreen（源启用编排）→ MainNavScreen（导航）→
-MainReadScreen（本模块）→ MainScreen（取数上屏）。本层拥有「行集」的
-唯一映射 _shown()（全量 / F4 未读子集 / 标题过滤的 AND 组合）与已读
-状态的行级同步；渲染（rebuild_items）与当前选中（current_item）由
-MainScreen 实现（抽象钩子），items 全量列表由其初始化（注解契约）。
+继承链：MainSetupScreen（位置与启用集）→ MainNavScreen（导航）→
+MainReadScreen（本模块）→ MainScreen（取数上屏与渲染）。
+
+本层拥有「行集」一族：全量原料 items、两个过滤开关（F4 未读 / 标题过滤）、
+行集的唯一映射 _shown()、当前选中 current_item()，以及已读状态的行级同步。
+重排（rebuild_rows）交给取数协作者 self.flow，本层不再向叶子要抽象钩子。
 """
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from typing import ClassVar
 
 from textual.binding import Binding
@@ -25,22 +25,6 @@ from feedscope.ui.screens.main_nav import MainNavScreen
 
 class MainReadScreen(MainNavScreen):
     """行集（F4 未读 / 标题过滤）、行首圆点已读态、未读跳转与清仓。"""
-
-    # 取数族状态（MainScreen.__init__ 初始化）：行集的原料永远是全量
-    items: list[FeedItem]
-
-    # 渲染与选中在 MainScreen（取数上屏层），本层只声明契约
-    @abstractmethod
-    async def rebuild_items(self) -> None:
-        """按当前宽度/过滤态重排列表（实现见 MainScreen）。"""
-
-    @abstractmethod
-    def current_item(self) -> FeedItem | None:
-        """列表当前选中条目（实现见 MainScreen）。"""
-
-    @abstractmethod
-    def _refresh_sidebar(self) -> None:
-        """请求边栏角标重建（实现见 MainScreen）。"""
 
     BINDINGS: ClassVar[Bindings] = [
         Binding("ctrl+r", "toggle_read", "bindings.toggle_read", show=False),
@@ -58,11 +42,24 @@ class MainReadScreen(MainNavScreen):
 
     def __init__(self) -> None:
         super().__init__()
+        # 行集的原料：当前批的全量条目（loader 契约 / Ctrl+N / 收藏快照都读它）；
+        # 过滤只动渲染层，它始终保持全量
+        self.items: list[FeedItem] = []
         # F4 只看未读：会话级开关不落盘（重启回全量）；只影响渲染层，
         # self.items 始终是全量（loader 契约 / Ctrl+N / 收藏快照都不受影响）
         self._unread_only = False
         # / 标题过滤（会话级，同 F4 只动渲染层）：None = 未过滤；小写子串匹配
         self._title_filter: str | None = None
+
+    def current_item(self) -> FeedItem | None:
+        """列表当前选中条目（行集 × 列表选中下标）。"""
+        shown = self._shown()
+        if not shown:
+            return None
+        view = self.query_one("#feed", ListView)
+        if view.index is None or view.index >= len(shown):
+            return None
+        return shown[view.index]
 
     # ---- 行集（行↔条目的唯一映射；渲染/同步/计数全部走这里）----
 
@@ -102,7 +99,7 @@ class MainReadScreen(MainNavScreen):
         至少回到最后打开的这条。"""
         state = self._tui.state
         state.hold_position(self.current_source.source_id, self.current_feed, item.id)
-        self._drop_resume()  # 用户自己打开了条目：启动时的续读目标不再适用
+        self.resume.drop()  # 用户自己打开了条目：启动时的续读目标不再适用
         state.mark_read(item.source, item.id)
         self._sync_after_read(item)
 
@@ -118,7 +115,7 @@ class MainReadScreen(MainNavScreen):
             # default 组会把在途刷新整个取消——状态行卡在「加载中」且无失败
             # 提示。过滤态重画与刷新的最终 _paint_items 都经 _shown()，并发
             # 各画各的仍然一致
-            self.run_worker(self.rebuild_items(), group="rebuild", exclusive=True)
+            self.run_worker(self.flow.rebuild_rows(), group="rebuild", exclusive=True)
         elif item is not None:
             self._update_row_mark(item)
 
@@ -139,7 +136,7 @@ class MainReadScreen(MainNavScreen):
             self, t("main.toast_unread_on" if self._unread_only else "main.toast_unread_off")
         )
         # rebuild 走独立组（组语义见 _sync_after_read 的注释）
-        self.run_worker(self.rebuild_items(), group="rebuild", exclusive=True)
+        self.run_worker(self.flow.rebuild_rows(), group="rebuild", exclusive=True)
 
     def action_title_filter(self) -> None:
         """/：标题过滤（newsboat 惯例，会话级）。弹输入层：Enter 设词（大小写
@@ -152,7 +149,7 @@ class MainReadScreen(MainNavScreen):
         if new == self._title_filter:
             return  # Esc/词没变：不动现有过滤（取消输入 ≠ 清除过滤）
         self._title_filter = new
-        await self.rebuild_items()
+        await self.flow.rebuild_rows()
 
     def action_next_unread(self) -> None:
         """]：环扫跳到下一条未读（详情屏换楼层同键）。"""
@@ -173,7 +170,7 @@ class MainReadScreen(MainNavScreen):
         ):
             feedback.info(self, t("main.no_unread"))
             return
-        self._drop_resume()  # 用户自己动了选中
+        self.resume.drop()  # 用户自己动了选中
 
     # ---- 动作：清仓与单条切换 ----
 
@@ -194,7 +191,7 @@ class MainReadScreen(MainNavScreen):
         n = len(self.items)
         self._tui.state.mark_all_read(self.items, self.current_feed)
         feedback.info(self, t("main.toast_marked_all", n=n))
-        await self.rebuild_items()
+        await self.flow.rebuild_rows()
         self._refresh_sidebar()
 
     def action_toggle_read(self) -> None:

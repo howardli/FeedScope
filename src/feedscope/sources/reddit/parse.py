@@ -27,16 +27,17 @@ Reddit 特有语义：
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
-from feedscope.core.const import safe_int
 from feedscope.core.display import fmt_count, points_comments_meta, votes_text
 from feedscope.core.i18n import t
 from feedscope.core.media import attrs as tag_attrs
 from feedscope.core.media import html_to_md, mark
-from feedscope.core.models import Answer, Comment, FeedItem, Floor
+from feedscope.core.models import Answer, Comment, FeedItem, Floor, safe_int
 from feedscope.core.timefmt import fmt_iso
 from feedscope.core.tree import TreeAccessors, build_floors, deleted_author, deleted_body
 
@@ -76,6 +77,26 @@ def _post_meta(a: dict[str, str], *, with_author: bool = False) -> str:
         f"r/{subreddit}" if subreddit else "",
         f"u/{author}" if author else "",
     )
+
+
+def parse_login_state(token_v2: str | None) -> bool:
+    """token_v2 的 JWT claims 是登录的本地铁证：登录态 sub="user"（匿名态 sub="loid"）。
+
+    Reddit 的判登 cookie 全都不可信：reddit_session 匿名流量也发（实测打开
+    登录页即出现）、token_v2 光看在不在更不行——但 token_v2 本体是 JWT，
+    登录后 Reddit 重签的版本 claims 里 sub 从 "loid"（Logged-Out ID）变成
+    "user" 且带 at=1/aid=账号id（2026-11 实测两种形态各解码一次）。本地
+    解码零请求、匿名流量伪造不出，是判登/登录轮询的地面真值。
+    """
+    if not token_v2:
+        return False
+    try:
+        payload = token_v2.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        return bool(claims.get("sub") == "user")
+    except (IndexError, ValueError):
+        return False
 
 
 def parse_posts_html(html: str) -> list[FeedItem]:

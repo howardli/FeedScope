@@ -138,7 +138,7 @@ def _enclosures(enclosures: object, links: object) -> list[dict[str, str]]:
     return out
 
 
-def enclosure_marks(enclosures: object) -> list[tuple[str, str]]:
+def parse_enclosure_marks(enclosures: object) -> list[tuple[str, str]]:
     """[{url, type}] -> [(记号文案键, url)]（详情层按当前语言解析记号）。"""
     marks: list[tuple[str, str]] = []
     for e in enclosures if isinstance(enclosures, list) else []:
@@ -185,7 +185,7 @@ def parse_xml_feed(
 # ---- JSON Feed ----
 
 
-def json_feed(body: bytes | str) -> dict[str, Any] | None:
+def _json_feed(body: bytes | str) -> dict[str, Any] | None:
     """JSON Feed 的顶层对象；不是（XML / 普通页面 / 坏 JSON）回 None。
 
     只看内容不看声明：首页自动发现会把 feed+json 的地址直接交进来，没有别处
@@ -268,23 +268,23 @@ def parse_feed(
     （订阅名打头），单订阅视图里订阅名是噪音、只留作者。extra 带 detail
     所需的全部字段（feed 自带正文，进详情不重新抓）。
     """
-    if (feed := json_feed(body)) is not None:
+    if (feed := _json_feed(body)) is not None:
         return parse_json_feed(feed, feed_key=feed_key, feed_label=feed_label, all_view=all_view)
     return parse_xml_feed(
         body, feed_key=feed_key, feed_label=feed_label, all_view=all_view, fallback_url=fallback_url
     )
 
 
-def probe(body: bytes | str) -> tuple[str, int]:
+def parse_feed_info(body: bytes | str) -> tuple[str, int]:
     """(feed 自述标题, 条目数)：订阅管理判断「这是不是 feed」与取默认显示名。"""
-    if (feed := json_feed(body)) is not None:
+    if (feed := _json_feed(body)) is not None:
         return _clean(str(feed.get("title") or "")), len(feed["items"])
     parsed = feedparser.parse(body)
     title = _clean(parsed.feed.get("title")) if getattr(parsed, "feed", None) else ""
     return title, len(parsed.entries)
 
 
-def discover_feed_link(html: str, base_url: str) -> str:
+def parse_feed_discovery(html: str, base_url: str) -> str:
     """首页 HTML -> feed 地址：<link rel="alternate" type="…rss/atom…">，
     相对 href 以 base_url 绝对化；找不到回空串。"""
     for tag in _LINK_TAG.findall(html):

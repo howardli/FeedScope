@@ -1,10 +1,13 @@
-"""布局度量：列表屏与详情屏共用的可用宽度计算、元信息列与 resize 防抖间隔。
+"""布局度量：列表屏与详情屏共用的可用宽度计算、各列宽度与 resize 防抖间隔。
 
 魔数与 CSS 的对应关系集中在这里——改 CSS 必须同步改这里，
-这是两屏唯一允许出现宽度算术的地方。
+这是两屏唯一允许出现宽度算术的地方。本模块只算不画（不 import 任何控件）：
+把一条条目画成行部件是 ui/list_render.py 的事。
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
 
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
@@ -106,3 +109,29 @@ def time_col_width(items: list[FeedItem]) -> int:
     各档位宽度接近，让列稳定比省一两列更可读（源名列左对齐同理成列）。
     """
     return TIME_COL_WIDTH + 1 if any(it.published for it in items) else 0
+
+
+# ---- 跨源列表（收藏屏 / 搜索结果）：源名列文本与两列宽度按「各条目自己的源」算 ----
+
+
+def cross_source_tag(item: FeedItem, sources: Mapping[str, Source]) -> str:
+    """源名列文本：聚合流条目自带更具体的出处（订阅名/频道名）优先，否则用源
+    显示名；注册表里都找不到的落回裸 source id。"""
+    if item.tag:
+        return item.tag
+    src = sources.get(item.source)
+    return src.label_text if src is not None else item.source
+
+
+def cross_source_widths(
+    items: Sequence[FeedItem], sources: Mapping[str, Source]
+) -> tuple[int, int]:
+    """(源名列宽, 元信息列宽)：源名列 = 批内最长 + 1；元信息列按各条目自己的源
+    取最长、封顶 META_COL_MAX（多源版 score_col_width——源名不拼进来，元信息
+    保持各源在主列表的原生形态）。"""
+    tag = max((display_width(cross_source_tag(it, sources)) for it in items), default=0)
+    metas = (
+        meta_col_text(sources[it.source], it) if it.source in sources else it.meta for it in items
+    )
+    score = max((display_width(text) for text in metas), default=1)
+    return tag + 1, min(score, META_COL_MAX) + META_COL_SPARE

@@ -9,13 +9,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from feedscope.core import http
 from feedscope.core.config import Subscription
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
 from feedscope.core.models import FeedItem
-from feedscope.core.source import SourceError, merge_feeds
+from feedscope.core.source import merge_feeds
 from feedscope.sources.rss.parse import parse_feed
 
 # RSS 专用 Accept：部分源对浏览器 UA + */* 的组合反而回 HTML 页，声明清楚要 feed
@@ -35,6 +37,8 @@ class _CondEntry:
 
 
 _CACHE: dict[str, _CondEntry] = {}
+
+logger = logging.getLogger(__name__)
 
 
 def _conditional_headers(cached: _CondEntry | None) -> dict[str, str]:
@@ -71,6 +75,15 @@ async def fetch_body(feed: Subscription) -> bytes:
         etag=r.headers.get("ETag"), last_modified=r.headers.get("Last-Modified"), body=r.content
     )
     return r.content
+
+
+async def fetch_body_or_none(url: str) -> bytes | None:
+    """拉一次地址（订阅添加时取名 / 自动发现用）；失败回 None——尽力而为，不挡加订阅。"""
+    try:
+        return (await http.get(url, source="RSS")).content
+    except Exception:
+        logger.debug("订阅取名/自动发现拉取失败 %s", url, exc_info=True)
+        return None
 
 
 async def fetch_merged(feeds: list[Subscription]) -> tuple[list[FeedItem], list[str]]:

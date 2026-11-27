@@ -12,9 +12,10 @@ from __future__ import annotations
 from typing import Any
 
 from feedscope.core import http
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
+from feedscope.core.loaders import FeedLoader, dedup_append
 from feedscope.core.models import FeedItem
-from feedscope.core.source import FeedLoader, SourceError, dedup_append
 from feedscope.sources.hn.parse import parse_search
 
 _API = "https://hn.algolia.com/api/v1"

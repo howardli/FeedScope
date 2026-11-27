@@ -15,11 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from feedscope.core.const import safe_int
 from feedscope.core.display import points_comments_meta
 from feedscope.core.i18n import t
 from feedscope.core.media import text_to_md
-from feedscope.core.models import Answer, Comment, FeedItem, Floor
+from feedscope.core.models import Answer, Comment, FeedItem, Floor, safe_int
 from feedscope.core.timefmt import fmt_iso, iso_epoch
 from feedscope.core.tree import (
     TreeAccessors,

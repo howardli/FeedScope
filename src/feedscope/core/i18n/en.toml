@@ -3,7 +3,7 @@
 # - Dotted nested keys, looked up via core.i18n.t("domain.key", name=value)
 # - Placeholders {name} use str.format; literal braces are doubled {{ }}
 # - Every language file must keep an identical key tree (parity test in
-#   tests/test_i18n.py) — a missing translation turns the CI red
+#   tests/core/test_i18n.py) — a missing translation turns the CI red
 # - New language: copy this file to <code>.toml, set [meta] name, translate
 
 [meta]

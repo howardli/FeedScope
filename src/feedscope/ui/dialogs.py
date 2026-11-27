@@ -55,7 +55,7 @@ class ConfirmScreen(DialogScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal-card dialog-card"):
             # markup=False：提示是纯文本（会拼入订阅名等用户数据），按构造即不做
-            # 标记解析——调用方不必记得逐处转义（tests/test_markup_sinks.py 守着）
+            # 标记解析——调用方不必记得逐处转义（tests/ui/test_markup_sinks.py 守着）
             yield Label(self._prompt, id=self.PROMPT_ID, classes="dialog-prompt", markup=False)
             with Horizontal(classes="modal-actions"):
                 yield Button(self._confirm_label, id=self.OK_ID, variant="primary")

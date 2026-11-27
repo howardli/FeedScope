@@ -10,7 +10,7 @@ Textual 的 markup 解析里，开标签的正则是 `(?<!\\)\\[`——**任何�
 反斜杠原样保留（它们本就是字面量）。唯一的边角是文本以反斜杠结尾——它会
 压掉紧随其后的闭合标签，补一个空格隔开（Label 里不可见）。
 
-取舍（tests/test_markup_sinks.py 守着）：
+取舍（tests/ui/test_markup_sinks.py 守着）：
 - 纯文本出口优先 markup=False：按构造即安全，不必转义
 - 确实要保留 [dim] / [b] 这类有意样式的出口才拼 markup 字符串，其中的动态值
   一律经这里的 escape；ui/ 里不允许再从 rich.markup 导入 escape

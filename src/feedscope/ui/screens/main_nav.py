@@ -1,10 +1,11 @@
-"""主屏导航基类：三面板方向键导航与切站/切流（从 main.py 外移）。
+"""主屏继承链的导航层：三面板方向键导航与切站切流。
 
-继承链：MainSetupScreen（源启用编排）→ MainNavScreen（本模块：导航）
-→ MainReadScreen（行集与已读）→ MainScreen（取数上屏）。本层只管
-「焦点在哪、键往哪去」；tab/边栏渲染与刷新由子类实现（抽象钩子见
-MainSetupScreen），取数状态（sources/source_idx/feed_idx）由 MainScreen
-初始化（注解契约在 MainSetupScreen）。
+继承链：MainSetupScreen（位置与启用集）→ MainNavScreen（本模块：导航）
+→ MainReadScreen（行集与已读）→ MainScreen（取数上屏与渲染）。
+
+本层只管「焦点在哪、键往哪去」，拥有的状态只有一个：区域焦点 _pane。挪位置
+（source_idx / feed_idx / _feed_memory）用的是 MainSetupScreen 的状态；tab /
+边栏渲染与刷新由叶子实现（抽象钩子见 MainSetupScreen）。
 """
 
 from __future__ import annotations
@@ -52,30 +53,8 @@ class MainNavScreen(MainSetupScreen):
 
     def __init__(self) -> None:
         super().__init__()
-        # 主屏区域焦点（默认列表），方向键边界跃迁（见 _enter_pane）；
-        # source_id -> 上次选的信息流（切站回到上次看的板块，F2 收尾时
-        # 会按新启用集清洗，见 MainSetupScreen._apply_enabled）
+        # 主屏区域焦点（默认列表），方向键边界跃迁（见 _enter_pane）
         self._pane = Pane.LIST
-        self._feed_memory: dict[str, int] = {}
-
-    # ---- 当前位置（子类的取数/渲染沿这两个属性寻址）----
-
-    @property
-    def current_source(self) -> Source:
-        return self.sources[self.source_idx]
-
-    @property
-    def current_feed(self) -> str:
-        feeds = self.current_source.feeds
-        return feeds[self.feed_idx] if feeds else ""
-
-    def _restore_feed_idx(self) -> None:
-        """切站后停回该站上次的信息流（_feed_memory）；越界（流被隐藏/删除）回 0。
-
-        MainSetupScreen 声明的抽象钩子在这里落地（F2 启用集变化后也要回停）。"""
-        feeds = self.current_source.feeds if self.sources else []
-        mem = self._feed_memory.get(self.current_source.source_id, 0) if self.sources else 0
-        self.feed_idx = mem if feeds and 0 <= mem < len(feeds) else 0
 
     # ---- 切站 / 切流 ----
 
@@ -92,7 +71,7 @@ class MainNavScreen(MainSetupScreen):
             return
         if self._login_blocks(self.sources[target]):
             return
-        self._drop_resume()  # 续读目标属于上一个流：换站后不再适用
+        self.resume.drop()  # 续读目标属于上一个流：换站后不再适用
         self.source_idx = target
         self._restore_feed_idx()  # 回到该站上次的信息流
         await self._render_source_tabs()  # 高亮跟随（键盘/点击都走这里）
@@ -128,7 +107,7 @@ class MainNavScreen(MainSetupScreen):
             return  # 已在该流，不重复刷新
         if self._login_blocks(self.current_source):  # 同站切流同样刷不出来：不动选中
             return
-        self._drop_resume()  # 续读目标属于上一个流：换流后不再适用
+        self.resume.drop()  # 续读目标属于上一个流：换流后不再适用
         self.feed_idx = idx
         self._feed_memory[self.current_source.source_id] = idx  # 切站回来还在这个板块
         await self._render_feed_sidebar()  # 高亮跟随（←/→ /点击都走这里）
@@ -212,7 +191,7 @@ class MainNavScreen(MainSetupScreen):
         if view.index in (None, 0):
             self._enter_pane(Pane.TABS)  # 首条再 ↑：上探源栏
         else:
-            self._drop_resume()  # 用户自己动了选中
+            self.resume.drop()  # 用户自己动了选中
             view.action_cursor_up()
 
     async def action_nav_down(self) -> None:
@@ -228,7 +207,7 @@ class MainNavScreen(MainSetupScreen):
         if not view.has_focus:
             view.focus()
             return
-        self._drop_resume()  # 用户自己动了选中
+        self.resume.drop()  # 用户自己动了选中
         view.action_cursor_down()
 
     def action_nav_enter(self) -> None:

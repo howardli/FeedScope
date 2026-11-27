@@ -13,34 +13,24 @@ import json
 import sys
 
 from feedscope.core.browser import close_session
-from feedscope.core.source import LoginRequired
-from feedscope.sources.x import require_login
-from feedscope.sources.x.fetch import _DETAIL_OP, fetch_conversation, fetch_entries, harvest
+from feedscope.core.errors import LoginRequired
+from feedscope.core.registry import get_source
+from feedscope.sources.x.fetch import fetch_conversation, fetch_entries, harvest, shape_report
 
 
 async def _probe() -> None:
     try:
-        await require_login("探针脚本")
+        await get_source("x").require_login("探针脚本")
     except LoginRequired:
         print("NO_AUTH：先运行 feedscope login x")
         sys.exit(1)
     print("AUTH_OK")
 
     await harvest()  # 现场重割（重开页签加载当前部署）
-    from feedscope.sources.x.fetch import _harvest, _seed_for
-
-    for op_name in ("HomeTimeline", "HomeLatestTimeline", _DETAIL_OP):
-        op = _harvest.get(op_name) or _seed_for(op_name)
-        src = "harvest" if op_name in _harvest else "seed"
-        if op is None:
+    for op_name, shape in shape_report().items():
+        if shape is None:
             print(f"{op_name}: MISSING")
             continue
-        shape = {
-            "qid": op.qid,
-            "src": src,
-            "variables": sorted(op.variables),
-            "features": len(op.features or {}),
-        }
         print(f"{op_name}: {json.dumps(shape, ensure_ascii=False)}")
 
     entries, _cursor = await fetch_entries("foryou", None)

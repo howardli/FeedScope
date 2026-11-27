@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from feedscope import login
 from feedscope.core.i18n import t
 from feedscope.core.source import Source
+from feedscope.services import login
 from feedscope.ui import feedback
 from feedscope.ui.dialogs import AccountScreen
 
@@ -115,7 +115,7 @@ class AccountFlow:
         self.in_progress = True
         try:
             if (main := self.app.main) is not None:
-                await main.release_feed_loader()  # 释放活页签，别跟有头登录抢 profile
+                await main.flow.release_loader()  # 释放活页签，别跟有头登录抢 profile
             await login.yield_profile()  # 关无头会话让出 profile 锁（语义在 login 侧）
             try:
                 ok = await login.login(source.source_id, quiet=True)

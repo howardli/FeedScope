@@ -1,7 +1,8 @@
-"""主屏的配套部件：站点 tab、信息流边栏项、列表视图（从 main.py 外移）。
+"""主屏的配套部件：站点 tab、信息流边栏项、列表视图。
 
-纯展示/输入部件，不含屏级状态；与 MainScreen 的相互引用只在 FeedListView
-的 resize 自愈一处（运行时懒导入 MainScreen，见 on_resize 注释）。
+纯展示/输入部件，不含屏级状态，也不认识任何屏：控件要屏做事就 post_message
+（SourceTabPressed / FeedNavPressed / FeedListResized），屏在自己的处理器里
+接——ui.widgets 不 import ui.screens，依赖方向只有 screens -> widgets。
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ class FeedNavPressed(Message):
     def __init__(self, idx: int) -> None:
         self.idx = idx
         super().__init__()
+
+
+class FeedListResized(Message):
+    """列表视口改宽（防抖后）：主屏据此按新宽度重排标题折行。"""
 
 
 class SourceTab(Static):
@@ -109,19 +114,22 @@ class FeedListView(ListView):
         if event.size.width == self._last_width:
             return
         self._last_width = event.size.width
-        # 懒导入防成环（main.py 导入本模块，反向 isinstance 只能在用时取）
-        from feedscope.ui.screens.main import MainScreen
-
-        screen = self.screen
-        if not isinstance(screen, MainScreen) or not screen.items:
-            return  # 首布局（尚无内容）不算；空列表重排也是空转
-        # 拖拽改宽连发 Resize，稳定后再整屏重排（防抖与详情屏同款）；宽度
+        if not self.children:
+            return  # 首布局（尚无行）不算；空列表重排也是空转——判断必须在这一刻做：
+            # 推迟到消息送达时，首布局的那次 resize 会在防抖后补一发重排，把
+            # 期间已换到前台的屏（详情 / 弹层）刚写的状态行盖掉
+        # 拖拽改宽连发 Resize，稳定后再通知重排（防抖与详情屏同款）；宽度
         # 与 _last_width 比对（初值 0），若列表竟在首布局前建好（窄宽挤压
         # 在左），首个 Resize 也会触发重排自愈——详情屏的 rendered-width
         # 自愈同思路，这里列表无渲染态可记，用 0 初值起比对
         if self._resize_timer is not None:
             self._resize_timer.stop()
-        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, screen.rebuild_items)
+        self._resize_timer = self.set_timer(RESIZE_DEBOUNCE, self._settle)
+
+    def _settle(self) -> None:
+        """防抖到点：报告「我变宽了」。首布局 / 空列表的重排是空转，由屏判断。"""
+        self._resize_timer = None
+        self.post_message(FeedListResized())
 
     def on_unmount(self) -> None:
         if self._resize_timer is not None:

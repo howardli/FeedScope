@@ -14,26 +14,14 @@
 
 from __future__ import annotations
 
+from feedscope.core.errors import SourceError
 from feedscope.core.i18n import t
+from feedscope.core.loaders import SliceDetailLoader, StaticFeedLoader
 from feedscope.core.models import FeedItem
 from feedscope.core.registry import register
-from feedscope.core.source import (
-    SliceDetailLoader,
-    Source,
-    SourceError,
-    StaticFeedLoader,
-)
+from feedscope.core.source import Source
 from feedscope.sources.v2ex.fetch import fetch_replies, fetch_topics
 from feedscope.sources.v2ex.parse import SOURCE_ID, parse_detail, parse_topics
-
-
-class V2exDetailLoader(SliceDetailLoader):
-    """V2EX 详情加载器：回复已全在内存——楼层翻页是切片，零额外请求。
-
-    全部结构在 SliceDetailLoader.from_detail（裸 Answer 楼层、无评论树），
-    本类只声明报错文案里的源标签（楼层页宽用基类默认）。"""
-
-    source_label = "V2EX"
 
 
 @register
@@ -61,4 +49,6 @@ class V2exSource(Source):
         if not isinstance(topic, dict) or not topic:
             raise SourceError(t("errors.v2ex_no_context"))
         replies = await fetch_replies(item.id)
-        return V2exDetailLoader.from_detail(parse_detail(topic, replies), fallback_title=item.title)
+        return SliceDetailLoader.from_detail(
+            parse_detail(topic, replies), fallback_title=item.title, source_label=self.label_text
+        )

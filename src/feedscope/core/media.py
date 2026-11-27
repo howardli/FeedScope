@@ -12,13 +12,10 @@ from __future__ import annotations
 import html as _html
 import re
 import threading
-from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
-if TYPE_CHECKING:
-    import html2text
+import html2text
 
-from feedscope.core.const import new_h2t
 from feedscope.core.i18n import t
 from feedscope.core.text import strip_zwsp
 
@@ -118,17 +115,27 @@ _ANCHOR_IMG_RE = re.compile(r"(<a\b[^>]*>)\s*\x00(\d+)\x00\s*</a>", re.IGNORECAS
 _H2T_LOCAL = threading.local()
 
 
+def _new_h2t() -> html2text.HTML2Text:
+    """HTML2Text 统一配置：不硬换行（body_width 会把中文撕碎）；img/video 在进它
+    之前已换成记号（见各源 _md），ignore_images 兜底丢掉漏网残片。
+    """
+    h2t = html2text.HTML2Text()
+    h2t.body_width = 0
+    h2t.ignore_images = True
+    return h2t
+
+
 def h2t() -> html2text.HTML2Text:
     """本线程的 HTML2Text 实例——全库取实例的唯一入口。
 
     html2text 的 handle() 自带状态复位，但实例内部缓冲跨调用复用——两个
     线程同时 handle 同一实例会互踩输出。大正文解析会放工作线程跑（见
     reddit 的 open_detail），各线程经这里各持一份实例：复用语义不变
-    （每线程一次构造），线程间不共享。源内**不要**自建 new_h2t() 模块级
+    （每线程一次构造），线程间不共享。源内**不要**自建 HTML2Text 实例
     实例——解析一旦线程化就会静默互踩（知乎侧曾有一份，已收编到这里）。"""
     h = getattr(_H2T_LOCAL, "h2t", None)
     if h is None:
-        h = _H2T_LOCAL.h2t = new_h2t()
+        h = _H2T_LOCAL.h2t = _new_h2t()
     return h
 
 

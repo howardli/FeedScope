@@ -6,13 +6,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.screen import Screen
 from textual.widgets import Label, OptionList
 from textual.widgets.option_list import Option
 
+from feedscope.core import config
 from feedscope.core.i18n import t
-from feedscope.ui import theme as theme_mod
+from feedscope.ui import feedback, themes
 from feedscope.ui.focus_nav import ArrowModalScreen
 
 
@@ -28,7 +32,7 @@ class ThemeScreen(ArrowModalScreen[str | None]):
 
     def __init__(self, highlight: str = "") -> None:
         super().__init__()
-        self._themes = theme_mod.available()
+        self._themes = themes.available()
         self._highlight = highlight  # 预选当前主题（回车即重选 = 无变化提示）
 
     def compose(self) -> ComposeResult:
@@ -52,3 +56,17 @@ class ThemeScreen(ArrowModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+async def pick_theme(holder: Screen[Any]) -> None:
+    """Ctrl+T 主题选择动线（主屏的 action_theme 只负责起 worker）：弹选择屏 →
+    选定即时换肤 + 落盘；取消或重选当前主题不动。对照 Ctrl+L 语言的「重启生效」：
+    主题是纯显示层。wait_for_dismiss 只能在 worker 里用。"""
+    name = await holder.app.push_screen(
+        ThemeScreen(highlight=holder.app.theme), wait_for_dismiss=True
+    )
+    if not name or name == holder.app.theme:
+        return
+    holder.app.theme = name  # Textual 即时应用全屏换肤
+    config.save_theme(name)
+    feedback.info(holder, t("theme.toast_applied", name=name))

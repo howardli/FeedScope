@@ -18,15 +18,19 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import tomlkit
 from platformdirs import user_config_path
 
 from feedscope.core import i18n, timefmt
 from feedscope.core.i18n import t
+from feedscope.core.jsonio import write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,26 @@ class Subscription:
     key: str
     label: str  # 侧栏显示名；配置缺省 = key 本身
     url: str
+
+
+def derive_key(url: str, existing: Iterable[str]) -> str:
+    """URL -> 订阅 key：域名清洗成 ASCII 段（www 剥掉、非法字符折叠成 -），
+    与 existing 撞名则加 -2、-3…；域名清洗后为空（如纯 IP 端口）回退 feed。
+
+    existing 是「要避开的 key 全集」——调用方把保留字（聚合流名等，见
+    Source.reserved_feed_keys）并进已有订阅一起传：派生出的 key 撞保留字会
+    同样加后缀绕开，显式 key 撞保留字的报错路径只在用户真的手输时才触发。
+    """
+    host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
+    host = re.sub(r"^www\.", "", host)
+    base = re.sub(r"[^a-z0-9]+", "-", host).strip("-") or "feed"
+    keys = set(existing)
+    if base not in keys:
+        return base
+    n = 2
+    while f"{base}-{n}" in keys:
+        n += 1
+    return f"{base}-{n}"
 
 
 def config_path() -> Path:
@@ -141,10 +165,6 @@ def _subscription_from_entry(
     return Subscription(key=key, label=label or key, url=entry["url"])
 
 
-def rss_feeds() -> list[Subscription]:
-    """rss 源的订阅表（feeds_for 的 rss 特例，保留既有调用名）。"""
-    return feeds_for("rss")
-
 
 def enabled_ids() -> list[str] | None:
     """读顶层启用的源 id 列表；None = 未配置（默认全部启用，老文件只有 hide 的用户不受影响）。
@@ -203,7 +223,7 @@ def save_language(code: str) -> None:
 
 
 def get_theme() -> str | None:
-    """配置的主题名（ui/theme.py 的注册键）；缺省 None = 加载器回退默认深色。"""
+    """配置的主题名（ui/themes.py 的注册键）；缺省 None = 加载器回退默认深色。"""
     theme = _read()[0].get("theme")
     return theme if isinstance(theme, str) and theme else None
 
@@ -290,13 +310,10 @@ def _read_writable() -> dict[str, Any] | None:
 
 
 def _write_config(doc: dict[str, Any]) -> None:
-    """原子落盘（临时文件 + os.replace）：读者要么旧文件要么新文件，没有半截。"""
+    """原子落盘（原语见 core/jsonio）：读者要么旧文件要么新文件，没有半截。"""
     path = config_path()
     fresh = not path.exists()  # 判定要在落盘前：保存动作本身就会建出文件
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(_dump(doc, fresh=fresh), encoding="utf-8")
-    os.replace(tmp, path)
+    write_atomic(path, _dump(doc, fresh=fresh))
 
 
 def save_enabled(ids: list[str]) -> None:
@@ -389,10 +406,6 @@ def _merge_feeds_table(old: object, feeds: list[Subscription]) -> dict[str, Any]
         row["label"] = f.label
     return table
 
-
-def update_rss_feeds(feeds: list[Subscription]) -> None:
-    """整体替换 rss 订阅表（update_feeds 的 rss 特例，保留既有调用名）。"""
-    update_feeds("rss", feeds, drop_enabled_when_empty=True)
 
 
 def describe() -> str:

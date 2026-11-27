@@ -26,7 +26,7 @@ from textual.widgets.selection_list import Selection
 from feedscope.core.i18n import t
 from feedscope.core.registry import get_class
 from feedscope.core.source import Source
-from feedscope.subscriptions import store_for
+from feedscope.services.subscriptions import store_for
 from feedscope.ui import Bindings, feedback
 from feedscope.ui.focus_nav import ArrowModalScreen, FocusNavSelectionList
 from feedscope.ui.screens.subscriptions import SubscriptionsScreen

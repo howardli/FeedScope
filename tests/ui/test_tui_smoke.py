@@ -1,0 +1,1069 @@
+"""离线 TUI 冒烟：stub 源驱动整条 UI 链路。
+
+覆盖：列表加载 / 元信息列（[类型标签] 与作者/热度并列，统一按显示宽截断）/ 方向键导航 / Ctrl+N 加载更多 /
+详情屏渲染 / 详情加载更多与到头 / 详情 [/] 换篇（跳过浏览器类型）/ 详情失败 Ctrl+N 重试 /
+resize 整屏重排（列表 + 详情）/ Enter 行为分派（详情 vs 浏览器）/
+每源信息流记忆 / 主屏守卫键反馈 / 首启源选择引导 / F2 源管理（启停用、
+零启用空态）/ 非打印键位（Tab 切站、←/→ 切流、Ctrl+N/O/F5/F2；字母/数字键已废弃）/
+中文落地指路提示。不碰网络、不开浏览器。
+
+改契约（FeedItem / Source / Loader）或 TUI 行为后必须全绿。
+"""
+
+import asyncio
+import tomllib
+from pathlib import Path
+
+from textual.containers import VerticalScroll
+from textual.widgets import ListItem, Markdown, SelectionList, Static
+
+import feedscope.sources  # noqa: F401  先触发真实源注册
+from feedscope.core.errors import SourceError
+from feedscope.ui.app import FeedScopeApp
+from feedscope.ui.layout import META_COL_MAX, meta_col_text, score_col_width
+from feedscope.ui.screens.answer import AnswerScreen
+from feedscope.ui.screens.detail import DetailScreen
+from feedscope.ui.screens.language import LanguageScreen
+from feedscope.ui.screens.main import MainScreen
+from feedscope.ui.screens.source_setup import ManageSourcesScreen, OnboardingScreen
+from tests.support.stubs import (
+    EmptyCommentsLoader,
+    StubCommentsLoader,
+    StubDetailLoader,
+    StubSource,
+    stub_item,
+)
+from tests.support.tui import last_notification, settle
+
+
+def test_meta_col_text_unified_rule() -> None:
+    """元信息列统一规则（所有源/流同一条）：[类型标签] 与作者并列；任何情况下不截断。"""
+    src = StubSource()
+    # 有标签：标签与作者并列，不再顶掉作者
+    assert meta_col_text(src, stub_item(0, "video", "up主")) == "[视频] up主"
+    # 无标签（知乎热榜热度 / 知乎信息流与 X 的署名同此路径）：元信息原样
+    assert meta_col_text(src, stub_item(0, "", "42热度")) == "42热度"
+    # 长署名整体保留（列宽随批内容自适应，X 的「名字 @handle」完整可读）
+    assert meta_col_text(src, stub_item(0, "", "Chrome开发团队 @ChromeDevTools")) == "Chrome开发团队 @ChromeDevTools"
+    # 病态长文本也不截断：超列宽上限的在列内折行（换行可以，缩略不行）
+    assert meta_col_text(src, stub_item(0, "video", "一" * 60)) == "[视频] " + "一" * 60
+
+
+def test_score_col_width_adapts_to_batch() -> None:
+    """元信息列宽 = 批内最长文本 + 2 余量；列宽自适应才放得下完整署名，短批不浪费标题列。"""
+    src = StubSource()
+    # 批内取最长（X 署名「宝玉 @dotey」11 列决定宽度），右对齐由此对齐
+    assert score_col_width(src, [stub_item(0, "", "宝玉 @dotey"), stub_item(1, "", "42热度")]) == 13
+    # 空列表给最小占位
+    assert score_col_width(src, []) == 3
+    # 超上限的长署名不加宽列（封顶 META_COL_MAX + 余量）：文本不截，
+    # 在列内折行（名字一行、@账号一行）
+    assert score_col_width(src, [stub_item(0, "", "一" * 60)]) == META_COL_MAX + 2
+
+
+
+
+
+async def _run_flow(opened: list[str]) -> None:
+    app = FeedScopeApp()
+    assert app.theme == "editor-dark", "克制的编辑器风主题已启用（ui/themes/editor-dark.toml）"
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "列表加载"
+
+        rows = app.query(ListItem)
+        assert rows.nodes[0].outer_size.height > 1, "长标题折行（行高 > 1）"
+
+        video_meta = str(rows.nodes[1].query_one(".item-score").content)
+        assert "视频" in video_meta and "up主" in video_meta, (
+            f"类型标签与作者并列（video -> [视频] up主），实际 {video_meta.strip()}"
+        )
+        hot_meta = str(rows.nodes[2].query_one(".item-score").content)
+        assert "42热度" in hot_meta, f"元信息列（热度文本），实际 {hot_meta.strip()}"
+
+        await pilot.press("down")
+        assert app.query_one("#feed").index == 1, "↓ 下移"
+        await pilot.press("up")
+        assert app.query_one("#feed").index == 0, "↑ 上移"
+
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "Ctrl+N 加载更多（列表）"
+
+        await pilot.press("ctrl+n")
+        assert await settle(
+            pilot,
+            lambda: "没有更多了" in app.sub_title and len(app.main.items) == 5,
+        ), "Ctrl+N 到头：状态行常驻提示（不只瞬时 toast）"
+
+        await pilot.resize_terminal(120, 40)
+        await asyncio.sleep(0.4)  # 列表 resize 已防抖（与详情屏一致），等稳定重排
+        await pilot.pause()
+        assert len(app.query(ListItem)) == 5, "列表 resize 重排（条目不丢）"
+
+        # topic 进详情
+        await pilot.press("enter")
+        assert isinstance(app.screen, DetailScreen), "Enter(topic) -> 详情屏"
+        detail = app.screen
+        assert await settle(pilot, lambda: detail._rendered), "详情渲染"
+        assert len(detail.loader.doc.answers) == 3, "首批回答 3 条"
+
+        # 正文统一格式（所有源同形）：Markdown 标题抹平成段落样式——颜色 =
+        # 正文前景色（App 基类 color: $foreground，段落靠继承取到同一值）、
+        # 无粗体/下划线、不居中、同边距；蓝色与下划线只留给链接
+        fg = app.theme_variables["foreground"]
+        for w in detail.query("MarkdownH1, MarkdownH2"):
+            assert w.styles.color.hex.lower() == fg.lower(), f"标题颜色 = 正文前景 {fg}，实际 {w.styles.color.hex}"
+            assert not (w.styles.text_style.bold or w.styles.text_style.underline), (
+                "标题无粗体/下划线（下划线是链接「可点」的记号）"
+            )
+        assert str(detail.query_one("MarkdownH1").styles.content_align_horizontal) == "left", (
+            "H1 不再居中"
+        )
+
+        # [/] 换篇：下一篇跳过 Enter 会跳浏览器的类型（video），列表选中同步推进
+        await pilot.press("right")
+        assert await settle(
+            pilot, lambda: detail._rendered and detail.item.id == "i2"
+        ), "] 跳过 video 换到下一篇可读的"
+        assert app.query_one("#feed").index == 2, "换篇同步推进列表选中"
+        await pilot.press("left")
+        assert await settle(
+            pilot, lambda: detail._rendered and detail.item.id == "i0"
+        ), "[ 换回上一篇（再跳过 video）"
+        await pilot.press("left")
+        assert await settle(
+            pilot, lambda: "前面没有可读的了" in last_notification(app)
+        ), "已在首篇：反馈而非静默"
+        assert detail.item.id == "i0", "边界处不换篇"
+
+        # 读到末尾再按 Ctrl+N：视口应停在原阅读断点（新楼层从底部接上），不整屏跳走
+        body = detail.query_one("#detail-body", VerticalScroll)
+        body.scroll_end(animate=False)
+        assert await settle(
+            pilot, lambda: body.max_scroll_y > 0 and body.scroll_y >= body.max_scroll_y - 0.5
+        ), "读到末尾（首批溢出视口，scroll_y > 0）"
+        scroll_before = body.scroll_y
+
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(detail.loader.doc.answers) == 5), "Ctrl+N 加载更多回答"
+        assert body.scroll_y == scroll_before, "Ctrl+N 后视口停在原阅读断点（不整屏滚动）"
+        assert body.max_scroll_y > scroll_before, "新批次确实加长了内容（断言有意义）"
+
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: detail._exhausted), "到头判死"
+        await pilot.press("ctrl+n")
+        assert await settle(
+            pilot, lambda: "没有更多回答" in last_notification(app)
+        ), "到头后再按 Ctrl+N 有反馈（不静默）"
+
+        before = len(detail.query(Markdown))
+        await pilot.resize_terminal(130, 40)
+        await asyncio.sleep(0.4)
+        await pilot.pause()
+        assert len(detail.query(Markdown)) == before, (
+            f"详情 resize 重排（内容不丢），{before} -> {len(detail.query(Markdown))}"
+        )
+
+        await pilot.press("escape")
+        assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
+
+        # 非详情类型 -> 浏览器
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert opened and opened[-1].endswith("/1"), f"Enter(video) -> 浏览器，实际 {opened}"
+
+
+def _nav_active(app, idx: int) -> bool:
+    """侧栏第 idx 项是否已挂 active 类。
+
+    切流路径里 feed_idx 同步先置位、侧栏重挂（remove_children + mount）
+    异步后落地：重挂在途时节点缺失或未挂类都回 False——settle 条件带上
+    它重试，直接在断言里看会在负载高时撞上落地窗口（曾偶发红一次的根因）。
+    """
+    hits = app.query(f"#feed-nav-{idx}")
+    return len(hits) == 1 and hits.first().has_class("feed-nav-active")
+
+
+def test_tui_full_flow(stub_registry, opened) -> None:
+    asyncio.run(_run_flow(opened))
+
+
+
+
+
+async def _run_failure_flow() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        # 增量失败：通知带源标签与消息体（不再是裸异常类名）
+        assert await settle(pilot, lambda: len(app.main.items) == 1)
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: "失败源 加载更多失败" in last_notification(app)), (
+            f"增量失败要有带源标签的通知，实际 {last_notification(app)!r}"
+        )
+        assert "模拟增量网络中断" in last_notification(app), "通知要带消息体"
+
+        # 首载失败：面包屑「加载失败」+ 列表区常驻空态提示
+        # （切流经边栏：← 进边栏、↓ 切到 err 流、Enter 回列表）
+        await pilot.press("left", "down", "enter")
+        assert await settle(pilot, lambda: "加载失败" in app.sub_title), "面包屑标记加载失败"
+        hint = str(app.query_one("#empty-hint").content)
+        assert "失败源 请求失败（HTTP 500）" in hint, f"空态常驻提示，实际 {hint}"
+        await pilot.press("ctrl+o")
+        assert await settle(
+            pilot, lambda: "没有选中" in last_notification(app)
+        ), "空列表按 Ctrl+O 有反馈（不静默）"
+
+        # 详情首载失败：屏内常驻失败态（notify 是瞬时的，屏幕不能空着）
+        await pilot.press("left", "up", "enter")  # 经边栏切回 ok 流
+        assert await settle(pilot, lambda: len(app.main.items) == 1)
+        await pilot.press("enter")
+        assert await settle(
+            pilot,
+            lambda: "失败源 详情打开失败" in str(app.screen.query_one("#detail-loading").content),
+        ), "详情失败屏内提示"
+        assert "重试" in str(app.screen.query_one("#detail-loading").content), "失败行预告 Ctrl+N 重试"
+        assert app.sub_title == "加载失败", "失败态常驻状态行"
+
+        # Ctrl+N 原地重试：动线不断（不退出详情屏重进）
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: app.screen._rendered), "Ctrl+N 重试成功渲染"
+        assert len(app.screen.loader.doc.answers) == 3, "重试后正常内容上屏"
+        await pilot.press("escape")
+
+
+def test_error_outlets_unified(failing_registry) -> None:
+    asyncio.run(_run_failure_flow())
+
+
+async def _run_guard_flow() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        assert isinstance(app.screen, DetailScreen)
+        assert await settle(pilot, lambda: app.screen._rendered)
+        title = app.sub_title  # 详情标题（_load 设置）
+
+        await pilot.press("f5")  # F5 是主屏屏级绑定：详情屏上根本不命中（无刷新也无打断）
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+        assert app.sub_title == title, "详情屏上 F5 不应顶掉详情标题"
+        assert len(app.main.items) == 3, "也不做隐形后台刷新"
+
+        await pilot.press("escape")
+        assert not isinstance(app.screen, DetailScreen), "Esc 返回列表"
+
+
+def test_app_keys_guarded_on_detail(stub_registry) -> None:
+    asyncio.run(_run_guard_flow())
+
+
+async def _run_source_switch_flow() -> None:
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert app.main.source_idx == 0 and app.main.current_source.source_id == "stub"
+
+        await pilot.press("tab")  # Tab 切到第二个源
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
+        ), "Tab 切站"
+        assert app.query_one("#source-tab-1").has_class("source-tab-active"), "顶部 tab 高亮新源"
+        assert app.query_one("#feed-nav-0").has_class("feed-nav-active"), "侧栏高亮当前流"
+
+        await pilot.press("shift+tab")  # Shift+Tab 循环回第一个源
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
+        ), "Shift+Tab 循环切站"
+
+        # 鼠标点击：顶部 tab 切站、左侧边栏切流（与键盘共用同一条动作路径）
+        await pilot.click("#source-tab-1")
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
+        ), "点击顶部 tab 切站"
+        await pilot.click("#source-tab-0")
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
+        ), "点击顶部 tab 回站"
+        await pilot.click("#feed-nav-1")
+        assert await settle(pilot, lambda: app.main.feed_idx == 1 and _nav_active(app, 1)), (
+            "点击侧栏切流（含侧栏高亮落地）"
+        )
+
+        await pilot.click("#source-tab-1")
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1,
+        ), "点击 tab 切源"
+        await pilot.click("#source-tab-0")
+        assert await settle(
+            pilot,
+            lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3,
+        ), "回到第一个源"
+        assert app.main.feed_idx == 1, "切回站点恢复上次的信息流（每源记忆）"
+        assert app.query_one("#feed-nav-1").has_class("feed-nav-active"), "记忆的流高亮"
+
+
+def test_source_switch_flow(two_source_registry) -> None:
+    asyncio.run(_run_source_switch_flow())
+
+
+# ---- 首启源选择引导 + F2 源管理（启停用 / 零启用空态） ----
+
+
+async def _run_onboarding_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "fresh" / "sources.toml"  # 不存在 → 首启
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen)), (
+            "配置缺失时先弹语言选择（首启第一步）"
+        )
+        await pilot.press("up")  # 恒选 zh-CN（预选随系统 locale，up 在首位被钳制）
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen)), (
+            "语言选完弹首启引导"
+        )
+        sl = app.screen.query_one(SelectionList)
+        assert set(sl.selected) == {"stub", "stub2"}, "引导默认全勾"
+        assert "1 存根" in str(sl.get_option_at_index(0).prompt), "勾选行带序号"
+        assert "2 存根二" in str(sl.get_option_at_index(1).prompt)
+        await pilot.press("down")
+        await pilot.press("space")  # 取消第二项（stub2）
+        assert set(sl.selected) == {"stub"}
+        assert "存根二" in str(sl.get_option_at_index(1).prompt) and "2 存根二" not in str(
+            sl.get_option_at_index(1).prompt
+        ), "取消勾选即去掉序号"
+        await pilot.click("#setup-confirm")
+
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "确认后进主界面并加载"
+        assert not isinstance(app.screen, OnboardingScreen)
+        assert len(app.query(".source-tab")) == 1, "只勾一个源：顶部 tab 只剩一个"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], (
+            "勾选落盘"
+        )
+
+
+def test_onboarding_first_run(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_onboarding_flow(monkeypatch, tmp_path))
+
+
+async def _run_onboarding_cancel_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "fresh2" / "sources.toml"
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen))
+        await pilot.press("escape")  # 跳过语言（沿用缺省英文）
+        assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
+        await pilot.press("escape")  # 引导取消 = 放弃使用，不默认全开
+        assert await settle(pilot, lambda: not app.is_running), "App 退出"
+        assert app.return_code == 0
+        assert not cfg.exists(), "取消不落盘（语言与源选择都不落）"
+
+
+def test_onboarding_cancel_exits(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_onboarding_cancel_flow(monkeypatch, tmp_path))
+
+
+async def _run_manage_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "m" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")  # 已配置（无 enabled → 全启用），不触发引导
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert len(app.query(".source-tab")) == 2
+
+        # 停用 stub2：F2 打开管理 → 空格取消第二项 → 保存
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        sl = app.screen.query_one(SelectionList)
+        assert set(sl.selected) == {"stub", "stub2"}, "当前启用的源默认勾上"
+        await pilot.press("down")
+        await pilot.press("space")
+        await pilot.click("#setup-confirm")
+        assert await settle(pilot, lambda: len(app.query(".source-tab")) == 1), "保存后 tab 即时重建"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub"], "落盘"
+        assert await settle(
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
+        ), "停在原源继续可读"
+
+        # 再启用：tab 即时重建、Tab 循环恢复两源
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("down")
+        await pilot.press("space")  # 勾回 stub2
+        await pilot.click("#setup-confirm")
+        assert await settle(pilot, lambda: len(app.query(".source-tab")) == 2)
+        await pilot.press("tab")
+        assert await settle(
+            pilot, lambda: app.main.current_source.source_id == "stub2" and len(app.main.items) == 1
+        ), "重新启用后 Tab 循环可达"
+
+        # 管理取消：不落盘不动状态
+        before = cfg.read_text(encoding="utf-8")
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 勾掉第一项也无所谓——取消
+        await pilot.click("#setup-cancel")
+        assert await settle(pilot, lambda: not isinstance(app.screen, ManageSourcesScreen))
+        assert cfg.read_text(encoding="utf-8") == before, "取消不落盘"
+        assert len(app.query(".source-tab")) == 2
+
+
+def test_manage_sources_toggle(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_manage_flow(monkeypatch, tmp_path))
+
+
+async def _run_zero_enabled_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "z0" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('language = "zh-CN"\n', encoding="utf-8")  # 钉 zh：断言中文空态文案
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 停用 stub
+        await pilot.press("down")
+        await pilot.press("space")  # 停用 stub2：全不勾也允许保存
+        await pilot.click("#setup-confirm")
+        assert await settle(pilot, lambda: not app.main.sources), "全部停用"
+        hint = str(app.query_one("#empty-hint").content)
+        assert "没有启用的源" in hint and "F2" in hint, "空态常驻提示指路 F2"
+        assert app.is_running, "零启用不退出 App（s 随时再开）"
+
+        await pilot.press("ctrl+u")  # 空态守卫：有反馈不崩溃
+        assert await settle(pilot, lambda: "没有启用的源" in last_notification(app))
+
+        # F2 再开：从空态恢复
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        await pilot.press("space")  # 勾回 stub
+        await pilot.click("#setup-confirm")
+        assert await settle(
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
+        ), "空态可恢复"
+
+
+def test_zero_enabled_empty_state(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_zero_enabled_flow(monkeypatch, tmp_path))
+
+
+# ---- 展示顺序 = 勾选顺序（enabled 落盘同序，重启保持） ----
+
+
+async def _run_check_order_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "ord" / "sources.toml"
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))  # 不存在 → 首启
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: isinstance(app.screen, LanguageScreen))
+        await pilot.press("up")  # 恒选 zh-CN（同 onboarding 流的确定性选法）
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, OnboardingScreen))
+        # 取消再勾回第一项（stub）：勾上的排末尾 → 顺序 [stub2, stub]
+        await pilot.press("space")
+        await pilot.press("space")
+        assert app.screen.selected_ids == ["stub2", "stub"]
+        sl = app.screen.query_one(SelectionList)
+        assert "1 存根二" in str(sl.get_option_at_index(1).prompt), "序号跟随勾选顺序实时重排"
+        assert "2 存根" in str(sl.get_option_at_index(0).prompt)
+        await pilot.click("#setup-confirm")
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert [s.source_id for s in app.main.sources] == ["stub2", "stub"], "展示顺序 = 勾选顺序"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"], (
+            "落盘顺序与勾选顺序一致"
+        )
+        first_tab = str(app.query(".source-tab").nodes[0].content)
+        assert "存根二" in first_tab, "顶部 tab 首位是后仍勾选着的存根二"
+
+
+def test_onboarding_check_order(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_check_order_flow(monkeypatch, tmp_path))
+
+
+async def _run_config_order_flow(monkeypatch, tmp_path: Path) -> None:
+    """手改/落盘的 enabled 书写顺序在重启后原样生效。"""
+    cfg = tmp_path / "saved" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('enabled = ["stub2", "stub"]\n', encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 1), "首源是 stub2（1 条）"
+        assert [s.source_id for s in app.main.sources] == ["stub2", "stub"]
+        assert app.query(".source-tab").nodes[0].has_class("source-tab-active"), "首位源即当前源"
+
+
+def test_config_order_respected_on_restart(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_config_order_flow(monkeypatch, tmp_path))
+
+
+async def _run_manage_reorder_flow(monkeypatch, tmp_path: Path) -> None:
+    cfg = tmp_path / "re" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        # 取消再勾回第一项（stub）：移到末尾 → [stub2, stub]
+        await pilot.press("space")
+        await pilot.press("space")
+        assert app.screen.selected_ids == ["stub2", "stub"]
+        sl = app.screen.query_one(SelectionList)
+        assert "1 存根二" in str(sl.get_option_at_index(1).prompt), "管理界面同样实时标序号"
+        assert "2 存根" in str(sl.get_option_at_index(0).prompt)
+        await pilot.click("#setup-confirm")
+        assert await settle(
+            pilot, lambda: [s.source_id for s in app.main.sources] == ["stub2", "stub"]
+        ), "保存后按新顺序重建站点栏"
+        assert tomllib.loads(cfg.read_text(encoding="utf-8"))["enabled"] == ["stub2", "stub"]
+        assert await settle(
+            pilot, lambda: app.main.current_source.source_id == "stub" and len(app.main.items) == 3
+        ), "顺序变了但停在原源继续可读"
+
+
+def test_manage_reorder(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_manage_reorder_flow(monkeypatch, tmp_path))
+
+
+async def _run_answer_layer_flow(opened: list[str]) -> None:
+    """第三层动线：问题屏 Enter 按可视位置进回答（读到哪进哪）-> 评论按需 -> Ctrl+N 翻页 -> [/] 换回答 -> Esc 返回。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+
+        # 视口还在顶部（标题/描述区）：Enter 落到回答 1，不用先滚
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, AnswerScreen)), "Enter -> 回答详情屏"
+        answer = app.screen
+        assert answer.index == 0, "顶部 Enter 进第一个回答"
+        assert await settle(pilot, lambda: answer.loader is not None), "评论此刻才请求（按需）"
+        assert "作者0 的回答" in str(answer.query_one("#answer-title").content), "正文标题来自已加载 doc"
+        assert await settle(pilot, lambda: len(answer.query(".floor-head")) >= 3), "评论楼层（含子回复）上屏"
+        assert any(
+            "楼中楼" in str(w.content) for w in answer.query(".floor-head")
+        ), "子回复渲染"
+
+        # Ctrl+N 翻页评论；再到头
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(answer.loader.comments) == 3), "Ctrl+N 加载更多评论"
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: answer._exhausted), "评论到头"
+
+        # [/] 换回答：换到下一条，评论重新按需请求
+        await pilot.press("right")
+        assert await settle(pilot, lambda: answer.index == 1 and answer.loader is not None), "] 换回答并重开评论"
+        assert "作者1 的回答" in str(answer.query_one("#answer-title").content)
+
+        # Ctrl+O 打开该回答直达链接
+        await pilot.press("ctrl+o")
+        assert opened and opened[-1].endswith("/0"), f"Ctrl+O -> 回答 URL，实际 {opened}"
+
+        # Esc 逐层返回：回答屏 -> 问题屏（位置不变）-> 列表
+        await pilot.press("escape")
+        assert app.screen is detail, "Esc 回问题屏（实例不变，位置不丢）"
+
+        # 滚到第三个回答再 Enter：读到哪进哪（楼层定位）
+        heads = detail.query(".floor-head")
+        detail.query_one("#detail-body", VerticalScroll).scroll_to_widget(heads[2], top=True, animate=False)
+        await pilot.pause()
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, AnswerScreen)), "滚动后 Enter 仍进回答屏"
+        assert app.screen.index == 2, "Enter 进的是视口所在的回答 3"
+        await pilot.press("escape")
+
+        await pilot.press("escape")
+        assert not isinstance(app.screen, DetailScreen), "再 Esc 回列表"
+
+
+def test_answer_layer_flow(stub_registry, opened) -> None:
+    asyncio.run(_run_answer_layer_flow(opened))
+
+
+async def _run_answer_empty_comments_resize_flow(monkeypatch) -> None:
+    """评论首批为空但未到头：resize 重排必须保持「没有评论 + 可重试」空态，
+    不能退回「评论加载中…」（渲染路径与首次上屏共用，状态要一致）。"""
+
+    async def empty_comments(self, index: int) -> EmptyCommentsLoader:
+        return EmptyCommentsLoader()
+
+    monkeypatch.setattr(StubDetailLoader, "open_comments", empty_comments)
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("enter")
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await settle(pilot, lambda: answer.loader is not None)
+        assert len(answer.query(".tail-empty")) == 1
+
+        await pilot.resize_terminal(100, 36)
+        assert await settle(
+            pilot,
+            lambda: len(answer.query(".tail-empty")) == 1
+            and len(answer.query("#cm-loading")) == 0,
+        ), "resize 后评论空态丢失（退回加载中）"
+
+
+def test_answer_empty_comments_survives_resize(stub_registry, monkeypatch) -> None:
+    asyncio.run(_run_answer_empty_comments_resize_flow(monkeypatch))
+
+
+async def _run_no_comments_flow() -> None:
+    """无评论层的源（X/RSS 形态）：详情屏不预告 Enter 评论（Footer 键位 + 尾行），
+    误按给反馈不无声；翻页/换篇动线不受影响。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+
+        # Footer 不列 enter「评论」（有评论层的源才列，对照见 _run_answer_layer_flow）
+        shown = [ab.binding.key for ab in detail.active_bindings.values() if ab.binding.show]
+        assert "enter" not in shown, f"无评论层的源不预告 Enter，实际 Footer 键位 {shown}"
+        # 尾行同样不列 Enter 评论段；只留 Footer 没有的语义增量——键位复读
+        # （Esc 返回/← → 换篇）会让短帖读者把尾行当成正文的一部分
+        hint = str(detail.query_one(".tail-hint").content)
+        assert "Enter 看" not in hint, f"尾行不该预告 Enter 评论，实际 {hint.strip()!r}"
+        assert "Ctrl+N 加载更多" in hint, f"加载动线保留，实际 {hint.strip()!r}"
+        assert "Esc" not in hint and "换上" not in hint, f"键位复读归 Footer，实际 {hint.strip()!r}"
+
+        # 键位隐藏但保留：误按给一句反馈（不无声），不进第三层
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not isinstance(app.screen, AnswerScreen), "无评论层：Enter 不进回答屏"
+        assert "暂不支持" in last_notification(app), "误按有反馈"
+
+        # 其余动线不受影响：Ctrl+N 翻页照常
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(detail.loader.doc.answers) == 5), "Ctrl+N 加载更多照常"
+
+
+def test_no_comments_source_hides_enter(no_comments_registry) -> None:
+    asyncio.run(_run_no_comments_flow())
+
+# ---- 非打印键位：中文输入法开启也不受影响；字母/数字键已废弃 ----
+
+
+async def _run_ime_safe_flow(opened: list[str]) -> None:
+    """键位全部非打印键（方向键/F 键/Ctrl 组合），一个动作只留一个键。
+
+    顺带验证：字母/数字旧键位确已废弃（按了不动），以及中文落地指路——
+    应用无法探测输入法状态，上屏字符是唯一可靠信号（本应用没有文本输入框，
+    中文必是误输入）。
+    """
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+
+        # 空间移动 + 边栏切流：列表 ← 进边栏（停当前流不换流），边栏 ↓ 切流、
+        # 到尾给反馈不静默，Enter 回列表（详情屏的 ←/→ 换篇是屏级绑定另测）
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0 and len(app.main.items) == 3, "列表 ← 进边栏停当前流"
+        await pilot.press("down")
+        assert await settle(
+            pilot,
+            lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar" and _nav_active(app, 1),
+        ), "边栏 ↓ 切流（含侧栏高亮落地）"
+        await pilot.press("down")
+        assert await settle(pilot, lambda: "已是最后一个流" in last_notification(app)), "到边界有反馈"
+        await pilot.press("up")
+        assert await settle(pilot, lambda: app.main.feed_idx == 0), "边栏 ↑ 切回流"
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: app.main._pane == "list" and app.main.feed_idx == 0), "Enter 回列表"
+
+        # 旧字母/数字键已废弃：按下无任何效果（不被任何绑定命中）
+        await pilot.press("n")
+        await pilot.press("r")
+        await pilot.press("1")
+        await pilot.pause()
+        assert len(app.main.items) == 3 and app.main.feed_idx == 0, "n/r/1 均已废弃（无副作用）"
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.query_one("#feed").index == 0, "j 已废弃（选中不动，移动走 ↑/↓）"
+
+        # Ctrl+N 加载更多；F5 刷新回首批
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "Ctrl+N 加载更多"
+        await pilot.press("f5")
+        assert await settle(pilot, lambda: len(app.main.items) == 3), "F5 刷新回首批"
+
+        # Ctrl+O 浏览器打开当前选中条目
+        await pilot.press("ctrl+o")
+        assert opened and opened[-1].endswith("/0"), f"Ctrl+O -> 浏览器，实际 {opened}"
+
+        # F2 源管理弹层；Ctrl+U 账号（stub 源免登录的提示出口）
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen)), "F2 源管理"
+        await pilot.press("escape")
+        await pilot.press("ctrl+u")
+        assert await settle(pilot, lambda: "无需登录" in last_notification(app)), "Ctrl+U 账号"
+
+        # 中文落地 → 指路提示（键位全非打印键已免疫，提示点明不受输入法影响）
+        await pilot.press("你")
+        assert await settle(pilot, lambda: "输入法" in last_notification(app)), "中文输入要指路"
+
+        # 详情/评论屏的 Ctrl+N / Ctrl+O 在屏级（进各屏自己的动作，不走 App 的列表路径）
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        before = len(detail.loader.doc.answers)
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(detail.loader.doc.answers) == before + 2), "详情屏 Ctrl+N"
+        await pilot.press("ctrl+o")
+        assert opened[-1].endswith("/0"), "详情屏 Ctrl+O -> 浏览器"
+
+        await pilot.press("enter")  # 进回答层（评论此刻才请求）
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await settle(pilot, lambda: answer.loader is not None)
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(answer.loader.comments) == 3), "评论层 Ctrl+N"
+
+
+def test_ime_safe_keys(stub_registry, opened) -> None:
+    asyncio.run(_run_ime_safe_flow(opened))
+
+
+async def _run_focus_free_flow() -> None:
+    """导航键 / Ctrl+N 在 App 级：焦点不在列表上也必须生效（曾为 FeedListView
+    控件级绑定，焦点落位竞态时整个失灵）。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+
+        app.set_focus(None)  # 模拟焦点丢失/未落位
+        assert app.focused is None
+        await pilot.press("left")
+        assert await settle(pilot, lambda: app.main._pane == "sidebar" and app.main.feed_idx == 0), (
+            "焦点不在列表上 → ← 仍进边栏（停当前流）"
+        )
+        await pilot.press("ctrl+n")
+        assert await settle(pilot, lambda: len(app.main.items) == 5), "焦点不在列表上 → Ctrl+N 仍生效"
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: app.main._pane == "list" and len(app.main.items) == 5), "Enter 回列表"
+
+
+def test_keys_focus_free(stub_registry) -> None:
+    asyncio.run(_run_focus_free_flow())
+
+
+# ---- 全屏方向键导航：列表 ⇄ 左侧边栏 ⇄ 顶部源栏（边界跃迁，现有键位一步不让）----
+
+
+async def _run_pane_navigation_flow() -> None:
+    """方向键的 CLI 惯例语义：↑/↓ 在当前列表里移动选中，任何区域的首行
+    再 ↑ 都上探源栏（顶部区域在所有内容之上；源栏 ↓ 下探边栏与之互逆）；
+    其余区域移动走横向——列表 ← 进边栏（停当前流）、→ 抵右缘无事，边栏
+    → 回列表、← 去源栏，源栏 ←→ 就地切站；Enter/Esc 随时回列表；切站后
+    键盘先落边栏；Tab 连按仍一次一键地连续切站。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        assert app.main._pane == "list", "默认列表态"
+        tabs = app.query_one("#source-tabs")
+        nav = app.query_one("#feed-nav")
+        assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus")
+
+        # 列表态 ↑/↓ 移文章；首条再 ↑ 上探源栏；→ 抵右缘无事
+        await pilot.press("down")
+        assert app.query_one("#feed").index == 1, "↓ 移文章"
+        await pilot.press("up")  # 回首条
+        await pilot.pause()
+        assert app.query_one("#feed").index == 0 and app.main._pane == "list", "↑ 移文章"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.main._pane == "list" and app.main.feed_idx == 0, "列表 → 抵右缘无事"
+        await pilot.press("up")  # 首条再 ↑ → 上探源栏
+        assert app.main._pane == "tabs", "列表首条 ↑ → 源栏"
+        assert tabs.has_class("pane-focus"), "源栏聚焦高亮"
+        assert app.query_one("#feed").has_focus, "焦点留在列表（Tab 切站随时命中）"
+        assert app.query_one("#feed").has_class("pane-aside"), "非列表态列表光标隐去"
+        assert await settle(pilot, lambda: "源栏" in last_notification(app)), "区域移动带指路"
+
+        # 源栏态 ←/→ = 切站（与 Tab 同路径，连切不拽走）；↓ 下探边栏
+        await pilot.press("right")
+        assert await settle(pilot, lambda: app.main.source_idx == 1 and app.main._pane == "tabs"), "源栏态 → 切站"
+        await pilot.press("left")
+        assert await settle(pilot, lambda: app.main.source_idx == 0), "源栏态 ← 切回"
+        await pilot.press("down")
+        assert app.main._pane == "sidebar" and nav.has_class("pane-focus"), "源栏 ↓ → 边栏（唯一的纵向区域移动）"
+        await pilot.press("right")
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "边栏 → 回列表"
+        assert not tabs.has_class("pane-focus") and not nav.has_class("pane-focus"), "聚焦高亮随返回摘除"
+        assert not app.query_one("#feed").has_class("pane-aside"), "列表光标恢复亮态"
+
+        # 边栏 ↑/↓ 就地切流、到边即停给反馈（不跳出区域），侧栏高亮跟随
+        await pilot.press("left")  # 列表 ← 进边栏（停当前流）
+        assert app.main._pane == "sidebar", "列表 ← 进边栏"
+        assert nav.has_class("pane-focus"), "边栏聚焦高亮"
+        await pilot.press("down")
+        assert await settle(
+            pilot,
+            lambda: app.main.feed_idx == 1 and app.main._pane == "sidebar" and _nav_active(app, 1),
+        ), "边栏 ↓ 切流（含侧栏高亮落地）"
+        await pilot.press("up")  # 回首流
+        assert await settle(pilot, lambda: app.main.feed_idx == 0 and app.main._pane == "sidebar"), "边栏 ↑ 切回流"
+        await pilot.press("up")  # 首流再 ↑ → 上探源栏（边栏正上方，与源栏 ↓ 互逆）
+        assert app.main._pane == "tabs", "边栏首流 ↑ → 源栏"
+        await pilot.press("escape")
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Esc 逐层返回：先回列表"
+
+        # 边栏里 ←/→ 是区域间移动（边栏是纵向列表，切流只走 ↑/↓）：
+        # → 回列表（右边就是列表）、← 去源栏；Enter 也回列表
+        await pilot.press("left")  # 列表 ← 进边栏
+        assert app.main._pane == "sidebar"
+        await pilot.press("enter")
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Enter 回列表"
+        await pilot.press("left")  # 再进边栏
+        assert app.main._pane == "sidebar"
+        await pilot.press("right")
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "→ 回列表（空间移动，不切流）"
+        await pilot.press("left")  # 进边栏
+        await pilot.press("left")  # 边栏 ← → 源栏
+        assert app.main._pane == "tabs", "边栏态 ← → 源栏（空间移动，不切流）"
+        await pilot.press("escape")
+        assert app.main._pane == "list" and app.query_one("#feed").has_focus, "Esc 回列表"
+
+        # home/end/pageup/pagedown 是列表视口滚动键：键盘在边栏时不滚看不见的
+        # 列表（键只作用在聚焦区域），回列表后照常滚动不报错
+        await pilot.press("left")
+        assert app.main._pane == "sidebar"
+        await pilot.press("pageup", "home", "end", "pagedown")
+        await pilot.pause()
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0, "边栏态翻页键不碰列表也不动流"
+        await pilot.press("enter")
+        assert app.main._pane == "list"
+        await pilot.press("pageup", "home", "pagedown")
+        await pilot.pause()
+        assert app.main._pane == "list" and len(app.main.items) == 3, "列表态翻页键照常（视口滚动不炸）"
+
+        # 切站落边栏：Tab/Shift+Tab 切完键盘先停在边栏（先挑流），连按一次一
+        # 键地切站（焦点留在列表，不退化成焦点轮换），边栏 Enter 回列表
+        await pilot.press("tab")
+        assert await settle(pilot, lambda: app.main.source_idx == 1 and app.main._pane == "sidebar"), "Tab 切站落边栏"
+        assert nav.has_class("pane-focus"), "落边栏高亮"
+        await pilot.press("tab")
+        assert await settle(pilot, lambda: app.main.source_idx == 0 and app.main._pane == "sidebar"), "Tab 连切不退化"
+        await pilot.press("shift+tab", "shift+tab")
+        assert await settle(pilot, lambda: app.main.source_idx == 0 and app.main._pane == "sidebar"), "Shift+Tab 同款"
+        await pilot.press("enter")
+        assert app.main._pane == "list", "边栏 Enter 回列表"
+
+        # 列表 ←/→ 不再切流（切流只在边栏 ↑/↓）：→ 抵右缘无事，← 进边栏停当前流
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.main.feed_idx == 0 and app.main._pane == "list" and len(app.main.items) == 3, "列表 → 抵右缘无事"
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.main._pane == "sidebar" and app.main.feed_idx == 0, "列表 ← 进边栏（停当前流不切流）"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.main._pane == "list", "边栏 → 回列表"
+
+        # 弹层无扰动：边栏态开 F2，屏内 ↑↓ 走 SelectionList 原生键；关层后
+        # 焦点回列表、pane 保持（逻辑层与焦点解耦，不因弹层漂移）
+        await pilot.press("left")  # 列表 ← 进边栏
+        assert app.main._pane == "sidebar"
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen)), "F2 弹层照常"
+        await pilot.press("down")
+        assert app.main._pane == "sidebar", "弹层内 ↑↓ 不经 App 导航（屏内原生）"
+        await pilot.press("escape")
+        assert await settle(pilot, lambda: isinstance(app.screen, MainScreen)), "Esc 关弹层"
+        assert app.main._pane == "sidebar" and app.query_one("#feed").has_focus, "关层后 pane 保持、焦点回列表"
+
+
+def test_pane_navigation_flow(two_source_registry) -> None:
+    asyncio.run(_run_pane_navigation_flow())
+
+
+# ---- 弹层方向键焦点移动：列表到底 ↓ 进按钮行，←/→ 平移，↑ 回列表 ----
+
+
+async def _run_dialog_focus_flow(monkeypatch, tmp_path: Path) -> None:
+    """全弹层与主屏同一套空间语义：F2 里列表末行再 ↓ 移交按钮行、按钮上
+    ↑ 回列表、←/→ 在按钮间平移、Enter 按下聚焦的按钮（等价点击）。"""
+    cfg = tmp_path / "d1" / "sources.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('language = "zh-CN"\n', encoding="utf-8")  # 钉 zh：断言中文键位提示
+    monkeypatch.setenv("FEEDSCOPE_CONFIG", str(cfg))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+
+        await pilot.press("f2")
+        assert await settle(pilot, lambda: isinstance(app.screen, ManageSourcesScreen))
+        sl = app.screen.query_one(SelectionList)
+        def focused():  # 测试内简写
+            return app.screen.focused
+        assert focused() is sl, "弹层焦点默认在列表"
+
+        # 列表内 ↓ 照常；末行（第 2 行）再 ↓ 移交按钮行的第一个按钮
+        await pilot.press("down")
+        assert focused() is sl and sl.highlighted == 1, "列表内 ↓ 移动高亮"
+        await pilot.press("down")
+        assert focused() is not None and focused().id == "setup-confirm", "末行再 ↓ → 保存按钮"
+
+        # 按钮行内 ←/→ 平移；↑ 回列表（高亮位不动）
+        await pilot.press("right")
+        assert focused().id == "setup-cancel", "→ 平移到取消"
+        await pilot.press("left")
+        assert focused().id == "setup-confirm", "← 平移回保存"
+        await pilot.press("up")
+        assert focused() is sl and sl.highlighted == 1, "↑ 回列表（高亮位保留）"
+
+        # → 在列表上仍是订阅管理入口（非可订阅源给反馈，焦点不出列表）
+        await pilot.press("right")
+        assert await settle(pilot, lambda: "没有可管理的订阅" in last_notification(app)), (
+            "列表上 → = 管理订阅（原语义）"
+        )
+        assert focused() is sl
+
+        # ↓ 再进按钮行：聚焦「取消」后 Enter = 点击取消（不落盘关闭弹层）
+        await pilot.press("down")
+        assert focused().id == "setup-confirm"
+        await pilot.press("right")
+        await pilot.press("enter")
+        assert await settle(pilot, lambda: isinstance(app.screen, MainScreen)), "Enter 按下聚焦的按钮"
+
+
+def test_dialog_arrow_focus(two_source_registry, monkeypatch, tmp_path) -> None:
+    asyncio.run(_run_dialog_focus_flow(monkeypatch, tmp_path))
+
+
+async def _run_prelayout_render_recovery_flow() -> None:
+    """预布局渲染的挤压自愈（回归）：零请求详情在首布局前渲染时折行宽是 0，
+    正文被钳到最小宽缩在左侧；首个 Resize 必须触发整屏重排自愈——修复前
+    它被 first_layout 守卫跳过，用户只能手动改窗口宽度救。"""
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        screen = app.screen
+        assert isinstance(screen, DetailScreen)
+        assert await settle(pilot, lambda: screen._rendered), "详情渲染"
+        # 正常路径：渲染宽 = 布局后的真实容器宽（记录 0 就是预布局渲染）
+        assert screen._rendered_width == screen._body_scroll().region.width > 0
+
+        # 复现 bug 现场：模拟首布局前渲染（宽 0），随后首个 Resize 到达
+        screen._rendered_width = 0
+        screen._last_width = 0
+        await pilot.resize_terminal(100, 36)
+        assert await settle(
+            pilot, lambda: screen._rendered_width == 100
+        ), "预布局渲染后的首个 Resize 要自愈重排（不等用户手动改窗口）"
+        assert len(screen.query(".floor-head")) == 3, "重排后楼层完整"
+
+
+async def _run_detail_initially_done_flow(monkeypatch) -> None:
+    """详情首批即到头（V2EX 一页全量 / 楼层不足一页）：尾行直接 EOF，
+    不能再预告 Ctrl+N（按了只会空跑一次）。"""
+    monkeypatch.setattr(StubDetailLoader, "done", property(lambda self: True))
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        assert len(detail.query(".tail-eof")) == 1, "首批即到头要有 EOF 标记"
+        assert len(detail.query(".tail-hint")) == 0, "首批即到头不再预告加载更多"
+
+
+def test_detail_initially_done_shows_eof(stub_registry, monkeypatch) -> None:
+    asyncio.run(_run_detail_initially_done_flow(monkeypatch))
+
+
+def test_prelayout_render_recovers_on_first_resize(stub_registry) -> None:
+    asyncio.run(_run_prelayout_render_recovery_flow())
+
+
+def test_answer_comments_failure_and_retry(stub_registry, monkeypatch) -> None:
+    """评论首载失败（0.3.1 修的就是这条链路别吞信号）：失败文案常驻 + Ctrl+N 重试
+    换回正常 loader——评论层失败不连带楼层内容消失。"""
+    asyncio.run(_run_answer_comments_failure(monkeypatch))
+
+
+async def _run_answer_comments_failure(monkeypatch) -> None:
+
+    calls = {"n": 0}
+
+    async def flaky_comments(self, index: int):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SourceError("评论接口 403")
+        return StubCommentsLoader()
+
+    monkeypatch.setattr(StubDetailLoader, "open_comments", flaky_comments)
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("enter")
+        answer = app.screen
+        assert isinstance(answer, AnswerScreen)
+        assert await settle(pilot, lambda: answer._comments_error is not None)
+        assert "403" in answer._comments_error, "_comments_error 存原始失败文案"
+        status = str(answer.query_one("#cm-loading", Static).content)
+        assert "评论加载失败" in status and "Ctrl+N" in status, "状态行带重试指路"
+
+        await pilot.press("ctrl+n")  # 重试：这次成功
+        assert await settle(
+            pilot, lambda: answer.loader is not None and answer._comments_error is None
+        ), "重试换回正常 loader"
+        assert await settle(
+            pilot, lambda: len(answer.loader.comments) >= 2
+        ), "评论批已挂载"
+
+
+def test_detail_step_boundary_feedback(stub_registry) -> None:
+    """详情屏 ←/→ 换篇的到边反馈：最后一篇再 → 给 toast、选中位不动
+    （step_readable_item 到边返回 None 的 UI 侧出口）。"""
+    asyncio.run(_run_step_boundary())
+
+
+async def _run_step_boundary() -> None:
+    from textual.widgets import ListView
+
+    app = FeedScopeApp()
+    async with app.run_test(size=(90, 36)) as pilot:
+        assert await settle(pilot, lambda: len(app.main.items) == 3)
+        view = app.query_one("#feed", ListView)
+        view.index = 2  # 直接停在最后一行（全部可进详情）
+        await pilot.press("enter")
+        detail = app.screen
+        assert isinstance(detail, DetailScreen)
+        assert await settle(pilot, lambda: detail._rendered)
+        await pilot.press("right")  # 已是最后一篇
+        assert last_notification(app) == "后面没有可读的了"
+        assert isinstance(app.screen, DetailScreen), "到边不弹回列表"
